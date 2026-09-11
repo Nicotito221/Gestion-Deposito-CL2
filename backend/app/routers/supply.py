@@ -4,6 +4,8 @@ import tempfile
 from typing import List, Optional
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.schemas.supply import SupplyConsolidateResult, SupplySummaryOut
 from app.services.supply_service import SupplyService
@@ -69,3 +71,38 @@ def consolidate_supply(
                 os.remove(p)
         if os.path.exists(temp_dir):
             os.rmdir(temp_dir)
+
+
+@router.get("/exportar/excel")
+def export_excel_consolidado():
+    try:
+        temp_path, file_name = _service.export_excel()
+        return FileResponse(
+            path=temp_path,
+            filename=file_name,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            background=BackgroundTask(lambda: os.remove(temp_path) if os.path.exists(temp_path) else None),
+        )
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al generar archivo Excel consolidado: {err}",
+        )
+
+
+@router.get("/exportar/sap-pir")
+def export_sap_pir_txt():
+    try:
+        temp_path, file_name = _service.export_sap_txt()
+        return FileResponse(
+            path=temp_path,
+            filename=file_name,
+            media_type="text/plain; charset=utf-8",
+            background=BackgroundTask(lambda: os.remove(temp_path) if os.path.exists(temp_path) else None),
+        )
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al generar archivo SAP PIR (.txt): {err}",
+        )
+

@@ -1,6 +1,6 @@
 import datetime
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import pyodbc
 
 from app.core.config import get_db_connection
@@ -74,7 +74,11 @@ class SupplyRepository:
                 )
                 rows = cursor.fetchall()
 
+                daily_dates: Dict[datetime.date, str] = {}
+                tent_dates: Dict[datetime.date, str] = {}
                 grouped: Dict[str, Dict[str, object]] = {}
+                firm_month = 9
+
                 for r in rows:
                     prod_id = str(r[0])
                     fecha_dt: datetime.date = r[1]
@@ -88,13 +92,34 @@ class SupplyRepository:
                             "tasa_code": tasa,
                             "description": desc,
                             "daily_values": {},
+                            "tentative_values": {},
+                            "tentative_total": 0.0,
                             "total": 0.0,
                         }
 
-                    col_label = f"{fecha_dt.day}-{SPANISH_MONTHS.get(fecha_dt.month, 'mes')}"
-                    d_values = grouped[prod_id]["daily_values"]  # type: ignore
-                    d_values[col_label] = d_values.get(col_label, 0.0) + cant
+                    if fecha_dt.month == firm_month:
+                        col_label = f"{fecha_dt.day}-{SPANISH_MONTHS.get(fecha_dt.month, 'mes')}"
+                        daily_dates[fecha_dt] = col_label
+                        d_values = grouped[prod_id]["daily_values"]  # type: ignore
+                        d_values[col_label] = d_values.get(col_label, 0.0) + cant
+                    else:
+                        month_labels = {
+                            10: "Tentativo mes Octubre",
+                            11: "Tentativo mes Noviembre",
+                            12: "DIC",
+                            1: "ENE",
+                            2: "FEB",
+                        }
+                        col_label = month_labels.get(fecha_dt.month, SPANISH_MONTHS.get(fecha_dt.month, 'mes').upper())
+                        tent_dates[fecha_dt] = col_label
+                        t_values = grouped[prod_id]["tentative_values"]  # type: ignore
+                        t_values[col_label] = t_values.get(col_label, 0.0) + cant
+                        grouped[prod_id]["tentative_total"] = float(grouped[prod_id]["tentative_total"]) + cant
+
                     grouped[prod_id]["total"] = float(grouped[prod_id]["total"]) + cant
+
+                sorted_daily = [daily_dates[d] for d in sorted(daily_dates.keys())]
+                sorted_tent = [tent_dates[d] for d in sorted(tent_dates.keys())]
 
                 items: List[DemandRowOut] = []
                 for idx, (prod_id, data) in enumerate(grouped.items()):
@@ -108,7 +133,8 @@ class SupplyRepository:
                             box_type="RACK-A",
                             qty_per_box=1,
                             daily_values=data["daily_values"],  # type: ignore
-                            tentative_total=0.0,
+                            tentative_values=data["tentative_values"],  # type: ignore
+                            tentative_total=float(data["tentative_total"]),
                             total=float(data["total"]),
                             status="validado",
                         )
@@ -123,6 +149,8 @@ class SupplyRepository:
                     total_demanda=total_demanda,
                     piezas_validadas=piezas_validadas,
                     total_piezas=len(items),
+                    columnas_diarias=sorted_daily,
+                    columnas_tentativas=sorted_tent,
                     items=items,
                 )
 
@@ -166,6 +194,53 @@ class SupplyRepository:
                 total_piezas=len(items),
                 items=items,
             )
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_latest_demand_for_export(self) -> Tuple[str, List[Tuple[str, datetime.date, float, str, str, str]]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT TOP 1 id_importacion, nombre_archivo
+                FROM dbo.importacion_archivo
+                WHERE tipo = 'produccion_planificada' AND estado = 'procesada'
+                ORDER BY id_importacion DESC
+                """
+            )
+            last_import = cursor.fetchone()
+            if not last_import:
+                return "", []
+
+            id_importacion = int(last_import[0])
+            nombre_archivo = str(last_import[1] or "demanda.xlsx")
+
+            cursor.execute(
+                """
+                SELECT 
+                    p.id_producto,
+                    p.fecha,
+                    p.cantidad_planificada,
+                    COALESCE(pr.nombre, m.nombre, p.id_producto) AS descripcion,
+                    COALESCE(sc.codigo_tasa, p.id_producto) AS tasa_code,
+                    COALESCE(m.centro, '1000') AS centro
+                FROM dbo.produccion_planificada p
+                LEFT JOIN dbo.producto pr ON p.id_producto = pr.id_producto
+                LEFT JOIN dbo.material m ON p.id_producto = m.id_material
+                LEFT JOIN (
+                    SELECT codigo_sap_padre, MIN(codigo_tasa) AS codigo_tasa 
+                    FROM dbo.set_componente 
+                    GROUP BY codigo_sap_padre
+                ) sc ON p.id_producto = sc.codigo_sap_padre
+                WHERE p.id_importacion = ?
+                ORDER BY p.id_producto, p.fecha
+                """,
+                id_importacion,
+            )
+            rows = cursor.fetchall()
+            return nombre_archivo, rows
         finally:
             cursor.close()
             conn.close()
@@ -224,31 +299,91 @@ class SupplyRepository:
                     prods_to_insert,
                 )
 
-            rows_to_insert = []
+            planned_dict: Dict[Tuple[str, datetime.date], float] = {}
+            tentative_day_map = {10: 19, 11: 19, 12: 14, 1: 18, 2: 15}
             for it in items:
+                has_any_qty = False
                 for col_name, qty in it.daily_values.items():
                     if qty > 0:
-                        m = re.match(r"^(\d{1,2})-([a-z]+)", col_name.strip().lower())
-                        if m:
-                            day = int(m.group(1))
-                            m_str = m.group(2)
+                        has_any_qty = True
+                        m_daily = re.match(r"^(\d{1,2})-([a-z]+)", col_name.strip().lower())
+                        if m_daily:
+                            day = int(m_daily.group(1))
+                            m_str = m_daily.group(2)
                             month = MONTHS_LOOKUP.get(m_str, 9)
                             fecha_date = datetime.date(plan_year, month, day)
-                            rows_to_insert.append(
-                                (it.part_number, fecha_date, float(qty), id_importacion, id_usuario)
-                            )
+                            key = (it.part_number, fecha_date)
+                            planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
+                        else:
+                            m_num = re.match(r"^(\d{1,2})$", col_name.strip())
+                            if m_num:
+                                day = int(m_num.group(1))
+                                fecha_date = datetime.date(plan_year, 9, day)
+                                key = (it.part_number, fecha_date)
+                                planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
 
-            if rows_to_insert:
+                for col_name, qty in it.tentative_values.items():
+                    if qty > 0:
+                        c_clean = col_name.strip().lower()
+                        for m_key, m_val in MONTHS_LOOKUP.items():
+                            if m_key in c_clean:
+                                if m_val == 9:
+                                    break
+                                has_any_qty = True
+                                year = plan_year + (1 if m_val < 8 else 0)
+                                day = tentative_day_map.get(m_val, 1)
+                                fecha_date = datetime.date(year, m_val, day)
+                                key = (it.part_number, fecha_date)
+                                planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
+                                break
+
+                if not has_any_qty:
+                    key = (it.part_number, datetime.date(plan_year, 9, 1))
+                    if key not in planned_dict:
+                        planned_dict[key] = 0.0
+
+            if planned_dict:
+                cursor.execute(
+                    """
+                    CREATE TABLE #staging_plan (
+                        id_producto varchar(50) NOT NULL,
+                        fecha date NOT NULL,
+                        cantidad_planificada decimal(18, 4) NOT NULL,
+                        id_importacion int NOT NULL,
+                        id_usuario int NOT NULL
+                    )
+                    """
+                )
+                staging_rows = [
+                    (part_number, fecha_date, qty, id_importacion, id_usuario)
+                    for (part_number, fecha_date), qty in planned_dict.items()
+                ]
                 cursor.fast_executemany = True
                 cursor.executemany(
                     """
-                    INSERT INTO dbo.produccion_planificada (
-                        id_producto, fecha, cantidad_planificada, id_importacion, id_usuario, fecha_carga
-                    )
-                    VALUES (?, ?, ?, ?, ?, SYSDATETIME())
+                    INSERT INTO #staging_plan (id_producto, fecha, cantidad_planificada, id_importacion, id_usuario)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    rows_to_insert,
+                    staging_rows,
                 )
+
+                cursor.execute(
+                    """
+                    MERGE dbo.produccion_planificada WITH (HOLDLOCK) AS target
+                    USING #staging_plan AS source
+                    ON target.id_producto = source.id_producto AND target.fecha = source.fecha
+                    WHEN MATCHED THEN
+                        UPDATE SET 
+                            target.cantidad_planificada = source.cantidad_planificada,
+                            target.id_importacion = source.id_importacion,
+                            target.id_usuario = source.id_usuario,
+                            target.fecha_carga = SYSDATETIME()
+                    WHEN NOT MATCHED BY TARGET THEN
+                        INSERT (id_producto, fecha, cantidad_planificada, id_importacion, id_usuario, fecha_carga)
+                        VALUES (source.id_producto, source.fecha, source.cantidad_planificada, source.id_importacion, source.id_usuario, SYSDATETIME());
+                    """
+                )
+                cursor.execute("DROP TABLE #staging_plan")
 
             conn.commit()
             return id_importacion

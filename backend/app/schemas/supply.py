@@ -13,6 +13,7 @@ class DemandRowOut(BaseModel):
     box_type: str = ""
     qty_per_box: int = 1
     daily_values: Dict[str, float] = Field(default_factory=dict)
+    tentative_values: Dict[str, float] = Field(default_factory=dict)
     tentative_total: float = 0.0
     total: float = 0.0
     status: str = "validado"
@@ -25,6 +26,8 @@ class SupplySummaryOut(BaseModel):
     total_demanda: float
     piezas_validadas: int
     total_piezas: int
+    columnas_diarias: List[str] = Field(default_factory=list)
+    columnas_tentativas: List[str] = Field(default_factory=list)
     items: List[DemandRowOut]
 
 
