@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -7,6 +7,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -30,6 +31,7 @@ import {
 import {
   Upload,
   FileSpreadsheet,
+  FileText,
   Layers,
   Plus,
   Search,
@@ -43,6 +45,8 @@ import {
   GitFork,
   AlertCircle,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -54,6 +58,8 @@ import {
   uploadBomFile,
   getSupplySummary,
   consolidateSupply,
+  downloadExcelConsolidado,
+  downloadSapPirTxt,
   type BomVersionItem,
   type SetComponenteItem,
   type DemandItemApi,
@@ -61,6 +67,8 @@ import {
 
 export function SupplyOrderBom() {
   const [demandItems, setDemandItems] = useState<DemandItemApi[]>([]);
+  const [dailyColumns, setDailyColumns] = useState<string[]>([]);
+  const [tentativeColumns, setTentativeColumns] = useState<string[]>([]);
   const [periodo, setPeriodo] = useState<string>("Septiembre 2026");
   const [relations, setRelations] = useState<SetComponenteItem[]>([]);
   const [versions, setVersions] = useState<BomVersionItem[]>([]);
@@ -77,6 +85,8 @@ export function SupplyOrderBom() {
   const [f1Files, setF1Files] = useState<File[]>([]);
   const [f2Files, setF2Files] = useState<File[]>([]);
   const [isProcessingDemand, setIsProcessingDemand] = useState<boolean>(false);
+  const [isDownloadingExcel, setIsDownloadingExcel] = useState<boolean>(false);
+  const [isDownloadingSap, setIsDownloadingSap] = useState<boolean>(false);
 
   const [bomFile, setBomFile] = useState<File | null>(null);
   const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
@@ -107,6 +117,8 @@ export function SupplyOrderBom() {
           total_demanda: 0,
           piezas_validadas: 0,
           total_piezas: 0,
+          columnas_diarias: [],
+          columnas_tentativas: [],
           items: [],
         })),
       ]);
@@ -115,6 +127,8 @@ export function SupplyOrderBom() {
       setRelations(relationsData.items);
       setDemandItems(supplyData.items);
       setPeriodo(supplyData.periodo);
+      setDailyColumns(supplyData.columnas_diarias || []);
+      setTentativeColumns(supplyData.columnas_tentativas || []);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al conectar con el servidor";
       setErrorMsg(msg);
@@ -139,6 +153,88 @@ export function SupplyOrderBom() {
       return matchSearch && matchStatus;
     });
   }, [demandItems, searchDemand, filterStatus]);
+
+  const extractedDaily = useMemo(() => {
+    if (dailyColumns.length > 0) return dailyColumns;
+    const daySet = new Set<string>();
+    for (const it of demandItems) {
+      if (it.daily_values) {
+        Object.keys(it.daily_values).forEach((k) => daySet.add(k));
+      }
+    }
+    return Array.from(daySet).sort((a, b) => {
+      const ma = a.match(/^(\d{1,2})/);
+      const mb = b.match(/^(\d{1,2})/);
+      const na = ma ? parseInt(ma[1], 10) : 999;
+      const nb = mb ? parseInt(mb[1], 10) : 999;
+      return na - nb;
+    });
+  }, [dailyColumns, demandItems]);
+
+  const dailyTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const col of extractedDaily) {
+      totals[col] = 0;
+    }
+    for (const item of filteredDemand) {
+      for (const col of extractedDaily) {
+        totals[col] += item.daily_values?.[col] || 0;
+      }
+    }
+    return totals;
+  }, [filteredDemand, extractedDaily]);
+
+  const tentativeTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const col of tentativeColumns) {
+      totals[col] = 0;
+    }
+    for (const item of filteredDemand) {
+      for (const col of tentativeColumns) {
+        totals[col] += item.tentative_values?.[col] ?? item.daily_values?.[col] ?? 0;
+      }
+    }
+    return totals;
+  }, [filteredDemand, tentativeColumns]);
+
+  const grandTotal = useMemo(() => {
+    return filteredDemand.reduce((acc, curr) => acc + curr.total, 0);
+  }, [filteredDemand]);
+
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [scrollWidth, setScrollWidth] = useState<number>(0);
+
+  const updateScrollWidth = useCallback(() => {
+    if (tableContainerRef.current) {
+      setScrollWidth(tableContainerRef.current.scrollWidth);
+    }
+  }, []);
+
+  useEffect(() => {
+    updateScrollWidth();
+    const handleResize = () => updateScrollWidth();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [updateScrollWidth, filteredDemand, extractedDaily, tentativeColumns]);
+
+  const handleTopScroll = () => {
+    if (topScrollRef.current && tableContainerRef.current) {
+      tableContainerRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    }
+  };
+
+  const handleTableScroll = () => {
+    if (topScrollRef.current && tableContainerRef.current) {
+      topScrollRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
+    }
+  };
+
+  const scrollHorizontal = (offset: number) => {
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollBy({ left: offset, behavior: "smooth" });
+    }
+  };
 
   const filteredRelations = useMemo(() => {
     return relations.filter((rel) => {
@@ -171,12 +267,40 @@ export function SupplyOrderBom() {
     try {
       const result = await consolidateSupply({ f1Files, f2Files });
       setDemandItems(result.items);
+      setDailyColumns(result.columnas_diarias || []);
+      setTentativeColumns(result.columnas_tentativas || []);
+      setF1Files([]);
+      setF2Files([]);
       toast.success(result.mensaje);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al procesar demanda";
       toast.error(msg);
     } finally {
       setIsProcessingDemand(false);
+    }
+  };
+
+  const handleDownloadExcel = async () => {
+    setIsDownloadingExcel(true);
+    try {
+      await downloadExcelConsolidado();
+      toast.success("Libro Excel consolidado descargado correctamente");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al descargar Excel");
+    } finally {
+      setIsDownloadingExcel(false);
+    }
+  };
+
+  const handleDownloadSapPir = async () => {
+    setIsDownloadingSap(true);
+    try {
+      await downloadSapPirTxt();
+      toast.success("Archivo SAP PIR (.txt) descargado correctamente");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al descargar SAP PIR");
+    } finally {
+      setIsDownloadingSap(false);
     }
   };
 
@@ -577,27 +701,29 @@ export function SupplyOrderBom() {
               <div>
                 <CardTitle className="text-slate-900 text-lg">Demanda Consolidada por Producto ({filteredDemand.length})</CardTitle>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Visualización de requerimientos calculados frente a la receta activa en SQL Server
+                  Planilla de requerimientos diarios calculados frente a la receta activa en SQL Server
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.success("Descargando Consolidado_Demanda_BOM_Consumo.xlsx...")}
-                  className="flex items-center gap-2"
+                  disabled={isDownloadingExcel || filteredDemand.length === 0}
+                  onClick={handleDownloadExcel}
+                  className="flex items-center gap-2 border-emerald-600 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
                 >
-                  <Download className="w-4 h-4" />
-                  Excel Consolidado
+                  <FileSpreadsheet className={`w-4 h-4 ${isDownloadingExcel ? "animate-spin" : ""}`} />
+                  {isDownloadingExcel ? "Generando..." : "Descargar Excel (.xlsx)"}
                 </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => toast.success("Generando archivo delimitado SAP PIR (.txt)...")}
-                  className="flex items-center gap-2"
+                  disabled={isDownloadingSap || filteredDemand.length === 0}
+                  onClick={handleDownloadSapPir}
+                  className="flex items-center gap-2 border-blue-600 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
                 >
-                  <Download className="w-4 h-4" />
-                  TXT SAP PIR
+                  <FileText className={`w-4 h-4 ${isDownloadingSap ? "animate-spin" : ""}`} />
+                  {isDownloadingSap ? "Generando..." : "Descargar TXT SAP PIR"}
                 </Button>
               </div>
             </CardHeader>
@@ -626,56 +752,160 @@ export function SupplyOrderBom() {
                 </div>
               </div>
 
-              <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nº Parte</TableHead>
-                      <TableHead>Código TASA</TableHead>
-                      <TableHead>Descripción</TableHead>
-                      <TableHead>Dock</TableHead>
-                      <TableHead>Empaque</TableHead>
-                      <TableHead className="text-right">Demanda Diaria</TableHead>
-                      <TableHead className="text-right">Tentativo</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                      <TableHead className="text-center">Estado</TableHead>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                  <span>Desplazamiento horizontal:</span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs flex items-center gap-1 bg-white hover:bg-slate-50 border-slate-300"
+                    onClick={() => scrollHorizontal(-350)}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    Anterior
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs flex items-center gap-1 bg-white hover:bg-slate-50 border-slate-300"
+                    onClick={() => scrollHorizontal(350)}
+                  >
+                    Siguiente
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="text-[11px] text-slate-400 hidden sm:block">
+                  Shift + rueda del mouse para desplazamiento continuo
+                </div>
+              </div>
+
+              <div
+                ref={topScrollRef}
+                onScroll={handleTopScroll}
+                className="overflow-x-auto overflow-y-hidden border border-slate-200 rounded-t-lg bg-slate-100/90 h-3 sticky top-0 z-30 mb-[-1px]"
+              >
+                <div style={{ width: `${scrollWidth}px`, height: "1px" }} />
+              </div>
+
+              <div
+                ref={tableContainerRef}
+                onScroll={handleTableScroll}
+                className="border border-slate-200 rounded-b-lg overflow-x-auto max-h-[calc(100vh-300px)] min-h-[420px] overflow-y-auto"
+              >
+                <Table className="min-w-full border-collapse text-xs">
+                  <TableHeader className="bg-slate-50 sticky top-0 z-20 shadow-sm">
+                    <TableRow className="border-b border-slate-200">
+                      <TableHead className="sticky left-0 bg-slate-100 z-30 font-bold border-r border-slate-300 min-w-[140px] px-3 py-2 text-slate-800">
+                        Nº Parte
+                      </TableHead>
+                      <TableHead className="font-semibold border-r border-slate-200 min-w-[130px] px-3 py-2 text-slate-700">
+                        Código TASA
+                      </TableHead>
+                      <TableHead className="font-semibold border-r border-slate-200 min-w-[200px] px-3 py-2 text-slate-700">
+                        Descripción
+                      </TableHead>
+                      <TableHead className="font-semibold border-r border-slate-200 min-w-[65px] px-2 py-2 text-center text-slate-700">
+                        Dock
+                      </TableHead>
+                      <TableHead className="font-semibold border-r border-slate-200 min-w-[75px] px-2 py-2 text-center text-slate-700">
+                        Empaque
+                      </TableHead>
+
+                      {extractedDaily.map((col) => (
+                        <TableHead
+                          key={col}
+                          className="font-mono font-semibold border-r border-slate-200 min-w-[65px] px-2.5 py-2 text-right text-slate-700 bg-slate-50/90 whitespace-nowrap"
+                        >
+                          {col}
+                        </TableHead>
+                      ))}
+
+                      {tentativeColumns.map((col) => (
+                        <TableHead
+                          key={col}
+                          className="font-mono font-semibold border-r border-slate-200 min-w-[85px] px-2.5 py-2 text-right text-slate-700 bg-slate-50/90 whitespace-nowrap"
+                        >
+                          {col}
+                        </TableHead>
+                      ))}
+
+                      <TableHead className="sticky right-0 bg-slate-200/80 font-mono font-bold border-l border-slate-300 min-w-[90px] px-3 py-2 text-right text-slate-900 z-20 shadow-sm">
+                        Total
+                      </TableHead>
+                      <TableHead className="font-semibold min-w-[85px] px-2 py-2 text-center text-slate-700">
+                        Estado
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredDemand.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={9} className="text-center text-slate-400 py-8">
-                          {loading ? "Cargando demandas..." : "No se encontraron registros de demanda"}
+                        <TableCell
+                          colSpan={7 + extractedDaily.length + tentativeColumns.length}
+                          className="text-center text-slate-400 py-12"
+                        >
+                          {loading ? "Cargando matriz de demanda..." : "No se encontraron registros de demanda"}
                         </TableCell>
                       </TableRow>
                     ) : (
                       filteredDemand.map((d) => (
-                        <TableRow key={d.id}>
-                          <TableCell className="font-mono text-xs font-semibold">{d.part_number}</TableCell>
-                          <TableCell className="font-mono text-xs text-slate-600">{d.tasa_code}</TableCell>
-                          <TableCell className="font-medium text-sm">{d.description}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{d.dock || "DK-01"}</Badge>
+                        <TableRow key={d.id} className="hover:bg-slate-50/80 border-b border-slate-100 group">
+                          <TableCell className="sticky left-0 bg-white group-hover:bg-slate-50 z-10 font-mono text-xs font-semibold px-3 py-1.5 border-r border-slate-200 text-slate-900 whitespace-nowrap">
+                            {d.part_number}
                           </TableCell>
-                          <TableCell className="text-xs text-slate-600">
-                            {d.box_type || "RACK"} ({d.qty_per_box}u)
+                          <TableCell className="font-mono text-xs text-slate-600 px-3 py-1.5 border-r border-slate-200 whitespace-nowrap">
+                            {d.tasa_code}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-xs">
-                            {Object.entries(d.daily_values).map(([k, v]) => `${k}: ${v}`).join(", ") || "0"}
+                          <TableCell className="text-xs text-slate-800 px-3 py-1.5 border-r border-slate-200 truncate max-w-[220px]">
+                            {d.description}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-xs text-slate-500">
-                            {d.tentative_total}
+                          <TableCell className="text-center px-2 py-1.5 border-r border-slate-200">
+                            <span className="font-mono text-xs text-slate-600">{d.dock || "DK-01"}</span>
                           </TableCell>
-                          <TableCell className="text-right font-bold text-slate-900">
+                          <TableCell className="text-center px-2 py-1.5 border-r border-slate-200 text-xs text-slate-500 font-mono">
+                            {d.box_type || "RACK"} {d.qty_per_box > 1 ? `(${d.qty_per_box}u)` : ""}
+                          </TableCell>
+
+                          {extractedDaily.map((col) => {
+                            const val = d.daily_values?.[col] || 0;
+                            return (
+                              <TableCell
+                                key={col}
+                                className={`text-right font-mono text-xs px-2.5 py-1.5 border-r border-slate-100 whitespace-nowrap ${
+                                  val > 0 ? "text-slate-900 font-semibold bg-slate-50/40" : "text-slate-300"
+                                }`}
+                              >
+                                {val > 0 ? val.toLocaleString() : "-"}
+                              </TableCell>
+                            );
+                          })}
+
+                          {tentativeColumns.map((col) => {
+                            const val = d.tentative_values?.[col] ?? d.daily_values?.[col] ?? 0;
+                            return (
+                              <TableCell
+                                key={col}
+                                className={`text-right font-mono text-xs px-2.5 py-1.5 border-r border-slate-100 whitespace-nowrap ${
+                                  val > 0 ? "text-slate-900 font-semibold bg-slate-50/40" : "text-slate-300"
+                                }`}
+                              >
+                                {val > 0 ? val.toLocaleString() : "-"}
+                              </TableCell>
+                            );
+                          })}
+
+                          <TableCell className="sticky right-0 bg-slate-50 group-hover:bg-slate-100 font-mono text-xs font-bold text-slate-900 text-right px-3 py-1.5 border-l border-slate-200 z-10">
                             {d.total.toLocaleString()}
                           </TableCell>
-                          <TableCell className="text-center">
+                          <TableCell className="text-center px-2 py-1.5 whitespace-nowrap">
                             {d.status === "validado" ? (
-                              <Badge className="bg-green-100 text-green-700" variant="outline">
+                              <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[11px] py-0" variant="outline">
                                 Validado
                               </Badge>
                             ) : (
-                              <Badge className="bg-amber-100 text-amber-700" variant="outline">
+                              <Badge className="bg-amber-50 text-amber-700 border-amber-200 text-[11px] py-0" variant="outline">
                                 Sin BOM
                               </Badge>
                             )}
@@ -684,6 +914,52 @@ export function SupplyOrderBom() {
                       ))
                     )}
                   </TableBody>
+                  {filteredDemand.length > 0 && (
+                    <TableFooter className="bg-slate-100 sticky bottom-0 z-20 border-t-2 border-slate-300 shadow-inner">
+                      <TableRow className="border-0">
+                        <TableCell className="sticky left-0 bg-slate-100 z-30 font-bold text-xs uppercase tracking-wider text-slate-800 px-3 py-2.5 border-r border-slate-300 whitespace-nowrap">
+                          Totales Diarios
+                        </TableCell>
+                        <TableCell className="border-r border-slate-200 px-3 py-2.5" />
+                        <TableCell className="border-r border-slate-200 px-3 py-2.5 text-xs text-slate-500 font-medium">
+                          {filteredDemand.length} productos
+                        </TableCell>
+                        <TableCell className="border-r border-slate-200 px-2 py-2.5" />
+                        <TableCell className="border-r border-slate-200 px-2 py-2.5" />
+
+                        {extractedDaily.map((col) => {
+                          const sumVal = dailyTotals[col] || 0;
+                          return (
+                            <TableCell
+                              key={col}
+                              className="text-right font-mono text-xs font-bold text-slate-900 px-2.5 py-2.5 border-r border-slate-200 whitespace-nowrap"
+                            >
+                              {sumVal > 0 ? sumVal.toLocaleString() : "-"}
+                            </TableCell>
+                          );
+                        })}
+
+                        {tentativeColumns.map((col) => {
+                          const sumVal = tentativeTotals[col] || 0;
+                          return (
+                            <TableCell
+                              key={col}
+                              className="text-right font-mono text-xs font-bold text-slate-900 px-2.5 py-2.5 border-r border-slate-200 whitespace-nowrap"
+                            >
+                              {sumVal > 0 ? sumVal.toLocaleString() : "-"}
+                            </TableCell>
+                          );
+                        })}
+
+                        <TableCell className="sticky right-0 bg-slate-200 font-mono text-xs font-black text-slate-900 text-right px-3 py-2.5 border-l border-slate-300 z-20 shadow-sm whitespace-nowrap">
+                          {grandTotal.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="px-2 py-2.5 text-center text-[11px] text-slate-500 font-medium whitespace-nowrap">
+                          100%
+                        </TableCell>
+                      </TableRow>
+                    </TableFooter>
+                  )}
                 </Table>
               </div>
             </CardContent>

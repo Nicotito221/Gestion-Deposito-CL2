@@ -41,6 +41,7 @@ export interface DemandItemApi {
   box_type: string;
   qty_per_box: number;
   daily_values: Record<string, number>;
+  tentative_values?: Record<string, number>;
   tentative_total: number;
   total: number;
   status: string;
@@ -51,6 +52,8 @@ export interface SupplySummaryApi {
   total_demanda: number;
   piezas_validadas: number;
   total_piezas: number;
+  columnas_diarias?: string[];
+  columnas_tentativas?: string[];
   items: DemandItemApi[];
 }
 
@@ -189,4 +192,50 @@ export async function consolidateSupply(files: {
     throw new Error(err.detail || "Error al consolidar orden de suministro");
   }
   return res.json();
+}
+
+export async function downloadExcelConsolidado(): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/excel`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al descargar el archivo Excel consolidado");
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  let filename = "Consolidado_Demanda_BOM_Consumo.xlsx";
+  const match = disposition.match(/filename\*?=(?:utf-8'')?([^;]+)/i);
+  if (match && match[1]) {
+    filename = decodeURIComponent(match[1].replace(/['"]/g, ""));
+  }
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+export async function downloadSapPirTxt(): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/sap-pir`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al descargar archivo SAP PIR");
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  let filename = "Demanda_SAP_PIR.txt";
+  const match = disposition.match(/filename\*?=(?:utf-8'')?([^;]+)/i);
+  if (match && match[1]) {
+    filename = decodeURIComponent(match[1].replace(/['"]/g, ""));
+  }
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 }

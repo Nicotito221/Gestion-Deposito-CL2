@@ -40,10 +40,19 @@ DEFAULT_BOM_CANDIDATES = [
     r'C:\Users\nangerossa\Desktop\Cargar orden suministro\Interfaz.xlsx',
 ]
 
+DEFAULT_TENTATIVE_DATES = {
+    10: '19.10.2026',
+    11: '19.11.2026',
+    12: '14.12.2026',
+    1: '18.01.2027',
+    2: '15.02.2027'
+}
+
 DEFAULT_MATERIALS_CANDIDATES = [
     r'C:\Users\nangerossa\Desktop\PRD - Septiembre 2026 - IASS015922 (2).csv',
     r'C:\Users\nangerossa\Desktop\Cargar orden suministro\PRD - Septiembre 2026 - IASS015922 (2).csv',
     r'C:\Users\nangerossa\Desktop\PRD - Septiembre 2026.xlsx',
+    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\PRD - Septiembre 2026.xlsx',
 ]
 
 def clean_code(raw: Any) -> str:
@@ -168,6 +177,18 @@ def is_daily_column(header: str) -> bool:
     if re.match(r'^\d{1,2}$', h):
         num = int(h)
         return 1 <= num <= 31
+    return False
+
+
+def is_future_tentative_column(header: str, firm_month: int = 9) -> bool:
+    h_clean = header.strip().lower()
+    if is_daily_column(header):
+        return False
+    for m_key, m_val in MONTHS_LOOKUP.items():
+        if m_key in h_clean:
+            if m_val == firm_month:
+                return False
+            return True
     return False
 
 
@@ -324,7 +345,7 @@ class ProductionConsolidator:
         self.daily_columns: List[str] = []
         self.tentative_columns_f1: List[str] = []
         self.tentative_columns_f2: List[str] = []
-        self.custom_tentative_dates: Dict[int, str] = {}
+        self.custom_tentative_dates: Dict[int, str] = dict(DEFAULT_TENTATIVE_DATES)
         self.plan_year: int = datetime.datetime.now().year
 
     def register_demand_item(self, item: ProductionItem) -> None:
@@ -356,6 +377,83 @@ class ProductionConsolidator:
             item.pn_tbar = format_part_number(get_field(row, 'PN TBAR', default=item.pn_tbar))
             item.sd_tbar = str(get_field(row, 'SD TBAR', 'SD', 'Sd', default=item.sd_tbar))
             self.register_demand_item(item)
+
+    def load_bom_from_db(self) -> None:
+        try:
+            from app.core.config import get_db_connection
+            conn = get_db_connection()
+        except Exception:
+            return
+
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 
+                    s.sector,
+                    s.sd,
+                    s.codigo_tasa,
+                    s.codigo_sap_padre,
+                    s.id_material_hijo,
+                    s.cantidad,
+                    COALESCE(m.nombre, ''),
+                    COALESCE(m.centro, '1000')
+                FROM dbo.set_componente s
+                LEFT JOIN dbo.material m ON s.id_material_hijo = m.id_material
+                WHERE s.activo = 1
+                """
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                sector = str(r[0] or 'Seat')
+                sd = str(r[1] or '')
+                codigo_tasa_raw = str(r[2] or '')
+                padre_raw = str(r[3] or codigo_tasa_raw)
+                hijo_raw = str(r[4] or '')
+                uso_val = float(r[5] or 1.0)
+                desc = str(r[6] or '')
+                centro = str(r[7] or '1000')
+
+                if not hijo_raw:
+                    continue
+
+                formatted_hijo = format_part_number(hijo_raw)
+                formatted_padre = format_part_number(padre_raw)
+                formatted_tasa = format_part_number(codigo_tasa_raw)
+
+                b_item = BomItem(
+                    sector=sector,
+                    sd=sd,
+                    codigo_tasa=formatted_tasa or codigo_tasa_raw,
+                    codigo_sap_padre=formatted_padre or padre_raw,
+                    hijo=formatted_hijo or hijo_raw,
+                    uso=uso_val,
+                    clave=f"{codigo_tasa_raw}{hijo_raw}"
+                )
+                self.bom_items.append(b_item)
+
+                canon_hijo = clean_code(hijo_raw)
+                if canon_hijo not in self.materials_metadata:
+                    self.materials_metadata[canon_hijo] = MaterialMetadata(
+                        canonical_hijo=canon_hijo,
+                        n_parte=formatted_hijo,
+                        codigo_tasa_tbar=formatted_hijo,
+                        descripcion=desc,
+                        centro=centro,
+                    )
+        except Exception:
+            pass
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def load_bom_file(self, filepath: str) -> None:
         if not os.path.exists(filepath):
@@ -435,7 +533,7 @@ class ProductionConsolidator:
             if col not in self.daily_columns:
                 self.daily_columns.append(col)
 
-        tent_cols = [h for h in headers if ('TOTAL' in h.upper() or 'TENTATIVO' in h.upper()) and h not in self.daily_columns]
+        tent_cols = [h for h in headers if is_future_tentative_column(h, 9) and h not in self.daily_columns]
         for col in tent_cols:
             if col not in self.tentative_columns_f1:
                 self.tentative_columns_f1.append(col)
@@ -477,7 +575,7 @@ class ProductionConsolidator:
             'SUPPLIER CODE', 'SUPPLIER NAME', 'PART NUMBER', 'PART NAME',
             'DOCK/ROUTING', 'KANBAN NO.', 'DOCK', 'ROUTING'
         }
-        month_cols = [h for h in headers if h.strip().upper() not in non_month_keys and not is_daily_column(h)]
+        month_cols = [h for h in headers if h.strip().upper() not in non_month_keys and is_future_tentative_column(h, 9)]
         for col in month_cols:
             if col not in self.tentative_columns_f2:
                 self.tentative_columns_f2.append(col)
@@ -514,6 +612,13 @@ class ProductionConsolidator:
         ):
             if candidate and candidate in self.demand_lookup:
                 return self.demand_lookup[candidate]
+
+        for cand in (clean_code(b_item.codigo_tasa), clean_code(b_item.codigo_sap_padre)):
+            if len(cand) >= 10:
+                p10 = cand[:10]
+                for k, it in self.demand_lookup.items():
+                    if len(k) >= 10 and k[:10] == p10:
+                        return it
         return None
 
     def get_tentative_months(self) -> List[Tuple[int, int, str, str]]:
@@ -801,7 +906,7 @@ class ProductionConsolidator:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
                 if col_sum > 0:
                     fecha_str = self.resolve_date_str(col)
-                    cant_str = f'{col_sum:g}' if col_sum == int(col_sum) else f'{col_sum:.2f}'
+                    cant_str = str(int(round(col_sum)))
                     output_rows.append([
                         'X',
                         mat_code,
