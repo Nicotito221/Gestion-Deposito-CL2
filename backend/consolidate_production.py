@@ -46,7 +46,6 @@ DEFAULT_MATERIALS_CANDIDATES = [
     r'C:\Users\nangerossa\Desktop\PRD - Septiembre 2026.xlsx',
 ]
 
-
 def clean_code(raw: Any) -> str:
     if raw is None:
         return ''
@@ -403,88 +402,6 @@ class ProductionConsolidator:
                     centro=str(get_field(row, 'Centro', default='1000'))
                 )
 
-    def load_bom_from_db(self, conn_str: Optional[str] = None) -> bool:
-        try:
-            import pyodbc
-        except ImportError:
-            return False
-
-        if not conn_str:
-            conn_str = os.getenv(
-                "DB_CONNECTION_STRING",
-                r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=.\SQLEXPRESS;DATABASE=GestionDeposito;Trusted_Connection=yes;TrustServerCertificate=yes;"
-            )
-
-        try:
-            conn = pyodbc.connect(conn_str, timeout=4)
-            cursor = conn.cursor()
-
-            cursor.execute("""
-                SELECT id_material, nombre, unidad, centro
-                FROM dbo.material
-            """)
-            for row in cursor.fetchall():
-                mat_id = str(row[0]).strip()
-                mat_name = str(row[1] or '').strip()
-                mat_centro = str(row[3] or '1000').strip()
-                canon = clean_code(mat_id)
-                if canon not in self.materials_metadata:
-                    self.materials_metadata[canon] = MaterialMetadata(
-                        canonical_hijo=canon,
-                        n_parte=format_part_number(mat_id),
-                        codigo_tasa_tbar=format_part_number(mat_id),
-                        descripcion=mat_name,
-                        centro=mat_centro
-                    )
-
-            cursor.execute("""
-                SELECT sector, sd, codigo_tasa, codigo_sap_padre, id_material_hijo, cantidad
-                FROM dbo.set_componente
-                WHERE activo = 1
-            """)
-            rows = cursor.fetchall()
-            if not rows:
-                conn.close()
-                return False
-
-            for r in rows:
-                sector_raw = str(r[0] or '').strip()
-                sd_raw = str(r[1] or '').strip()
-                codigo_tasa_raw = str(r[2]).strip()
-                padre_raw = str(r[3] or codigo_tasa_raw).strip()
-                hijo_raw = str(r[4]).strip()
-                uso_val = float(r[5]) if r[5] is not None else 1.0
-
-                formatted_tasa = format_part_number(codigo_tasa_raw)
-                formatted_padre = format_part_number(padre_raw)
-                formatted_hijo = format_part_number(hijo_raw)
-                canon_hijo = clean_code(hijo_raw)
-
-                b_item = BomItem(
-                    sector=sector_raw or 'Seat',
-                    sd=sd_raw,
-                    codigo_tasa=formatted_tasa or codigo_tasa_raw,
-                    codigo_sap_padre=formatted_padre or padre_raw,
-                    hijo=formatted_hijo or hijo_raw,
-                    uso=uso_val,
-                    clave=f'{codigo_tasa_raw}{hijo_raw}'
-                )
-                self.bom_items.append(b_item)
-
-                if canon_hijo not in self.materials_metadata:
-                    self.materials_metadata[canon_hijo] = MaterialMetadata(
-                        canonical_hijo=canon_hijo,
-                        n_parte=formatted_hijo,
-                        codigo_tasa_tbar=formatted_hijo,
-                        centro='1000'
-                    )
-
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Aviso al cargar BOM desde SQL Server: {e}")
-            return False
-
     def load_materials_catalog(self, filepath: str) -> None:
         if not os.path.exists(filepath):
             return
@@ -742,16 +659,11 @@ class ProductionConsolidator:
 
         unique_hijos: List[str] = []
         hijo_seen: Set[str] = set()
-        bom_by_canon_hijo: Dict[str, List[BomItem]] = {}
         for b in self.bom_items:
             canon = clean_code(b.hijo)
-            if canon:
-                if canon not in bom_by_canon_hijo:
-                    bom_by_canon_hijo[canon] = []
-                bom_by_canon_hijo[canon].append(b)
-                if canon not in hijo_seen:
-                    hijo_seen.add(canon)
-                    unique_hijos.append(b.hijo)
+            if canon and canon not in hijo_seen:
+                hijo_seen.add(canon)
+                unique_hijos.append(b.hijo)
 
         rows: List[List[Union[str, float]]] = []
         for raw_hijo in unique_hijos:
@@ -770,7 +682,7 @@ class ProductionConsolidator:
             ]
 
             hijo_total = 0.0
-            matching_bom_rows = bom_by_canon_hijo.get(canon_hijo, [])
+            matching_bom_rows = [b for b in self.bom_items if clean_code(b.hijo) == canon_hijo]
 
             for col in all_val_cols:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
@@ -869,16 +781,11 @@ class ProductionConsolidator:
 
         unique_hijos: List[str] = []
         hijo_seen: Set[str] = set()
-        bom_by_canon_hijo: Dict[str, List[BomItem]] = {}
         for b in self.bom_items:
             canon = clean_code(b.hijo)
-            if canon:
-                if canon not in bom_by_canon_hijo:
-                    bom_by_canon_hijo[canon] = []
-                bom_by_canon_hijo[canon].append(b)
-                if canon not in hijo_seen:
-                    hijo_seen.add(canon)
-                    unique_hijos.append(b.hijo)
+            if canon and canon not in hijo_seen:
+                hijo_seen.add(canon)
+                unique_hijos.append(b.hijo)
 
         headers = ['Radio button Material', 'Material', 'Centro', 'Versión de plan', 'fecha', 'Tipo formato fecha', 'Cantidad']
         output_rows: List[List[str]] = []
@@ -888,14 +795,13 @@ class ProductionConsolidator:
             meta = self.materials_metadata.get(canon_hijo, MaterialMetadata(canonical_hijo=canon_hijo, n_parte=raw_hijo))
             mat_code = format_part_number(meta.n_parte or raw_hijo)
             centro = meta.centro or default_centro
-            matching_bom_rows = bom_by_canon_hijo.get(canon_hijo, [])
+            matching_bom_rows = [b for b in self.bom_items if clean_code(b.hijo) == canon_hijo]
 
             for col in all_val_cols:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
-                rounded_sum = round(col_sum)
-                if rounded_sum > 0:
+                if col_sum > 0:
                     fecha_str = self.resolve_date_str(col)
-                    cant_str = str(int(rounded_sum))
+                    cant_str = f'{col_sum:g}' if col_sum == int(col_sum) else f'{col_sum:.2f}'
                     output_rows.append([
                         'X',
                         mat_code,
@@ -910,23 +816,6 @@ class ProductionConsolidator:
             writer = csv.writer(f, delimiter='\t', lineterminator='\r\n')
             writer.writerow(headers)
             writer.writerows(output_rows)
-
-
-def check_db_bom_available() -> bool:
-    try:
-        import pyodbc
-        conn_str = os.getenv(
-            "DB_CONNECTION_STRING",
-            r"DRIVER={ODBC Driver 18 for SQL Server};SERVER=.\SQLEXPRESS;DATABASE=GestionDeposito;Trusted_Connection=yes;TrustServerCertificate=yes;"
-        )
-        conn = pyodbc.connect(conn_str, timeout=2)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM dbo.set_componente WHERE activo = 1")
-        cnt = cursor.fetchone()[0]
-        conn.close()
-        return cnt > 0
-    except Exception:
-        return False
 
 
 def find_default_file(candidates: List[str]) -> Optional[str]:
@@ -948,23 +837,19 @@ def prompt_user_for_files() -> Tuple[List[str], List[str], List[str], List[str],
         ('Todos los archivos (*.*)', '*.*')
     ]
 
-    db_has_bom = check_db_bom_available()
-    if db_has_bom:
-        bom_files = []
+    auto_bom = find_default_file(DEFAULT_BOM_CANDIDATES)
+    if auto_bom:
+        bom_files = [auto_bom]
     else:
-        auto_bom = find_default_file(DEFAULT_BOM_CANDIDATES)
-        if auto_bom:
-            bom_files = [auto_bom]
-        else:
-            messagebox.showinfo(
-                'Consolidador de Producción',
-                'Paso 1: Selecciona el archivo de BOM / Recetas (.xlsm, .xlsx, .csv o .txt).'
-            )
-            bom_file = filedialog.askopenfilename(
-                title='Selecciona el archivo de BOM (Recetas)',
-                filetypes=excel_filetypes
-            )
-            bom_files = [bom_file] if bom_file else []
+        messagebox.showinfo(
+            'Consolidador de Producción',
+            'Paso 1: Selecciona el archivo de BOM / Recetas (.xlsm, .xlsx, .csv o .txt).'
+        )
+        bom_file = filedialog.askopenfilename(
+            title='Selecciona el archivo de BOM (Recetas)',
+            filetypes=excel_filetypes
+        )
+        bom_files = [bom_file] if bom_file else []
 
     auto_materials = find_default_file(DEFAULT_MATERIALS_CANDIDATES)
     if auto_materials:
@@ -1108,15 +993,8 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    db_available = check_db_bom_available()
-
     if args.f1 or args.f2:
-        if args.bom:
-            bom_files = args.bom
-        elif not db_available:
-            bom_files = [find_default_file(DEFAULT_BOM_CANDIDATES)] if find_default_file(DEFAULT_BOM_CANDIDATES) else []
-        else:
-            bom_files = []
+        bom_files = args.bom or ([find_default_file(DEFAULT_BOM_CANDIDATES)] if find_default_file(DEFAULT_BOM_CANDIDATES) else [])
         mapping_files = args.mapping or ([find_default_file(DEFAULT_MATERIALS_CANDIDATES)] if find_default_file(DEFAULT_MATERIALS_CANDIDATES) else [])
         format_1_files = args.f1
         format_2_files = args.f2
@@ -1131,15 +1009,8 @@ def main() -> None:
     for mf in mapping_files:
         consolidator.load_mapping_file(mf)
         consolidator.load_materials_catalog(mf)
-
-    if bom_files:
-        for bf in bom_files:
-            consolidator.load_bom_file(bf)
-    else:
-        if consolidator.load_bom_from_db():
-            print("[SQL Server] Receta BOM activa cargada exitosamente desde la base de datos (dbo.set_componente).")
-        else:
-            print("Aviso: No se pudo cargar BOM desde la base de datos ni se especificó archivo.")
+    for bf in bom_files:
+        consolidator.load_bom_file(bf)
     for f1 in format_1_files:
         consolidator.load_format_1_file(f1)
     for f2 in format_2_files:
