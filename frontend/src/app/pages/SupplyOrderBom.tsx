@@ -1,0 +1,1058 @@
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Badge } from "../components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "../components/ui/dialog";
+import { Label } from "../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import {
+  Upload,
+  FileSpreadsheet,
+  Layers,
+  Plus,
+  Search,
+  CheckCircle2,
+  Calendar,
+  Download,
+  RefreshCw,
+  Clock,
+  Trash2,
+  Edit2,
+  GitFork,
+  AlertCircle,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
+import {
+  getBomVersions,
+  getSetComponentes,
+  createSetComponente,
+  updateSetComponente,
+  toggleSetComponente,
+  uploadBomFile,
+  getSupplySummary,
+  consolidateSupply,
+  type BomVersionItem,
+  type SetComponenteItem,
+  type DemandItemApi,
+} from "../services/api";
+
+export function SupplyOrderBom() {
+  const [demandItems, setDemandItems] = useState<DemandItemApi[]>([]);
+  const [periodo, setPeriodo] = useState<string>("Septiembre 2026");
+  const [relations, setRelations] = useState<SetComponenteItem[]>([]);
+  const [versions, setVersions] = useState<BomVersionItem[]>([]);
+
+  const [loading, setLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [searchDemand, setSearchDemand] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<string>("todos");
+
+  const [searchRelation, setSearchRelation] = useState<string>("");
+  const [filterSector, setFilterSector] = useState<string>("todos");
+
+  const [f1Files, setF1Files] = useState<File[]>([]);
+  const [f2Files, setF2Files] = useState<File[]>([]);
+  const [isProcessingDemand, setIsProcessingDemand] = useState<boolean>(false);
+
+  const [bomFile, setBomFile] = useState<File | null>(null);
+  const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
+
+  const [relationDialogOpen, setRelationDialogOpen] = useState<boolean>(false);
+  const [editingRelation, setEditingRelation] = useState<SetComponenteItem | null>(null);
+  const [relationForm, setRelationForm] = useState({
+    sector: "Seat",
+    sd: "",
+    codigo_tasa: "",
+    codigo_sap_padre: "",
+    id_material_hijo: "",
+    cantidad: "1",
+    unidad: "UN",
+  });
+  const [relationErrors, setRelationErrors] = useState<Record<string, string>>({});
+  const [isSavingRelation, setIsSavingRelation] = useState<boolean>(false);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const [versionsData, relationsData, supplyData] = await Promise.all([
+        getBomVersions().catch(() => []),
+        getSetComponentes({ limit: 500 }).catch(() => ({ items: [], total: 0 })),
+        getSupplySummary().catch(() => ({
+          periodo: "Septiembre 2026",
+          total_demanda: 0,
+          piezas_validadas: 0,
+          total_piezas: 0,
+          items: [],
+        })),
+      ]);
+
+      setVersions(versionsData);
+      setRelations(relationsData.items);
+      setDemandItems(supplyData.items);
+      setPeriodo(supplyData.periodo);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al conectar con el servidor";
+      setErrorMsg(msg);
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const filteredDemand = useMemo(() => {
+    return demandItems.filter((item) => {
+      const matchSearch =
+        item.part_number.toLowerCase().includes(searchDemand.toLowerCase()) ||
+        item.tasa_code.toLowerCase().includes(searchDemand.toLowerCase()) ||
+        item.description.toLowerCase().includes(searchDemand.toLowerCase());
+      const matchStatus =
+        filterStatus === "todos" ? true : item.status === filterStatus;
+      return matchSearch && matchStatus;
+    });
+  }, [demandItems, searchDemand, filterStatus]);
+
+  const filteredRelations = useMemo(() => {
+    return relations.filter((rel) => {
+      const matchSearch =
+        rel.codigo_tasa.toLowerCase().includes(searchRelation.toLowerCase()) ||
+        rel.codigo_sap_padre.toLowerCase().includes(searchRelation.toLowerCase()) ||
+        rel.id_material_hijo.toLowerCase().includes(searchRelation.toLowerCase()) ||
+        (rel.descripcion_hijo && rel.descripcion_hijo.toLowerCase().includes(searchRelation.toLowerCase()));
+      const matchSector =
+        filterSector === "todos" ? true : rel.sector === filterSector;
+      return matchSearch && matchSector;
+    });
+  }, [relations, searchRelation, filterSector]);
+
+  const sectorsList = useMemo(() => {
+    const list = new Set(relations.map((r) => r.sector).filter(Boolean) as string[]);
+    return Array.from(list);
+  }, [relations]);
+
+  const activeVersion = useMemo(() => {
+    return versions.find((v) => v.es_vigente) ?? versions[0];
+  }, [versions]);
+
+  const handleProcessDemand = async () => {
+    if (f1Files.length === 0 && f2Files.length === 0) {
+      toast.error("Seleccione al menos un archivo de producción (F1 o F2)");
+      return;
+    }
+    setIsProcessingDemand(true);
+    try {
+      const result = await consolidateSupply({ f1Files, f2Files });
+      setDemandItems(result.items);
+      toast.success(result.mensaje);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al procesar demanda";
+      toast.error(msg);
+    } finally {
+      setIsProcessingDemand(false);
+    }
+  };
+
+  const handleUploadBom = async () => {
+    if (!bomFile) {
+      toast.error("Seleccione un archivo de BOM (.xls, .xlsx o .tsv)");
+      return;
+    }
+    setIsUploadingBom(true);
+    try {
+      const result = await uploadBomFile(bomFile);
+      toast.success(`Versión #${result.id_version} importada: ${result.total_relaciones_creadas} relaciones creadas.`);
+      setBomFile(null);
+      await fetchData();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al importar BOM";
+      toast.error(msg);
+    } finally {
+      setIsUploadingBom(false);
+    }
+  };
+
+  const openNewRelationDialog = () => {
+    setEditingRelation(null);
+    setRelationForm({
+      sector: "Seat",
+      sd: "",
+      codigo_tasa: "",
+      codigo_sap_padre: "",
+      id_material_hijo: "",
+      cantidad: "1",
+      unidad: "UN",
+    });
+    setRelationErrors({});
+    setRelationDialogOpen(true);
+  };
+
+  const openEditRelationDialog = (rel: SetComponenteItem) => {
+    setEditingRelation(rel);
+    setRelationForm({
+      sector: rel.sector || "Seat",
+      sd: rel.sd || "",
+      codigo_tasa: rel.codigo_tasa,
+      codigo_sap_padre: rel.codigo_sap_padre,
+      id_material_hijo: rel.id_material_hijo,
+      cantidad: String(rel.cantidad),
+      unidad: rel.unidad,
+    });
+    setRelationErrors({});
+    setRelationDialogOpen(true);
+  };
+
+  const handleSaveRelation = async () => {
+    const errs: Record<string, string> = {};
+    if (!relationForm.codigo_tasa.trim()) errs.codigo_tasa = "Requerido";
+    if (!relationForm.codigo_sap_padre.trim()) errs.codigo_sap_padre = "Requerido";
+    if (!relationForm.id_material_hijo.trim()) errs.id_material_hijo = "Requerido";
+    const usageNum = parseFloat(relationForm.cantidad);
+    if (isNaN(usageNum) || usageNum <= 0) errs.cantidad = "Debe ser mayor a 0";
+
+    if (Object.keys(errs).length > 0) {
+      setRelationErrors(errs);
+      return;
+    }
+
+    setIsSavingRelation(true);
+    try {
+      if (editingRelation) {
+        const updated = await updateSetComponente(editingRelation.id_set_componente, {
+          sector: relationForm.sector,
+          sd: relationForm.sd,
+          codigo_tasa: relationForm.codigo_tasa.trim(),
+          codigo_sap_padre: relationForm.codigo_sap_padre.trim(),
+          id_material_hijo: relationForm.id_material_hijo.trim(),
+          cantidad: usageNum,
+          unidad: relationForm.unidad,
+        });
+        setRelations((prev) =>
+          prev.map((r) => (r.id_set_componente === updated.id_set_componente ? updated : r))
+        );
+        toast.success("Relación actualizada en SQL Server");
+      } else {
+        const created = await createSetComponente({
+          sector: relationForm.sector,
+          sd: relationForm.sd,
+          codigo_tasa: relationForm.codigo_tasa.trim(),
+          codigo_sap_padre: relationForm.codigo_sap_padre.trim(),
+          id_material_hijo: relationForm.id_material_hijo.trim(),
+          cantidad: usageNum,
+          unidad: relationForm.unidad,
+        });
+        setRelations((prev) => [created, ...prev]);
+        toast.success("Nueva relación registrada en dbo.set_componente");
+      }
+      setRelationDialogOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al guardar relación";
+      toast.error(msg);
+    } finally {
+      setIsSavingRelation(false);
+    }
+  };
+
+  const handleToggleRelationActive = async (id: number) => {
+    try {
+      const res = await toggleSetComponente(id);
+      setRelations((prev) =>
+        prev.map((r) =>
+          r.id_set_componente === id ? { ...r, activo: res.activo } : r
+        )
+      );
+      toast.success(res.activo ? "Relación activada" : "Relación desactivada");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al modificar estado";
+      toast.error(msg);
+    }
+  };
+
+  return (
+    <div className="p-4 sm:p-8">
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-semibold text-slate-900 mb-2 flex items-center gap-3">
+            <FileSpreadsheet className="w-7 h-7" />
+            Orden de Suministro y BOM
+          </h1>
+          <p className="text-slate-600">
+            Ingesta de demandas de producción, gestión de recetas activas y relaciones de componentes
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={fetchData}
+          disabled={loading}
+          className="flex items-center gap-2"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          Recargar datos
+        </Button>
+      </div>
+
+      {errorMsg && (
+        <Card className="mb-6 border-red-200 bg-red-50">
+          <CardContent className="pt-4 pb-4 flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
+            <div className="flex-1 text-sm text-red-800">
+              <span className="font-semibold">Aviso de conexión:</span> {errorMsg}. Asegúrese de que el servidor FastAPI esté en ejecución en <code>http://127.0.0.1:8000</code>.
+            </div>
+            <Button size="sm" variant="outline" onClick={fetchData}>
+              Reintentar
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <Tabs defaultValue="demanda" className="space-y-6">
+        <TabsList className="mb-2">
+          <TabsTrigger value="demanda" className="flex items-center gap-2">
+            <Calendar className="w-4 h-4" />
+            Orden de Suministro
+          </TabsTrigger>
+          <TabsTrigger value="bom" className="flex items-center gap-2">
+            <GitFork className="w-4 h-4" />
+            BOM y Relaciones ({relations.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="demanda" className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <Card className="border-2 border-slate-900 bg-slate-900 text-white">
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Calendar className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-white/60 text-xs uppercase tracking-wider">Período Planificado</p>
+                    <p className="font-bold text-white text-base">{periodo}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Layers className="w-5 h-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs uppercase tracking-wider">Demanda Consolidada</p>
+                    <p className="font-bold text-slate-900 text-xl">
+                      {demandItems.reduce((acc, curr) => acc + curr.total, 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">unid.</span>
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs uppercase tracking-wider">Productos Mapeados</p>
+                    <p className="font-bold text-slate-900 text-xl">
+                      {demandItems.filter((d) => d.status === "validado").length} / {demandItems.length}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Clock className="w-5 h-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs uppercase tracking-wider">Base de Datos</p>
+                    <p className="font-bold text-slate-900 text-xl">SQL Server</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <Upload className="w-4 h-4 text-slate-600" />
+                Cargar Archivos de Producción y Demanda
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div className="p-4 border border-slate-200 rounded-lg bg-slate-50 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Formato 1 (Demanda Diaria)
+                      </span>
+                      {f1Files.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-1.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => setF1Files([])}
+                        >
+                          Limpiar ({f1Files.length})
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-700 font-medium mt-1">
+                      Planillas diarias con desglose por día/turno
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Selección múltiple permitida (.xlsx, .xlsm, .csv)
+                    </p>
+                  </div>
+                  <div className="mt-3">
+                    <Input
+                      type="file"
+                      multiple
+                      accept=".xlsx,.xlsm,.csv,.txt"
+                      className="bg-white text-xs cursor-pointer"
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.files || []);
+                        if (selected.length > 0) {
+                          setF1Files((prev) => {
+                            const existingNames = new Set(prev.map((f) => f.name));
+                            const newFiles = selected.filter((f) => !existingNames.has(f.name));
+                            return [...prev, ...newFiles];
+                          });
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    {f1Files.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-white border border-slate-200 rounded-md">
+                        {f1Files.map((file, idx) => (
+                          <Badge
+                            key={idx}
+                            variant="secondary"
+                            className="text-xs flex items-center gap-1.5 py-0.5 px-2 bg-slate-100 text-slate-800"
+                          >
+                            <span className="truncate max-w-[170px]">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setF1Files((prev) => prev.filter((_, i) => i !== idx))}
+                              className="text-slate-400 hover:text-slate-700 ml-0.5"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-4 border border-slate-200 rounded-lg bg-slate-50 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                        Formato 2 (Mediano Plazo / Proveedores)
+                      </span>
+                      {f2Files.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-5 px-1.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => setF2Files([])}
+                        >
+                          Limpiar ({f2Files.length})
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-700 font-medium mt-1">
+                      Plan tentativo de meses no firmes / compras
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Selección múltiple permitida (.xlsx, .xlsm, .csv)
+                    </p>
+                  </div>
+                  <div className="mt-3">
+                    <Input
+                      type="file"
+                      multiple
+                      accept=".xlsx,.xlsm,.csv,.txt"
+                      className="bg-white text-xs cursor-pointer"
+                      onChange={(e) => {
+                        const selected = Array.from(e.target.files || []);
+                        if (selected.length > 0) {
+                          setF2Files((prev) => {
+                            const existingNames = new Set(prev.map((f) => f.name));
+                            const newFiles = selected.filter((f) => !existingNames.has(f.name));
+                            return [...prev, ...newFiles];
+                          });
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                    {f2Files.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 bg-white border border-slate-200 rounded-md">
+                        {f2Files.map((file, idx) => (
+                          <Badge
+                            key={idx}
+                            variant="secondary"
+                            className="text-xs flex items-center gap-1.5 py-0.5 px-2 bg-slate-100 text-slate-800"
+                          >
+                            <span className="truncate max-w-[170px]">{file.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setF2Files((prev) => prev.filter((_, i) => i !== idx))}
+                              className="text-slate-400 hover:text-slate-700 ml-0.5"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500 font-medium">Archivos cargados:</span>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    F1: {f1Files.length} archivo{f1Files.length === 1 ? "" : "s"}
+                  </Badge>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    F2: {f2Files.length} archivo{f2Files.length === 1 ? "" : "s"}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleProcessDemand}
+                    disabled={isProcessingDemand || (f1Files.length === 0 && f2Files.length === 0)}
+                    className="flex items-center gap-2"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isProcessingDemand ? "animate-spin" : ""}`} />
+                    Procesar y Consolidar en Servidor
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4">
+              <div>
+                <CardTitle className="text-slate-900 text-lg">Demanda Consolidada por Producto ({filteredDemand.length})</CardTitle>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Visualización de requerimientos calculados frente a la receta activa en SQL Server
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => toast.success("Descargando Consolidado_Demanda_BOM_Consumo.xlsx...")}
+                  className="flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Excel Consolidado
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => toast.success("Generando archivo delimitado SAP PIR (.txt)...")}
+                  className="flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  TXT SAP PIR
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Buscar por Nº de Parte, Código TASA o descripción..."
+                    className="pl-9"
+                    value={searchDemand}
+                    onChange={(e) => setSearchDemand(e.target.value)}
+                  />
+                </div>
+                <div className="w-full sm:w-48">
+                  <Select value={filterStatus} onValueChange={setFilterStatus}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Estado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos los estados</SelectItem>
+                      <SelectItem value="validado">Validado con BOM</SelectItem>
+                      <SelectItem value="sin_bom">Sin receta activa</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nº Parte</TableHead>
+                      <TableHead>Código TASA</TableHead>
+                      <TableHead>Descripción</TableHead>
+                      <TableHead>Dock</TableHead>
+                      <TableHead>Empaque</TableHead>
+                      <TableHead className="text-right">Demanda Diaria</TableHead>
+                      <TableHead className="text-right">Tentativo</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-center">Estado</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredDemand.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-center text-slate-400 py-8">
+                          {loading ? "Cargando demandas..." : "No se encontraron registros de demanda"}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredDemand.map((d) => (
+                        <TableRow key={d.id}>
+                          <TableCell className="font-mono text-xs font-semibold">{d.part_number}</TableCell>
+                          <TableCell className="font-mono text-xs text-slate-600">{d.tasa_code}</TableCell>
+                          <TableCell className="font-medium text-sm">{d.description}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline">{d.dock || "DK-01"}</Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-600">
+                            {d.box_type || "RACK"} ({d.qty_per_box}u)
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs">
+                            {Object.entries(d.daily_values).map(([k, v]) => `${k}: ${v}`).join(", ") || "0"}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs text-slate-500">
+                            {d.tentative_total}
+                          </TableCell>
+                          <TableCell className="text-right font-bold text-slate-900">
+                            {d.total.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {d.status === "validado" ? (
+                              <Badge className="bg-green-100 text-green-700" variant="outline">
+                                Validado
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-amber-100 text-amber-700" variant="outline">
+                                Sin BOM
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="bom" className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="border-2 border-slate-900 bg-slate-900 text-white">
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <CheckCircle2 className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-white/60 text-xs uppercase tracking-wider">Versión Vigente en SQL Server</p>
+                    <p className="font-bold text-white text-base">
+                      {activeVersion ? `Versión #${activeVersion.id_version}` : "Sin versión activa"}
+                    </p>
+                    <p className="text-white/80 text-xs truncate max-w-[200px] mt-0.5">
+                      {activeVersion?.nombre_archivo || "—"}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <GitFork className="w-5 h-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs uppercase tracking-wider">Relaciones Activas</p>
+                    <p className="font-bold text-slate-900 text-xl">
+                      {relations.filter((r) => r.activo).length} <span className="text-xs font-normal text-slate-500">en dbo.set_componente</span>
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="pt-5 pb-5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Clock className="w-5 h-5 text-slate-700" />
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs uppercase tracking-wider">Importación de Receta</p>
+                    <p className="font-semibold text-slate-900 text-sm">{activeVersion?.fecha_importacion || "—"}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">{activeVersion?.total_lineas.toLocaleString() || 0} líneas calculadas</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                <Upload className="w-4 h-4 text-slate-600" />
+                Cargar Nueva Versión de Receta BOM (SAP CS11 / CS12)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="p-4 border border-slate-200 rounded-lg bg-slate-50 mb-4">
+                <p className="text-sm text-slate-700 font-medium">
+                  Actualización masiva de estructura de materiales
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5 mb-3">
+                  El sistema genera una nueva versión inmutable en <code>dbo.bom_version</code> y recalcula la explosión plana de factores de consumo unitario en SQL Server.
+                </p>
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <Input
+                    type="file"
+                    accept=".xls,.xlsx,.xlsm,.tsv,.csv,.txt"
+                    className="bg-white text-xs max-w-md"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setBomFile(f);
+                    }}
+                  />
+                  <Button
+                    onClick={handleUploadBom}
+                    disabled={isUploadingBom}
+                    className="flex items-center gap-2 w-full sm:w-auto"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isUploadingBom ? "animate-spin" : ""}`} />
+                    Procesar e Importar a Base de Datos
+                  </Button>
+                </div>
+              </div>
+
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Versión</TableHead>
+                      <TableHead>Nombre de Archivo</TableHead>
+                      <TableHead>Fecha Importación</TableHead>
+                      <TableHead className="text-right">Total Líneas</TableHead>
+                      <TableHead>Observación</TableHead>
+                      <TableHead className="text-center">Estado</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {versions.map((v) => (
+                      <TableRow key={v.id_version}>
+                        <TableCell className="font-semibold">v{v.id_version}</TableCell>
+                        <TableCell className="font-mono text-xs">{v.nombre_archivo}</TableCell>
+                        <TableCell className="text-xs text-slate-600">{v.fecha_importacion}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{v.total_lineas.toLocaleString()}</TableCell>
+                        <TableCell className="text-xs text-slate-600">{v.observacion || "—"}</TableCell>
+                        <TableCell className="text-center">
+                          {v.es_vigente ? (
+                            <Badge className="bg-green-100 text-green-700" variant="outline">
+                              Activa / Vigente
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-slate-400">
+                              Histórica
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4">
+              <div>
+                <CardTitle className="text-slate-900 text-lg">
+                  Relaciones Set / Componente en SQL Server ({filteredRelations.length} de {relations.length})
+                </CardTitle>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Mapeo maestro directo entre sets de demanda y materiales componentes con multiplicador de uso en <code>dbo.set_componente</code>
+                </p>
+              </div>
+              <Button onClick={openNewRelationDialog} className="flex items-center gap-2">
+                <Plus className="w-4 h-4" />
+                Nueva Relación
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Buscar por código padre, componente hijo o descripción..."
+                    className="pl-9"
+                    value={searchRelation}
+                    onChange={(e) => setSearchRelation(e.target.value)}
+                  />
+                </div>
+                <div className="w-full sm:w-48">
+                  <Select value={filterSector} onValueChange={setFilterSector}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Sector" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos los sectores</SelectItem>
+                      {sectorsList.map((sec) => (
+                        <SelectItem key={sec} value={sec}>
+                          {sec}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Sector</TableHead>
+                      <TableHead>SD</TableHead>
+                      <TableHead>Código TASA (Padre)</TableHead>
+                      <TableHead>Padre SAP</TableHead>
+                      <TableHead>Componente Hijo</TableHead>
+                      <TableHead>Descripción Hijo</TableHead>
+                      <TableHead className="text-right">Uso / Cant.</TableHead>
+                      <TableHead>Unidad</TableHead>
+                      <TableHead className="text-center">Estado</TableHead>
+                      <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredRelations.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={10} className="text-center text-slate-400 py-8">
+                          {loading ? "Cargando relaciones desde base de datos..." : "No se encontraron relaciones"}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredRelations.map((rel) => (
+                        <TableRow key={rel.id_set_componente} className={!rel.activo ? "opacity-50" : ""}>
+                          <TableCell className="font-medium text-xs">{rel.sector || "—"}</TableCell>
+                          <TableCell className="text-xs text-slate-600">{rel.sd || "—"}</TableCell>
+                          <TableCell className="font-mono text-xs font-semibold">{rel.codigo_tasa}</TableCell>
+                          <TableCell className="font-mono text-xs text-slate-600">{rel.codigo_sap_padre}</TableCell>
+                          <TableCell className="font-mono text-xs font-semibold text-slate-900">{rel.id_material_hijo}</TableCell>
+                          <TableCell className="text-xs text-slate-700 max-w-[220px] truncate" title={rel.descripcion_hijo || ""}>
+                            {rel.descripcion_hijo || rel.id_material_hijo}
+                          </TableCell>
+                          <TableCell className="text-right font-mono font-bold text-slate-900">
+                            {rel.cantidad.toFixed(2)}
+                          </TableCell>
+                          <TableCell className="text-xs">{rel.unidad}</TableCell>
+                          <TableCell className="text-center">
+                            <span
+                              onClick={() => handleToggleRelationActive(rel.id_set_componente)}
+                              className="cursor-pointer"
+                            >
+                              {rel.activo ? (
+                                <Badge className="bg-green-100 text-green-700" variant="outline">
+                                  Activo
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-slate-400">
+                                  Inactivo
+                                </Badge>
+                              )}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditRelationDialog(rel)}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Edit2 className="w-3.5 h-3.5 text-slate-600" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleToggleRelationActive(rel.id_set_componente)}
+                                className="h-8 w-8 p-0 text-red-600"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={relationDialogOpen} onOpenChange={setRelationDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {editingRelation ? "Editar Relación Set / Componente" : "Nueva Relación Set / Componente"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2 text-sm">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label>Sector</Label>
+                <Input
+                  value={relationForm.sector}
+                  onChange={(e) => setRelationForm({ ...relationForm, sector: e.target.value })}
+                  placeholder="ej. Seat"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>SD</Label>
+                <Input
+                  value={relationForm.sd}
+                  onChange={(e) => setRelationForm({ ...relationForm, sd: e.target.value })}
+                  placeholder="ej. SD-01"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label>Código TASA (Padre)</Label>
+                <Input
+                  value={relationForm.codigo_tasa}
+                  onChange={(e) => setRelationForm({ ...relationForm, codigo_tasa: e.target.value })}
+                  placeholder="ej. 71010-0K310"
+                />
+                {relationErrors.codigo_tasa && (
+                  <p className="text-xs text-red-600">{relationErrors.codigo_tasa}</p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label>Padre SAP</Label>
+                <Input
+                  value={relationForm.codigo_sap_padre}
+                  onChange={(e) => setRelationForm({ ...relationForm, codigo_sap_padre: e.target.value })}
+                  placeholder="ej. 71010-0K310-C0"
+                />
+                {relationErrors.codigo_sap_padre && (
+                  <p className="text-xs text-red-600">{relationErrors.codigo_sap_padre}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Componente Hijo (Código Material)</Label>
+              <Input
+                value={relationForm.id_material_hijo}
+                onChange={(e) => setRelationForm({ ...relationForm, id_material_hijo: e.target.value })}
+                placeholder="ej. 71611-0K080-00"
+              />
+              {relationErrors.id_material_hijo && (
+                <p className="text-xs text-red-600">{relationErrors.id_material_hijo}</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <Label>Cantidad / Uso Unitario</Label>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  value={relationForm.cantidad}
+                  onChange={(e) => setRelationForm({ ...relationForm, cantidad: e.target.value })}
+                />
+                {relationErrors.cantidad && (
+                  <p className="text-xs text-red-600">{relationErrors.cantidad}</p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label>Unidad</Label>
+                <Select
+                  value={relationForm.unidad}
+                  onValueChange={(val) => setRelationForm({ ...relationForm, unidad: val })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="UN">UN</SelectItem>
+                    <SelectItem value="KG">KG</SelectItem>
+                    <SelectItem value="MT">MT</SelectItem>
+                    <SelectItem value="M2">M2</SelectItem>
+                    <SelectItem value="LT">LT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRelationDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveRelation} disabled={isSavingRelation}>
+              {isSavingRelation ? "Guardando..." : editingRelation ? "Guardar Cambios" : "Crear Relación"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
