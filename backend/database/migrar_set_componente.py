@@ -28,6 +28,8 @@ def run_migration_set_componente(source_excel: str) -> None:
     for r in ws.iter_rows(values_only=True, min_row=2):
         if r and r[2] and r[4]:
             sector = str(r[0] or "").strip()
+            if sector.lower() == "amnrest":
+                sector = "Armrest"
             sd = str(r[1] or "").strip()
             codigo_tasa = str(r[2]).strip()
             codigo_sap_padre = str(r[3] or codigo_tasa).strip()

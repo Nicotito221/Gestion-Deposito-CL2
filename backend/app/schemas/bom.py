@@ -39,7 +39,7 @@ class BomImportResult:
     mensaje: str
 
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class BomVersionOut(BaseModel):
@@ -77,6 +77,13 @@ class SetComponenteCreate(BaseModel):
     cantidad: float = Field(gt=0)
     unidad: str = Field(default="UN", max_length=10)
 
+    @field_validator("sector", mode="before")
+    @classmethod
+    def sanitize_sector(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str) and v.strip().lower() == "amnrest":
+            return "Armrest"
+        return v
+
 
 class SetComponenteUpdate(BaseModel):
     sector: Optional[str] = None
@@ -87,4 +94,12 @@ class SetComponenteUpdate(BaseModel):
     cantidad: Optional[float] = Field(default=None, gt=0)
     unidad: Optional[str] = Field(default=None, max_length=10)
     activo: Optional[bool] = None
+
+    @field_validator("sector", mode="before")
+    @classmethod
+    def sanitize_sector(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str) and v.strip().lower() == "amnrest":
+            return "Armrest"
+        return v
+
 
