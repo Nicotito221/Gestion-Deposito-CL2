@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_db_connection
-from app.routers import bom, supply
+from app.routers import bom, supply, rundown
 
 app = FastAPI(
     title="Gestión Depósito API",
@@ -27,6 +27,7 @@ app.add_middleware(
 
 app.include_router(bom.router)
 app.include_router(supply.router)
+app.include_router(rundown.router)
 
 
 @app.get("/api/health", tags=["Health"])
