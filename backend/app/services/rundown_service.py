@@ -21,6 +21,11 @@ from app.schemas.rundown import (
     RundownCalendarioMesOut,
     RundownCalendarioDiaUpdate,
     RundownCalendarioMesSave,
+    MaterialCatalogoItem,
+    RundownParametroMaterialCreate,
+    RundownParametroMaterialItem,
+    RundownPeriodoProyeccionItem,
+    RundownPeriodoProyeccionCreate,
 )
 
 DIAS_ESP = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
@@ -70,6 +75,9 @@ class RundownService:
                 mes=m["mes"],
                 label=m["label"],
                 es_firme=m["es_firme"],
+                es_proyectado_manual=bool(m.get("es_proyectado_manual", False)),
+                periodo_copia=m.get("periodo_copia"),
+                total_volumen=float(m.get("total_volumen", 0.0)),
             )
             for m in meses_raw
         ]
@@ -137,8 +145,11 @@ class RundownService:
             for d in dates_timeline:
                 ajuste_key = (param["id_parametro"], d, alcance)
                 tiene_ajuste = ajuste_key in ajustes_map
+                desvio = 0.0
                 if tiene_ajuste:
-                    stock_corriente = float(round(ajustes_map[ajuste_key]))
+                    stock_real = float(round(ajustes_map[ajuste_key]))
+                    desvio = float(round(stock_real - stock_corriente))
+                    stock_corriente = stock_real
 
                 veh_prod = sum(
                     prod_map.get(p["id_producto"], {}).get(d, 0.0) * p["factor_uso"]
@@ -183,6 +194,7 @@ class RundownService:
                         dias_cobertura=dias_cobertura,
                         alerta_quiebre=alerta_quiebre,
                         tiene_ajuste=tiene_ajuste,
+                        desvio_ajuste=desvio,
                     )
                 )
 
@@ -278,6 +290,7 @@ class RundownService:
             po_numero=data.po_numero,
             factura_numero=data.factura_numero,
             observacion=data.observacion,
+            fecha_origen=data.fecha_origen,
         )
 
     def get_secciones(self) -> List[RundownSeccionItem]:
@@ -335,6 +348,60 @@ class RundownService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Proveedor ID {id_proveedor} no encontrado",
+            )
+        return True
+
+    def search_materiales_catalogo(self, query: str) -> List[MaterialCatalogoItem]:
+        rows = self._repo.search_materiales_catalogo(query, limit=40)
+        return [
+            MaterialCatalogoItem(
+                id_material=r["id_material"],
+                nombre=r["nombre"],
+                unidad=r["unidad"],
+                categoria=r["categoria"],
+            )
+            for r in rows
+        ]
+
+    def get_materiales_proveedor(
+        self, id_proveedor: int
+    ) -> List[RundownParametroMaterialItem]:
+        rows = self._repo.get_parametros_material_proveedor(id_proveedor)
+        return [
+            RundownParametroMaterialItem(
+                id_parametro=r["id_parametro"],
+                id_proveedor=r["id_proveedor"],
+                id_material=r["id_material"],
+                descripcion=r["descripcion"],
+                unidad=r["unidad"],
+                lote_mts=r["lote_mts"],
+                scrap_porcentaje=r["scrap_porcentaje"],
+                factor_conversion=r["factor_conversion"],
+                categoria_cabina=r["categoria_cabina"],
+                stock_inicial_planta=r["stock_inicial_planta"],
+                stock_inicial_total=r["stock_inicial_total"],
+                cant_productos=r["cant_productos"],
+                activo=r["activo"],
+            )
+            for r in rows
+        ]
+
+    def add_material_proveedor(
+        self, id_proveedor: int, data: RundownParametroMaterialCreate
+    ) -> int:
+        param_id = self._repo.create_or_update_parametro_material(
+            id_proveedor=id_proveedor,
+            data=data.model_dump(),
+        )
+        self._repo.auto_link_bom_productos(param_id, data.id_material)
+        return param_id
+
+    def delete_material_proveedor(self, id_parametro: int) -> bool:
+        deleted = self._repo.delete_parametro_material(id_parametro)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Parámetro de material ID {id_parametro} no encontrado",
             )
         return True
 
@@ -397,6 +464,54 @@ class RundownService:
             for d in data.dias
         ]
         return self._repo.save_calendario_dias(tuplas)
+
+    def get_periodos_proyeccion(self) -> List[RundownPeriodoProyeccionItem]:
+        MESES_NOMBRES = (
+            "", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        )
+        rows = self._repo.get_periodos_proyeccion()
+        meses_disp = self._repo.get_meses_disponibles()
+        official_set = {(m["anio"], m["mes"]) for m in meses_disp if not m.get("es_proyectado_manual")}
+
+        result = []
+        for r in rows:
+            anio = r["anio"]
+            mes = r["mes"]
+            nom = MESES_NOMBRES[mes] if 1 <= mes <= 12 else str(mes)
+            c_part = r["periodo_copia"].split("-")
+            c_nom = MESES_NOMBRES[int(c_part[1])] if len(c_part) == 2 and 1 <= int(c_part[1]) <= 12 else r["periodo_copia"]
+            result.append(
+                RundownPeriodoProyeccionItem(
+                    id_proyeccion=r["id_proyeccion"],
+                    anio=anio,
+                    mes=mes,
+                    periodo=r["periodo"],
+                    periodo_copia=r["periodo_copia"],
+                    label=f"{nom} {anio} (Copia de {c_nom})",
+                    observacion=r.get("observacion"),
+                    es_oficial=(anio, mes) in official_set,
+                    activo=r["activo"],
+                )
+            )
+        return result
+
+    def create_periodo_proyeccion(self, data: RundownPeriodoProyeccionCreate) -> int:
+        return self._repo.create_or_update_periodo_proyeccion(
+            anio=data.anio,
+            mes=data.mes,
+            periodo_copia=data.periodo_copia,
+            observacion=data.observacion,
+        )
+
+    def delete_periodo_proyeccion(self, id_proyeccion: int) -> bool:
+        deleted = self._repo.delete_periodo_proyeccion(id_proyeccion)
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Proyección ID {id_proyeccion} no encontrada",
+            )
+        return True
 
     def _compute_carryover_stock(
         self,

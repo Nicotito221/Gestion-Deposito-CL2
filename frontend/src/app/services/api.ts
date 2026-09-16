@@ -253,6 +253,7 @@ export interface RundownDayCell {
   dias_cobertura: number;
   alerta_quiebre: boolean;
   tiene_ajuste?: boolean;
+  desvio_ajuste?: number;
 }
 
 export interface RundownMaterialGrid {
@@ -277,6 +278,9 @@ export interface RundownPeriodoItem {
   mes: number;
   label: string;
   es_firme: boolean;
+  es_proyectado_manual?: boolean;
+  periodo_copia?: string | null;
+  total_volumen?: number;
 }
 
 export interface RundownSupplierReport {
@@ -314,6 +318,7 @@ export interface RundownIngresoDiaInput {
   po_numero?: string;
   factura_numero?: string;
   observacion?: string;
+  fecha_origen?: string;
 }
 
 export async function getSupplierRundown(
@@ -585,4 +590,136 @@ export async function updateRundownProveedor(
   }
   return res.json();
 }
+
+export interface MaterialCatalogoItem {
+  id_material: string;
+  nombre: string;
+  unidad?: string;
+  categoria?: string | null;
+}
+
+export interface RundownParametroMaterialItem {
+  id_parametro: number;
+  id_proveedor: number;
+  id_material: string;
+  descripcion: string;
+  unidad: string;
+  lote_mts?: number | null;
+  scrap_porcentaje: number;
+  factor_conversion: number;
+  categoria_cabina?: string | null;
+  stock_inicial_planta: number;
+  stock_inicial_total: number;
+  cant_productos: number;
+  activo: boolean;
+}
+
+export interface RundownParametroMaterialCreate {
+  id_material: string;
+  descripcion?: string;
+  unidad?: string;
+  lote_mts?: number;
+  scrap_porcentaje?: number;
+  factor_conversion?: number;
+  categoria_cabina?: string;
+  stock_inicial_planta?: number;
+  stock_inicial_total?: number;
+}
+
+export async function searchMaterialesCatalogo(q: string = ""): Promise<MaterialCatalogoItem[]> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo${qs}`);
+  if (!res.ok) throw new Error("Error al buscar materiales en catálogo");
+  return res.json();
+}
+
+export async function getProveedorMateriales(idProveedor: number): Promise<RundownParametroMaterialItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales`);
+  if (!res.ok) throw new Error("Error al cargar materiales del proveedor");
+  return res.json();
+}
+
+export async function addProveedorMaterial(
+  idProveedor: number,
+  data: RundownParametroMaterialCreate
+): Promise<{ id_parametro: number; mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al agregar material al rundown");
+  }
+  return res.json();
+}
+
+export async function deleteProveedorMaterial(
+  idProveedor: number,
+  idParametro: number
+): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales/${idParametro}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al remover material del rundown");
+  }
+  return res.json();
+}
+
+export interface RundownPeriodoProyeccionItem {
+  id_proyeccion: number;
+  anio: number;
+  mes: number;
+  periodo: string;
+  periodo_copia: string;
+  label: string;
+  observacion?: string | null;
+  es_oficial: boolean;
+  activo: boolean;
+}
+
+export interface RundownPeriodoProyeccionCreate {
+  anio: number;
+  mes: number;
+  periodo_copia: string;
+  observacion?: string;
+}
+
+export async function getPeriodosProyeccion(): Promise<RundownPeriodoProyeccionItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion`);
+  if (!res.ok) throw new Error("Error al cargar períodos de proyección");
+  return res.json();
+}
+
+export async function createPeriodoProyeccion(
+  data: RundownPeriodoProyeccionCreate
+): Promise<{ id_proyeccion: number; mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al configurar período de proyección");
+  }
+  return res.json();
+}
+
+export async function deletePeriodoProyeccion(
+  idProyeccion: number
+): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion/${idProyeccion}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al eliminar período de proyección");
+  }
+  return res.json();
+}
+
 

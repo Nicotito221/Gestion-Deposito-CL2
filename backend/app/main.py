@@ -1,8 +1,12 @@
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_db_connection
 from app.routers import bom, supply, rundown
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Gestión Depósito API",
@@ -24,6 +28,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.exception("Error no controlado en la API: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+    )
+
 
 app.include_router(bom.router)
 app.include_router(supply.router)

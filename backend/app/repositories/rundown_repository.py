@@ -346,10 +346,20 @@ class RundownRepository:
         po_numero: Optional[str] = None,
         factura_numero: Optional[str] = None,
         observacion: Optional[str] = None,
+        fecha_origen: Optional[date] = None,
     ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            if fecha_origen and fecha_origen != fecha_eta:
+                cursor.execute(
+                    """
+                    DELETE FROM dbo.rundown_transito_arribo
+                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ?
+                    """,
+                    (id_proveedor, id_material, fecha_origen, tipo_via),
+                )
+
             if cantidad == 0:
                 cursor.execute(
                     """
@@ -526,7 +536,7 @@ class RundownRepository:
                 "", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
                 "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
             )
-            result = []
+            result_map: Dict[Tuple[int, int], Dict[str, Any]] = {}
             for r in cursor.fetchall():
                 anio = int(r[0])
                 mes = int(r[1])
@@ -536,16 +546,60 @@ class RundownRepository:
                 periodo = f"{anio:04d}-{mes:02d}"
                 nombre = meses_nombres[mes] if 1 <= mes <= 12 else str(mes)
                 label = f"{nombre} {anio}" + (" (En Firme)" if es_firme else "")
-                result.append({
+                result_map[(anio, mes)] = {
                     "periodo": periodo,
                     "anio": anio,
                     "mes": mes,
                     "cant_dias_datos": cant_dias,
                     "total_volumen": volumen,
                     "es_firme": es_firme,
+                    "es_proyectado_manual": False,
+                    "periodo_copia": None,
                     "label": label,
-                })
-            return result
+                }
+
+            cursor.execute(
+                """
+                SELECT id_proyeccion, anio, mes, periodo_copia, observacion
+                FROM dbo.rundown_periodo_proyeccion
+                WHERE activo = 1
+                ORDER BY anio, mes
+                """
+            )
+            for r in cursor.fetchall():
+                p_anio = int(r[1])
+                p_mes = int(r[2])
+                p_copia = str(r[3])
+                periodo = f"{p_anio:04d}-{p_mes:02d}"
+
+                if (p_anio, p_mes) in result_map:
+                    continue
+
+                try:
+                    c_anio, c_mes = [int(x) for x in p_copia.split("-")]
+                    c_nom = meses_nombres[c_mes] if 1 <= c_mes <= 12 else str(c_mes)
+                    c_volumen = result_map.get((c_anio, c_mes), {}).get("total_volumen", 0.0)
+                except Exception:
+                    c_nom = p_copia
+                    c_volumen = 0.0
+
+                nombre = meses_nombres[p_mes] if 1 <= p_mes <= 12 else str(p_mes)
+                label = f"{nombre} {p_anio} (Proy. de {c_nom})"
+
+                result_map[(p_anio, p_mes)] = {
+                    "periodo": periodo,
+                    "anio": p_anio,
+                    "mes": p_mes,
+                    "cant_dias_datos": 0,
+                    "total_volumen": c_volumen,
+                    "es_firme": False,
+                    "es_proyectado_manual": True,
+                    "periodo_copia": p_copia,
+                    "label": label,
+                }
+
+            sorted_keys = sorted(result_map.keys())
+            return [result_map[k] for k in sorted_keys]
         finally:
             cursor.close()
             conn.close()
@@ -616,8 +670,332 @@ class RundownRepository:
             """
             params: List[Any] = list(product_ids) + [anio, mes]
             cursor.execute(sql, params)
+            res = {str(r[0]): float(r[1] or 0.0) for r in cursor.fetchall()}
+            if res:
+                return res
+
+            root_anio, root_mes = self._resolve_root_production_period(cursor, anio, mes)
+            sql_copia = f"""
+                SELECT id_producto, SUM(cantidad_planificada)
+                FROM dbo.produccion_planificada
+                WHERE id_producto IN ({placeholders}) AND YEAR(fecha) = ? AND MONTH(fecha) = ?
+                GROUP BY id_producto
+            """
+            cursor.execute(sql_copia, list(product_ids) + [root_anio, root_mes])
             return {str(r[0]): float(r[1] or 0.0) for r in cursor.fetchall()}
         finally:
             cursor.close()
             conn.close()
+
+    def _resolve_root_production_period(
+        self, cursor: pyodbc.Cursor, anio: int, mes: int, max_depth: int = 10
+    ) -> Tuple[int, int]:
+        visited: set = set()
+        curr_anio, curr_mes = anio, mes
+        for _ in range(max_depth):
+            cursor.execute(
+                "SELECT COUNT(1) FROM dbo.produccion_planificada WHERE YEAR(fecha) = ? AND MONTH(fecha) = ?",
+                (curr_anio, curr_mes),
+            )
+            row = cursor.fetchone()
+            if row and row[0] > 0:
+                return curr_anio, curr_mes
+
+            cursor.execute(
+                "SELECT periodo_copia FROM dbo.rundown_periodo_proyeccion WHERE anio = ? AND mes = ? AND activo = 1",
+                (curr_anio, curr_mes),
+            )
+            p_row = cursor.fetchone()
+            if not p_row or not p_row[0]:
+                break
+
+            copia_str = str(p_row[0]).strip()
+            if copia_str in visited:
+                break
+            visited.add(copia_str)
+            try:
+                curr_anio, curr_mes = [int(x) for x in copia_str.split("-")]
+            except Exception:
+                break
+
+        cursor.execute(
+            "SELECT TOP 1 YEAR(fecha), MONTH(fecha) FROM dbo.produccion_planificada ORDER BY fecha DESC"
+        )
+        latest = cursor.fetchone()
+        if latest:
+            return int(latest[0]), int(latest[1])
+        return 2026, 9
+
+    def search_materiales_catalogo(
+        self, query: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            term = f"%{query.strip()}%" if query.strip() else "%"
+            cursor.execute(
+                """
+                SELECT TOP (?) id_material, nombre, unidad, categoria
+                FROM dbo.material
+                WHERE activo = 1 AND (id_material LIKE ? OR nombre LIKE ?)
+                ORDER BY id_material
+                """,
+                (limit, term, term),
+            )
+            return [
+                {
+                    "id_material": str(r[0]),
+                    "nombre": str(r[1] or ""),
+                    "unidad": str(r[2] or "UN"),
+                    "categoria": str(r[3]) if r[3] else None,
+                }
+                for r in cursor.fetchall()
+            ]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_parametros_material_proveedor(
+        self, id_proveedor: int
+    ) -> List[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT m.id_parametro, m.id_proveedor, m.id_material, m.descripcion, m.unidad,
+                       m.lote_mts, m.scrap_porcentaje, m.factor_conversion, m.categoria_cabina,
+                       m.stock_inicial_planta, m.stock_inicial_total, m.activo,
+                       COUNT(p.id_producto) AS cant_productos
+                FROM dbo.rundown_parametro_material m
+                LEFT JOIN dbo.rundown_parametro_producto p ON m.id_parametro = p.id_parametro
+                WHERE m.id_proveedor = ? AND m.activo = 1
+                GROUP BY m.id_parametro, m.id_proveedor, m.id_material, m.descripcion, m.unidad,
+                         m.lote_mts, m.scrap_porcentaje, m.factor_conversion, m.categoria_cabina,
+                         m.stock_inicial_planta, m.stock_inicial_total, m.activo
+                ORDER BY m.id_parametro
+                """,
+                (id_proveedor,),
+            )
+            return [
+                {
+                    "id_parametro": int(r[0]),
+                    "id_proveedor": int(r[1]),
+                    "id_material": str(r[2]),
+                    "descripcion": str(r[3] or ""),
+                    "unidad": str(r[4] or "UN"),
+                    "lote_mts": float(r[5]) if r[5] is not None else None,
+                    "scrap_porcentaje": float(r[6]),
+                    "factor_conversion": float(r[7]),
+                    "categoria_cabina": str(r[8]) if r[8] else None,
+                    "stock_inicial_planta": float(r[9] or 0.0),
+                    "stock_inicial_total": float(r[10] or 0.0),
+                    "activo": bool(r[11]),
+                    "cant_productos": int(r[12]),
+                }
+                for r in cursor.fetchall()
+            ]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_or_update_parametro_material(
+        self, id_proveedor: int, data: Dict[str, Any]
+    ) -> int:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id_parametro FROM dbo.rundown_parametro_material WHERE id_proveedor = ? AND id_material = ?",
+                (id_proveedor, data["id_material"]),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                param_id = int(existing[0])
+                cursor.execute(
+                    """
+                    UPDATE dbo.rundown_parametro_material
+                    SET descripcion = ?, unidad = ?, lote_mts = ?, scrap_porcentaje = ?,
+                        factor_conversion = ?, categoria_cabina = ?,
+                        stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ?,
+                        activo = 1
+                    WHERE id_parametro = ?
+                    """,
+                    (
+                        data.get("descripcion") or data["id_material"],
+                        data.get("unidad", "MTS"),
+                        data.get("lote_mts"),
+                        data.get("scrap_porcentaje", 0.0),
+                        data.get("factor_conversion", 1.0),
+                        data.get("categoria_cabina"),
+                        data.get("stock_inicial_planta", 0.0),
+                        data.get("stock_inicial_total", 0.0),
+                        data.get("stock_inicial_total", 0.0),
+                        param_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.rundown_parametro_material (
+                        id_proveedor, id_material, descripcion, unidad, lote_mts,
+                        scrap_porcentaje, factor_conversion, categoria_cabina,
+                        stock_inicial_planta, stock_inicial_total, stock_inicial_referencia,
+                        fecha_stock_inicial, activo
+                    )
+                    OUTPUT INSERTED.id_parametro
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-09-01', 1)
+                    """,
+                    (
+                        id_proveedor,
+                        data["id_material"],
+                        data.get("descripcion") or data["id_material"],
+                        data.get("unidad", "MTS"),
+                        data.get("lote_mts"),
+                        data.get("scrap_porcentaje", 0.0),
+                        data.get("factor_conversion", 1.0),
+                        data.get("categoria_cabina"),
+                        data.get("stock_inicial_planta", 0.0),
+                        data.get("stock_inicial_total", 0.0),
+                        data.get("stock_inicial_total", 0.0),
+                    ),
+                )
+                param_id = int(cursor.fetchone()[0])
+            conn.commit()
+            return param_id
+        finally:
+            cursor.close()
+            conn.close()
+
+    def auto_link_bom_productos(
+        self, id_parametro: int, id_material: str
+    ) -> int:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT DISTINCT b.id_producto_raiz, b.factor_consumo_total
+                FROM dbo.bom_explosion_plana b
+                WHERE b.id_material_insumo = ?
+                  AND b.id_version = (SELECT TOP 1 id_version FROM dbo.bom_version ORDER BY es_vigente DESC, fecha_importacion DESC)
+                """,
+                (id_material,),
+            )
+            bom_rows = cursor.fetchall()
+
+            if not bom_rows:
+                cursor.execute("SELECT DISTINCT TOP 20 id_producto FROM dbo.produccion_planificada")
+                bom_rows = [(r[0], 1.0) for r in cursor.fetchall()]
+
+            count = 0
+            for prod_id, factor in bom_rows:
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (SELECT 1 FROM dbo.rundown_parametro_producto WHERE id_parametro = ? AND id_producto = ?)
+                    BEGIN
+                        INSERT INTO dbo.rundown_parametro_producto (id_parametro, id_producto, factor_uso)
+                        VALUES (?, ?, ?)
+                    END
+                    """,
+                    (id_parametro, str(prod_id), id_parametro, str(prod_id), float(factor)),
+                )
+                count += 1
+            conn.commit()
+            return count
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_parametro_material(self, id_parametro: int) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE dbo.rundown_parametro_material SET activo = 0 WHERE id_parametro = ?",
+                (id_parametro,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_periodos_proyeccion(self) -> List[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT id_proyeccion, anio, mes, periodo_copia, observacion, activo
+                FROM dbo.rundown_periodo_proyeccion
+                WHERE activo = 1
+                ORDER BY anio, mes
+                """
+            )
+            return [
+                {
+                    "id_proyeccion": int(r[0]),
+                    "anio": int(r[1]),
+                    "mes": int(r[2]),
+                    "periodo": f"{int(r[1]):04d}-{int(r[2]):02d}",
+                    "periodo_copia": str(r[3]),
+                    "observacion": str(r[4]) if r[4] else None,
+                    "activo": bool(r[5]),
+                }
+                for r in cursor.fetchall()
+            ]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_or_update_periodo_proyeccion(
+        self, anio: int, mes: int, periodo_copia: str, observacion: Optional[str] = None
+    ) -> int:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                IF EXISTS (SELECT 1 FROM dbo.rundown_periodo_proyeccion WHERE anio = ? AND mes = ?)
+                BEGIN
+                    UPDATE dbo.rundown_periodo_proyeccion
+                    SET periodo_copia = ?, observacion = ?, activo = 1
+                    OUTPUT INSERTED.id_proyeccion
+                    WHERE anio = ? AND mes = ?
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO dbo.rundown_periodo_proyeccion (anio, mes, periodo_copia, observacion, activo)
+                    OUTPUT INSERTED.id_proyeccion
+                    VALUES (?, ?, ?, ?, 1)
+                END
+                """,
+                (
+                    anio, mes,
+                    periodo_copia, observacion, anio, mes,
+                    anio, mes, periodo_copia, observacion,
+                ),
+            )
+            row = cursor.fetchone()
+            conn.commit()
+            return int(row[0]) if row else 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_periodo_proyeccion(self, id_proyeccion: int) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE dbo.rundown_periodo_proyeccion SET activo = 0 WHERE id_proyeccion = ?",
+                (id_proyeccion,),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
 
