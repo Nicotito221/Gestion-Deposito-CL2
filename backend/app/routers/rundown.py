@@ -15,6 +15,11 @@ from app.schemas.rundown import (
     RundownIngresoDiaUpdate,
     RundownCalendarioMesOut,
     RundownCalendarioMesSave,
+    MaterialCatalogoItem,
+    RundownParametroMaterialCreate,
+    RundownParametroMaterialItem,
+    RundownPeriodoProyeccionItem,
+    RundownPeriodoProyeccionCreate,
 )
 from app.services.rundown_service import RundownService
 
@@ -62,6 +67,42 @@ def update_proveedor(
     return {"mensaje": "Proveedor actualizado correctamente"}
 
 
+@router.get("/materiales-catalogo", response_model=List[MaterialCatalogoItem])
+def search_materiales_catalogo(
+    q: str = Query(default="", description="Búsqueda por código o nombre"),
+    service: RundownService = Depends(get_rundown_service),
+) -> List[MaterialCatalogoItem]:
+    return service.search_materiales_catalogo(q)
+
+
+@router.get("/proveedores/{id_proveedor}/materiales", response_model=List[RundownParametroMaterialItem])
+def get_materiales_proveedor(
+    id_proveedor: int,
+    service: RundownService = Depends(get_rundown_service),
+) -> List[RundownParametroMaterialItem]:
+    return service.get_materiales_proveedor(id_proveedor)
+
+
+@router.post("/proveedores/{id_proveedor}/materiales", status_code=status.HTTP_201_CREATED)
+def add_material_proveedor(
+    id_proveedor: int,
+    data: RundownParametroMaterialCreate,
+    service: RundownService = Depends(get_rundown_service),
+):
+    param_id = service.add_material_proveedor(id_proveedor, data)
+    return {"id_parametro": param_id, "mensaje": f"Material {data.id_material} agregado al Rundown"}
+
+
+@router.delete("/proveedores/{id_proveedor}/materiales/{id_parametro}")
+def delete_material_proveedor(
+    id_proveedor: int,
+    id_parametro: int,
+    service: RundownService = Depends(get_rundown_service),
+):
+    service.delete_material_proveedor(id_parametro)
+    return {"mensaje": "Material removido del Rundown"}
+
+
 @router.get("/proveedor/{identifier}", response_model=RundownSupplierReport)
 def get_supplier_rundown(
     identifier: str,
@@ -96,6 +137,31 @@ def save_calendario(
 ):
     service.save_calendario_mes(data)
     return {"mensaje": f"Calendario productivo para {data.anio}-{data.mes:02d} guardado exitosamente"}
+
+
+@router.get("/periodos-proyeccion", response_model=List[RundownPeriodoProyeccionItem])
+def get_periodos_proyeccion(
+    service: RundownService = Depends(get_rundown_service),
+) -> List[RundownPeriodoProyeccionItem]:
+    return service.get_periodos_proyeccion()
+
+
+@router.post("/periodos-proyeccion", status_code=status.HTTP_201_CREATED)
+def create_periodo_proyeccion(
+    data: RundownPeriodoProyeccionCreate,
+    service: RundownService = Depends(get_rundown_service),
+):
+    new_id = service.create_periodo_proyeccion(data)
+    return {"id_proyeccion": new_id, "mensaje": f"Proyección para {data.anio}-{data.mes:02d} configurada exitosamente"}
+
+
+@router.delete("/periodos-proyeccion/{id_proyeccion}")
+def delete_periodo_proyeccion(
+    id_proyeccion: int,
+    service: RundownService = Depends(get_rundown_service),
+):
+    service.delete_periodo_proyeccion(id_proyeccion)
+    return {"mensaje": "Mes de proyección eliminado del horizonte extendido"}
 
 
 @router.post("/transito", status_code=status.HTTP_201_CREATED)

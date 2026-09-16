@@ -40,6 +40,9 @@ import {
   Percent,
   CalendarDays,
   Truck,
+  SlidersHorizontal,
+  Trash2,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -55,6 +58,13 @@ import {
   updateRundownScrap,
   getRundownCalendarioMes,
   saveRundownCalendarioMes,
+  searchMaterialesCatalogo,
+  getProveedorMateriales,
+  addProveedorMaterial,
+  deleteProveedorMaterial,
+  getPeriodosProyeccion,
+  createPeriodoProyeccion,
+  deletePeriodoProyeccion,
   type RundownSeccionItem,
   type RundownSupplierReport,
   type RundownMaterialGrid,
@@ -62,6 +72,10 @@ import {
   type RundownPeriodoItem,
   type RundownCalendarioMesOut,
   type RundownCalendarioDia,
+  type MaterialCatalogoItem,
+  type RundownParametroMaterialItem,
+  type RundownPeriodoProyeccionItem,
+  type RundownPeriodoProyeccionCreate,
 } from "../services/api";
 
 export function RundownVivo() {
@@ -78,7 +92,31 @@ export function RundownVivo() {
   const [activeMaterialTab, setActiveMaterialTab] = useState<string>("todos");
 
   const [adminModalOpen, setAdminModalOpen] = useState<boolean>(false);
-  const [adminTab, setAdminTab] = useState<"secciones" | "proveedores">("secciones");
+  const [adminTab, setAdminTab] = useState<"secciones" | "proveedores" | "materiales">("secciones");
+  const [adminMaterialProvId, setAdminMaterialProvId] = useState<number>(0);
+  const [provMaterialesList, setProvMaterialesList] = useState<RundownParametroMaterialItem[]>([]);
+  const [loadingProvMateriales, setLoadingProvMateriales] = useState<boolean>(false);
+  const [catalogoSearchResults, setCatalogoSearchResults] = useState<MaterialCatalogoItem[]>([]);
+  const [catalogoSearchQuery, setCatalogoSearchQuery] = useState<string>("");
+  const [isSearchingCatalogo, setIsSearchingCatalogo] = useState<boolean>(false);
+  const [newMaterialForm, setNewMaterialForm] = useState<{
+    id_material: string;
+    descripcion: string;
+    unidad: string;
+    lote_mts: number;
+    scrap_porcentaje: number;
+    stock_inicial_planta: number;
+    stock_inicial_total: number;
+  }>({
+    id_material: "",
+    descripcion: "",
+    unidad: "MTS",
+    lote_mts: 0,
+    scrap_porcentaje: 0,
+    stock_inicial_planta: 0,
+    stock_inicial_total: 0,
+  });
+  const [isAddingMaterial, setIsAddingMaterial] = useState<boolean>(false);
   const [newSeccionForm, setNewSeccionForm] = useState({ codigo: "", nombre: "", descripcion: "" });
   const [newProvForm, setNewProvForm] = useState({ codigo_proveedor: "", nombre: "", id_seccion: 0 });
   const [isSavingAdmin, setIsSavingAdmin] = useState<boolean>(false);
@@ -100,6 +138,7 @@ export function RundownVivo() {
   const [isSavingIngreso, setIsSavingIngreso] = useState<boolean>(false);
   const [ingresoEditForm, setIngresoEditForm] = useState<{
     id_material: string;
+    fecha_origen: string;
     fecha_eta: string;
     dia_nombre: string;
     tipo_via: "Maritimo" | "Aereo" | "Local" | "AjusteScrap";
@@ -109,6 +148,7 @@ export function RundownVivo() {
     observacion: string;
   }>({
     id_material: "",
+    fecha_origen: "",
     fecha_eta: "",
     dia_nombre: "",
     tipo_via: "Maritimo",
@@ -151,6 +191,22 @@ export function RundownVivo() {
   const [calSaving, setCalSaving] = useState<boolean>(false);
   const [calSelectedAnio, setCalSelectedAnio] = useState<number>(2026);
   const [calSelectedMes, setCalSelectedMes] = useState<number>(10);
+
+  const [horizonteModalOpen, setHorizonteModalOpen] = useState<boolean>(false);
+  const [periodosProyeccion, setPeriodosProyeccion] = useState<RundownPeriodoProyeccionItem[]>([]);
+  const [loadingProyecciones, setLoadingProyecciones] = useState<boolean>(false);
+  const [isSavingProyeccion, setIsSavingProyeccion] = useState<boolean>(false);
+  const [newProyeccionForm, setNewProyeccionForm] = useState<{
+    anio: number;
+    mes: number;
+    periodo_copia: string;
+    observacion: string;
+  }>({
+    anio: 2027,
+    mes: 3,
+    periodo_copia: "2027-02",
+    observacion: "",
+  });
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -315,6 +371,7 @@ export function RundownVivo() {
   ) => {
     setIngresoEditForm({
       id_material: materialId,
+      fecha_origen: fechaEta,
       fecha_eta: fechaEta,
       dia_nombre: diaNombre,
       tipo_via: tipoVia,
@@ -326,10 +383,48 @@ export function RundownVivo() {
     setEditIngresoModalOpen(true);
   };
 
+  const handleShiftDate = (days: number) => {
+    if (!ingresoEditForm.fecha_eta) return;
+    const [y, m, d] = ingresoEditForm.fecha_eta.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    dt.setDate(dt.getDate() + days);
+    const newY = dt.getFullYear();
+    const newM = (dt.getMonth() + 1).toString().padStart(2, "0");
+    const newD = dt.getDate().toString().padStart(2, "0");
+    const newDateStr = `${newY}-${newM}-${newD}`;
+
+    const mat = report?.materiales.find((m) => m.id_material === ingresoEditForm.id_material);
+    const dayCell = mat?.dias.find((d) => d.fecha === newDateStr);
+    const newDiaNombre = dayCell ? dayCell.dia_nombre : `${newD}/${newM}`;
+
+    setIngresoEditForm((prev) => ({
+      ...prev,
+      fecha_eta: newDateStr,
+      dia_nombre: newDiaNombre,
+    }));
+  };
+
+  const handleDirectDateChange = (newDateStr: string) => {
+    if (!newDateStr) return;
+    const parts = newDateStr.split("-");
+    if (parts.length !== 3) return;
+    const [, newM, newD] = parts;
+    const mat = report?.materiales.find((m) => m.id_material === ingresoEditForm.id_material);
+    const dayCell = mat?.dias.find((d) => d.fecha === newDateStr);
+    const newDiaNombre = dayCell ? dayCell.dia_nombre : `${newD}/${newM}`;
+
+    setIngresoEditForm((prev) => ({
+      ...prev,
+      fecha_eta: newDateStr,
+      dia_nombre: newDiaNombre,
+    }));
+  };
+
   const handleSubmitEditIngreso = async () => {
     if (!report) return;
     setIsSavingIngreso(true);
     try {
+      const isShifted = ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta;
       await upsertRundownIngresoDia({
         id_proveedor: report.id_proveedor,
         id_material: ingresoEditForm.id_material,
@@ -339,8 +434,13 @@ export function RundownVivo() {
         po_numero: ingresoEditForm.po_numero.trim() || undefined,
         factura_numero: ingresoEditForm.factura_numero.trim() || undefined,
         observacion: ingresoEditForm.observacion.trim() || undefined,
+        fecha_origen: isShifted ? ingresoEditForm.fecha_origen : undefined,
       });
-      toast.success("Ingreso actualizado correctamente");
+      toast.success(
+        isShifted
+          ? `Pedido desplazado del ${ingresoEditForm.fecha_origen} al ${ingresoEditForm.fecha_eta}`
+          : "Ingreso actualizado correctamente"
+      );
       setEditIngresoModalOpen(false);
       await fetchRundown();
     } catch (err) {
@@ -484,6 +584,184 @@ export function RundownVivo() {
       await fetchSecciones();
     } catch {
       toast.error("Error al reasignar proveedor");
+    }
+  };
+
+  const fetchProvMateriales = useCallback(async (idProv: number) => {
+    if (!idProv) return;
+    setLoadingProvMateriales(true);
+    try {
+      const list = await getProveedorMateriales(idProv);
+      setProvMaterialesList(list);
+    } catch {
+      toast.error("Error al cargar materiales del proveedor");
+    } finally {
+      setLoadingProvMateriales(false);
+    }
+  }, []);
+
+  const handleSearchCatalogo = async (query: string) => {
+    setCatalogoSearchQuery(query);
+    if (!query.trim()) {
+      setCatalogoSearchResults([]);
+      return;
+    }
+    setIsSearchingCatalogo(true);
+    try {
+      const res = await searchMaterialesCatalogo(query.trim());
+      setCatalogoSearchResults(res);
+    } catch {
+      toast.error("Error al buscar en catálogo de materiales");
+    } finally {
+      setIsSearchingCatalogo(false);
+    }
+  };
+
+  const handleSelectCatalogoItem = (item: MaterialCatalogoItem) => {
+    setNewMaterialForm((prev) => ({
+      ...prev,
+      id_material: item.id_material,
+      descripcion: item.nombre || item.id_material,
+      unidad: item.unidad || "MTS",
+    }));
+    setCatalogoSearchResults([]);
+    setCatalogoSearchQuery(item.id_material);
+  };
+
+  const handleAddMaterialToProveedor = async () => {
+    if (!adminMaterialProvId) {
+      toast.error("Seleccione un proveedor");
+      return;
+    }
+    if (!newMaterialForm.id_material.trim()) {
+      toast.error("Ingrese el código del material");
+      return;
+    }
+    setIsAddingMaterial(true);
+    try {
+      const res = await addProveedorMaterial(adminMaterialProvId, {
+        id_material: newMaterialForm.id_material.trim().toUpperCase(),
+        descripcion: newMaterialForm.descripcion.trim(),
+        unidad: newMaterialForm.unidad.trim() || "MTS",
+        lote_mts: newMaterialForm.lote_mts,
+        scrap_porcentaje: newMaterialForm.scrap_porcentaje / 100,
+        stock_inicial_planta: Math.round(newMaterialForm.stock_inicial_planta),
+        stock_inicial_total: Math.round(newMaterialForm.stock_inicial_total),
+      });
+      toast.success(res.mensaje);
+      setNewMaterialForm({
+        id_material: "",
+        descripcion: "",
+        unidad: "MTS",
+        lote_mts: 0,
+        scrap_porcentaje: 0,
+        stock_inicial_planta: 0,
+        stock_inicial_total: 0,
+      });
+      setCatalogoSearchQuery("");
+      await fetchProvMateriales(adminMaterialProvId);
+      await fetchSecciones();
+      if (activeSupplier && activeSupplier.id_proveedor === adminMaterialProvId) {
+        await fetchRundown();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al agregar material";
+      toast.error(msg);
+    } finally {
+      setIsAddingMaterial(false);
+    }
+  };
+
+  const handleDeleteMaterialParam = async (idParametro: number) => {
+    if (!confirm("¿Confirma que desea eliminar este material del Rundown de este proveedor?")) return;
+    try {
+      await deleteProveedorMaterial(adminMaterialProvId, idParametro);
+      toast.success("Material eliminado del Rundown");
+      await fetchProvMateriales(adminMaterialProvId);
+      await fetchSecciones();
+      if (activeSupplier && activeSupplier.id_proveedor === adminMaterialProvId) {
+        await fetchRundown();
+      }
+    } catch {
+      toast.error("Error al eliminar material");
+    }
+  };
+
+  const handleOpenAdminMateriales = (idProv?: number) => {
+    const targetId = idProv || activeSupplier?.id_proveedor || (secciones[0]?.proveedores[0]?.id_proveedor ?? 0);
+    setAdminMaterialProvId(targetId);
+    setAdminTab("materiales");
+    setAdminModalOpen(true);
+    if (targetId) {
+      fetchProvMateriales(targetId);
+    }
+  };
+
+  const fetchPeriodosProyeccion = useCallback(async () => {
+    setLoadingProyecciones(true);
+    try {
+      const data = await getPeriodosProyeccion();
+      setPeriodosProyeccion(data);
+    } catch {
+      toast.error("Error al cargar períodos de proyección");
+    } finally {
+      setLoadingProyecciones(false);
+    }
+  }, []);
+
+  const handleOpenHorizonteModal = () => {
+    let nextAnio = 2027;
+    let nextMes = 3;
+    let baseCopia = "2027-02";
+
+    if (report && report.meses_disponibles.length > 0) {
+      const last = report.meses_disponibles[report.meses_disponibles.length - 1];
+      baseCopia = last.periodo;
+      if (last.mes === 12) {
+        nextAnio = last.anio + 1;
+        nextMes = 1;
+      } else {
+        nextAnio = last.anio;
+        nextMes = last.mes + 1;
+      }
+    }
+
+    setNewProyeccionForm({
+      anio: nextAnio,
+      mes: nextMes,
+      periodo_copia: baseCopia,
+      observacion: "",
+    });
+    fetchPeriodosProyeccion();
+    setHorizonteModalOpen(true);
+  };
+
+  const handleCreateProyeccion = async () => {
+    setIsSavingProyeccion(true);
+    try {
+      const res = await createPeriodoProyeccion(newProyeccionForm);
+      toast.success(res.mensaje);
+      await fetchPeriodosProyeccion();
+      await fetchRundown();
+      setSelectedPeriodo(`${newProyeccionForm.anio}-${newProyeccionForm.mes.toString().padStart(2, "0")}`);
+      setHorizonteModalOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al agregar proyección";
+      toast.error(msg);
+    } finally {
+      setIsSavingProyeccion(false);
+    }
+  };
+
+  const handleDeleteProyeccion = async (idProyeccion: number) => {
+    if (!confirm("¿Confirma que desea eliminar este mes extendido del horizonte?")) return;
+    try {
+      await deletePeriodoProyeccion(idProyeccion);
+      toast.success("Mes de proyección eliminado");
+      await fetchPeriodosProyeccion();
+      await fetchRundown();
+    } catch {
+      toast.error("Error al eliminar mes de proyección");
     }
   };
 
@@ -656,7 +934,7 @@ export function RundownVivo() {
             className="flex items-center gap-1.5 text-slate-700 hover:text-slate-900"
           >
             <Settings className="w-4 h-4 text-slate-500" />
-            <span>Configurar Secciones</span>
+            <span>Configurar Rundown</span>
           </Button>
 
           <Button
@@ -755,6 +1033,10 @@ export function RundownVivo() {
                     <Badge className="ml-1.5 bg-emerald-600 text-white text-[9px] px-1 py-0 h-4 hover:bg-emerald-600">
                       Firme
                     </Badge>
+                  ) : p.es_proyectado_manual ? (
+                    <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 h-4 border-purple-300 bg-purple-50 text-purple-700 font-bold">
+                      Extendido
+                    </Badge>
                   ) : (
                     <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 h-4 border-slate-300 text-slate-500">
                       Proyección
@@ -762,6 +1044,17 @@ export function RundownVivo() {
                   )}
                 </Button>
               ))}
+
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleOpenHorizonteModal}
+                className="text-xs h-8 text-indigo-700 border-indigo-200 bg-indigo-50/50 hover:bg-indigo-100/70"
+                title="Extender horizonte de meses futuros"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                <span>Extender Meses</span>
+              </Button>
             </div>
 
             {!report.es_mes_firme && (
@@ -901,10 +1194,20 @@ export function RundownVivo() {
             {activeSupplier ? activeSupplier.nombre : selectedSupplierCode}
           </h3>
           <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-            Este proveedor está registrado en la sección <strong>{activeSeccion?.nombre}</strong>. Sus recetas de consumo y espumas aún no han sido configuradas en el sistema.
+            Este proveedor está registrado en la sección <strong>{activeSeccion?.nombre}</strong>. Sus recetas de consumo y materiales aún no han sido configurados en el sistema.
           </p>
-          <p className="text-xs text-slate-400 mt-2">
-            Seleccione <strong>HOWA</strong> para visualizar el Rundown activo de Headliner.
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => handleOpenAdminMateriales(activeSupplier?.id_proveedor)}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-xs gap-1.5"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Configurar Materiales para {activeSupplier ? activeSupplier.nombre : selectedSupplierCode}
+            </Button>
+          </div>
+          <p className="text-xs text-slate-400 mt-3">
+            O seleccione <strong>HOWA</strong> para visualizar el Rundown activo de Headliner.
           </p>
         </Card>
       ) : (
@@ -1087,23 +1390,29 @@ export function RundownVivo() {
                         </>
                       )}
 
-                      <tr className="hover:bg-emerald-50/30">
+                      <tr className="hover:bg-amber-50/40">
                         <td className="sticky left-0 z-10 bg-white font-medium text-slate-600 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                          <PackageCheck className="w-3.5 h-3.5 text-slate-500" />
-                          <span>Local / Mermas</span>
+                          <PackageCheck className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Ajustes</span>
                         </td>
                         {mat.dias.map((d) => {
-                          const val = d.entregas_locales - d.ajuste_scrap;
+                          const desvio = d.desvio_ajuste !== undefined ? Math.round(d.desvio_ajuste) : 0;
                           return (
                             <td
                               key={d.fecha}
-                              onClick={() => handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Local", d.entregas_locales || d.ajuste_scrap)}
-                              className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-emerald-100/70 transition-colors"
-                              title="Haz clic para editar entrega local o merma"
+                              onClick={() => handleOpenStockModal(mat, d.fecha)}
+                              className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-amber-100/60 transition-colors"
+                              title="Diferencia entre stock estimado y conteo real físico del día. Haz clic para ajustar stock."
                             >
-                              {val !== 0 ? (
-                                <span className={`font-semibold ${val > 0 ? "text-emerald-600" : "text-amber-600"}`}>
-                                  {val > 0 ? `+${val}` : val}
+                              {desvio !== 0 ? (
+                                <span
+                                  className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
+                                    desvio > 0
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : "bg-amber-100 text-amber-900"
+                                  }`}
+                                >
+                                  {desvio > 0 ? `+${desvio.toLocaleString("es-AR")}` : desvio.toLocaleString("es-AR")}
                                 </span>
                               ) : (
                                 <span className="text-slate-300 hover:text-slate-600 text-[11px]">—</span>
@@ -1183,14 +1492,77 @@ export function RundownVivo() {
           </DialogHeader>
 
           <div className="space-y-3 py-2 text-sm">
-            <div className="bg-slate-50 p-3 rounded-lg border text-xs grid grid-cols-2 gap-2">
-              <div>
-                <span className="text-slate-500">Espuma:</span>
-                <p className="font-mono font-bold text-slate-900">{ingresoEditForm.id_material}</p>
+            <div className="bg-slate-50 p-3 rounded-lg border text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-slate-500">Material:</span>
+                  <p className="font-mono font-bold text-slate-900">{ingresoEditForm.id_material}</p>
+                </div>
+                {ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta && (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300 text-[10px]">
+                    Desplazando desde {ingresoEditForm.fecha_origen}
+                  </Badge>
+                )}
               </div>
-              <div>
-                <span className="text-slate-500">Fecha ETA:</span>
-                <p className="font-mono font-bold text-slate-900">{ingresoEditForm.fecha_eta} ({ingresoEditForm.dia_nombre})</p>
+
+              <div className="pt-1 border-t border-slate-200">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-slate-600 font-medium flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                    Fecha ETA / Arribo:
+                  </span>
+                  <span className="font-mono text-xs text-slate-700 font-semibold">
+                    {ingresoEditForm.dia_nombre}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs font-mono"
+                    onClick={() => handleShiftDate(-7)}
+                    title="Retroceder 1 semana (-7 días)"
+                  >
+                    -7d
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs font-mono"
+                    onClick={() => handleShiftDate(-1)}
+                    title="Retroceder 1 día"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </Button>
+                  <Input
+                    type="date"
+                    value={ingresoEditForm.fecha_eta}
+                    onChange={(e) => handleDirectDateChange(e.target.value)}
+                    className="h-8 text-xs font-mono flex-1 text-center"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs font-mono"
+                    onClick={() => handleShiftDate(1)}
+                    title="Avanzar 1 día"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 px-2 text-xs font-mono"
+                    onClick={() => handleShiftDate(7)}
+                    title="Avanzar 1 semana (+7 días)"
+                  >
+                    +7d
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1271,20 +1643,28 @@ export function RundownVivo() {
             <Button
               onClick={handleSubmitEditIngreso}
               disabled={isSavingIngreso}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className={
+                ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
+                  ? "bg-amber-600 hover:bg-amber-700 text-white"
+                  : "bg-blue-600 hover:bg-blue-700 text-white"
+              }
             >
-              {isSavingIngreso ? "Guardando..." : "Guardar Cambios"}
+              {isSavingIngreso
+                ? "Guardando..."
+                : ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
+                ? `Desplazar pedido al ${ingresoEditForm.fecha_eta}`
+                : "Guardar Cambios"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={adminModalOpen} onOpenChange={setAdminModalOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings className="w-5 h-5 text-blue-600" />
-              <span>Administrar Secciones y Proveedores</span>
+              <span>Administrar Rundown — Secciones, Proveedores y Materiales</span>
             </DialogTitle>
           </DialogHeader>
 
@@ -1309,6 +1689,23 @@ export function RundownVivo() {
                 }`}
               >
                 Proveedores y Asignaciones
+              </button>
+              <button
+                onClick={() => {
+                  setAdminTab("materiales");
+                  const pId = adminMaterialProvId || activeSupplier?.id_proveedor || (secciones[0]?.proveedores[0]?.id_proveedor ?? 0);
+                  if (pId) {
+                    setAdminMaterialProvId(pId);
+                    fetchProvMateriales(pId);
+                  }
+                }}
+                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${
+                  adminTab === "materiales"
+                    ? "border-blue-600 text-blue-600"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Materiales en Rundown
               </button>
             </div>
 
@@ -1367,7 +1764,7 @@ export function RundownVivo() {
                   </table>
                 </div>
               </div>
-            ) : (
+            ) : adminTab === "proveedores" ? (
               <div className="space-y-4">
                 <div className="border rounded-lg p-3 bg-slate-50 space-y-3">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
@@ -1413,6 +1810,7 @@ export function RundownVivo() {
                         <th className="p-2 text-left">Proveedor</th>
                         <th className="p-2 text-left">Sección Asignada</th>
                         <th className="p-2 text-center">Estado</th>
+                        <th className="p-2 text-center">Acción</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -1447,10 +1845,275 @@ export function RundownVivo() {
                               </Badge>
                             )}
                           </td>
+                          <td className="p-2 text-center">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => {
+                                setAdminMaterialProvId(p.id_proveedor);
+                                fetchProvMateriales(p.id_proveedor);
+                                setAdminTab("materiales");
+                              }}
+                              className="h-6 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                            >
+                              Materiales →
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-slate-50 border rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Warehouse className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-bold text-slate-700">Proveedor a configurar:</span>
+                  </div>
+                  <Select
+                    value={adminMaterialProvId ? String(adminMaterialProvId) : ""}
+                    onValueChange={(val) => {
+                      const numVal = parseInt(val, 10);
+                      setAdminMaterialProvId(numVal);
+                      fetchProvMateriales(numVal);
+                    }}
+                  >
+                    <SelectTrigger className="text-xs h-8 w-64 bg-white font-semibold">
+                      <SelectValue placeholder="Seleccione proveedor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {secciones.flatMap((s) =>
+                        s.proveedores.map((p) => (
+                          <SelectItem key={p.id_proveedor} value={String(p.id_proveedor)} className="text-xs">
+                            {p.nombre} ({s.nombre}) {p.tiene_parametros ? "✓" : ""}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="border rounded-lg p-3 bg-blue-50/30 border-blue-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                      <Plus className="w-4 h-4 text-blue-600" />
+                      <span>Agregar Material al Rundown</span>
+                    </div>
+                    <span className="text-[11px] text-slate-500">
+                      Vinculación automática con BOM de vehículos
+                    </span>
+                  </div>
+
+                  <div className="relative">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                      <Input
+                        placeholder="Buscar por código o descripción en el catálogo de materiales..."
+                        value={catalogoSearchQuery}
+                        onChange={(e) => handleSearchCatalogo(e.target.value)}
+                        className="pl-8 text-xs h-8 bg-white"
+                      />
+                    </div>
+                    {isSearchingCatalogo && (
+                      <div className="absolute top-9 left-0 right-0 z-20 bg-white border rounded shadow-md p-2 text-center text-xs text-slate-400">
+                        Buscando materiales...
+                      </div>
+                    )}
+                    {catalogoSearchResults.length > 0 && (
+                      <div className="absolute top-9 left-0 right-0 z-20 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto divide-y text-xs">
+                        {catalogoSearchResults.map((m) => (
+                          <button
+                            key={m.id_material}
+                            type="button"
+                            onClick={() => handleSelectCatalogoItem(m)}
+                            className="w-full p-2 text-left hover:bg-blue-50 flex items-center justify-between transition-colors"
+                          >
+                            <div>
+                              <span className="font-mono font-bold text-slate-900">{m.id_material}</span>
+                              <span className="text-slate-600 ml-2">{m.nombre}</span>
+                            </div>
+                            <Badge variant="outline" className="text-[10px]">
+                              {m.unidad}
+                            </Badge>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <Label className="text-[11px] text-slate-600">Código Material *</Label>
+                      <Input
+                        placeholder="ej. PU188-D1800"
+                        value={newMaterialForm.id_material}
+                        onChange={(e) => setNewMaterialForm({ ...newMaterialForm, id_material: e.target.value })}
+                        className="text-xs h-8 font-mono bg-white mt-1"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Label className="text-[11px] text-slate-600">Descripción</Label>
+                      <Input
+                        placeholder="ej. ESPUMA HEADLINER 1.8M"
+                        value={newMaterialForm.descripcion}
+                        onChange={(e) => setNewMaterialForm({ ...newMaterialForm, descripcion: e.target.value })}
+                        className="text-xs h-8 bg-white mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px] text-slate-600">Unidad</Label>
+                      <Input
+                        placeholder="MTS, UN, KG"
+                        value={newMaterialForm.unidad}
+                        onChange={(e) => setNewMaterialForm({ ...newMaterialForm, unidad: e.target.value })}
+                        className="text-xs h-8 bg-white mt-1 font-mono uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <Label className="text-[11px] text-slate-600">Lote Estándar</Label>
+                      <Input
+                        type="number"
+                        placeholder="ej. 2464"
+                        value={newMaterialForm.lote_mts || ""}
+                        onChange={(e) =>
+                          setNewMaterialForm({ ...newMaterialForm, lote_mts: parseFloat(e.target.value) || 0 })
+                        }
+                        className="text-xs h-8 bg-white mt-1 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px] text-slate-600">Scrap (%)</Label>
+                      <Input
+                        type="number"
+                        step="0.1"
+                        placeholder="ej. 1.0"
+                        value={newMaterialForm.scrap_porcentaje || ""}
+                        onChange={(e) =>
+                          setNewMaterialForm({ ...newMaterialForm, scrap_porcentaje: parseFloat(e.target.value) || 0 })
+                        }
+                        className="text-xs h-8 bg-white mt-1 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px] text-slate-600">Stock Inicial Planta</Label>
+                      <Input
+                        type="number"
+                        step="1"
+                        placeholder="0"
+                        value={newMaterialForm.stock_inicial_planta || ""}
+                        onChange={(e) =>
+                          setNewMaterialForm({
+                            ...newMaterialForm,
+                            stock_inicial_planta: parseInt(e.target.value, 10) || 0,
+                          })
+                        }
+                        className="text-xs h-8 bg-white mt-1 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[11px] text-slate-600">Stock Inicial Total</Label>
+                      <Input
+                        type="number"
+                        step="1"
+                        placeholder="0"
+                        value={newMaterialForm.stock_inicial_total || ""}
+                        onChange={(e) =>
+                          setNewMaterialForm({
+                            ...newMaterialForm,
+                            stock_inicial_total: parseInt(e.target.value, 10) || 0,
+                          })
+                        }
+                        className="text-xs h-8 bg-white mt-1 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      onClick={handleAddMaterialToProveedor}
+                      disabled={isAddingMaterial || !newMaterialForm.id_material.trim() || !adminMaterialProvId}
+                      className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      {isAddingMaterial ? "Vinculando..." : "Agregar al Rundown"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-slate-600 font-semibold px-1">
+                    <span>Materiales en este Rundown ({provMaterialesList.length})</span>
+                    {loadingProvMateriales && <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />}
+                  </div>
+
+                  <div className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-100 text-slate-700 border-b">
+                        <tr>
+                          <th className="p-2 text-left">Material</th>
+                          <th className="p-2 text-left">Descripción</th>
+                          <th className="p-2 text-center">Unidad</th>
+                          <th className="p-2 text-center">Lote</th>
+                          <th className="p-2 text-center">Scrap</th>
+                          <th className="p-2 text-center">Vehículos BOM</th>
+                          <th className="p-2 text-right">Stock Inicial</th>
+                          <th className="p-2 text-center">Acción</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {provMaterialesList.length === 0 ? (
+                          <tr>
+                            <td colSpan={8} className="p-6 text-center text-slate-400">
+                              No hay materiales configurados para este proveedor. Busque un insumo arriba para agregarlo.
+                            </td>
+                          </tr>
+                        ) : (
+                          provMaterialesList.map((m) => (
+                            <tr key={m.id_parametro} className="hover:bg-slate-50">
+                              <td className="p-2 font-mono font-bold text-slate-800">{m.id_material}</td>
+                              <td className="p-2 text-slate-600 truncate max-w-[160px]" title={m.descripcion}>
+                                {m.descripcion}
+                              </td>
+                              <td className="p-2 text-center font-mono">{m.unidad}</td>
+                              <td className="p-2 text-center font-mono">{m.lote_mts ? m.lote_mts.toLocaleString() : "—"}</td>
+                              <td className="p-2 text-center font-mono">{(m.scrap_porcentaje * 100).toFixed(1)}%</td>
+                              <td className="p-2 text-center">
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[10px] ${
+                                    m.cant_productos > 0
+                                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                      : "bg-amber-50 text-amber-800 border-amber-200"
+                                  }`}
+                                >
+                                  {m.cant_productos} recetas
+                                </Badge>
+                              </td>
+                              <td className="p-2 text-right font-mono font-semibold text-slate-800">
+                                {Math.round(m.stock_inicial_total).toLocaleString()}
+                              </td>
+                              <td className="p-2 text-center">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDeleteMaterialParam(m.id_parametro)}
+                                  className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  title="Eliminar del Rundown"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -1943,6 +2606,175 @@ export function RundownVivo() {
               className="bg-blue-600 text-white hover:bg-blue-700"
             >
               {calSaving ? "Guardando..." : "Guardar Calendario"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={horizonteModalOpen} onOpenChange={setHorizonteModalOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-indigo-600" />
+              <span>Horizonte Extendido — Meses Proyectados a Futuro</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-sm">
+            <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-lg text-xs space-y-1">
+              <p className="font-semibold text-indigo-950">Planificación de Pedidos y Tránsitos a Largo Plazo</p>
+              <p className="text-indigo-800">
+                Permite proyectar meses futuros más allá del alcance de la orden de suministro oficial (ej. Marzo a Mayo 2027) para simular pedidos marítimos.
+                Cada mes extendido replica la demanda diaria del mes base seleccionado, y tanto el horizonte como los pedidos cargados persisten cuando se importe una nueva orden de suministro.
+              </p>
+            </div>
+
+            <div className="border rounded-lg p-3 bg-slate-50 space-y-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                <Plus className="w-4 h-4 text-indigo-600" />
+                <span>Agregar Nuevo Mes al Horizonte</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <Label className="text-[11px] text-slate-600">Mes a Proyectar *</Label>
+                  <Select
+                    value={`${newProyeccionForm.anio}-${newProyeccionForm.mes.toString().padStart(2, "0")}`}
+                    onValueChange={(val) => {
+                      const [a, m] = val.split("-").map(Number);
+                      setNewProyeccionForm({ ...newProyeccionForm, anio: a, mes: m });
+                    }}
+                  >
+                    <SelectTrigger className="text-xs h-8 bg-white mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[
+                        { anio: 2027, mes: 3, label: "Marzo 2027" },
+                        { anio: 2027, mes: 4, label: "Abril 2027" },
+                        { anio: 2027, mes: 5, label: "Mayo 2027" },
+                        { anio: 2027, mes: 6, label: "Junio 2027" },
+                        { anio: 2027, mes: 7, label: "Julio 2027" },
+                        { anio: 2027, mes: 8, label: "Agosto 2027" },
+                        { anio: 2027, mes: 9, label: "Septiembre 2027" },
+                        { anio: 2027, mes: 10, label: "Octubre 2027" },
+                        { anio: 2027, mes: 11, label: "Noviembre 2027" },
+                        { anio: 2027, mes: 12, label: "Diciembre 2027" },
+                      ].map((item) => (
+                        <SelectItem key={`${item.anio}-${item.mes}`} value={`${item.anio}-${item.mes.toString().padStart(2, "0")}`} className="text-xs">
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-[11px] text-slate-600">Copiar Consumo Base de *</Label>
+                  <Select
+                    value={newProyeccionForm.periodo_copia}
+                    onValueChange={(val) => setNewProyeccionForm({ ...newProyeccionForm, periodo_copia: val })}
+                  >
+                    <SelectTrigger className="text-xs h-8 bg-white mt-1 font-mono">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(report?.meses_disponibles || []).map((m) => (
+                        <SelectItem key={m.periodo} value={m.periodo} className="text-xs font-mono">
+                          {m.label} ({m.periodo})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label className="text-[11px] text-slate-600">Observación</Label>
+                  <Input
+                    placeholder="ej. Simulación marítima"
+                    value={newProyeccionForm.observacion}
+                    onChange={(e) => setNewProyeccionForm({ ...newProyeccionForm, observacion: e.target.value })}
+                    className="text-xs h-8 bg-white mt-1"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <Button
+                  onClick={handleCreateProyeccion}
+                  disabled={isSavingProyeccion || !newProyeccionForm.periodo_copia}
+                  className="text-xs h-8 bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  {isSavingProyeccion ? "Agregando..." : "Agregar Mes al Horizonte"}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-600 font-semibold px-1">
+                <span>Meses Extendido Configurados ({periodosProyeccion.length})</span>
+                {loadingProyecciones && <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />}
+              </div>
+
+              <div className="border rounded-lg overflow-hidden max-h-56 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-100 text-slate-700 border-b">
+                    <tr>
+                      <th className="p-2 text-left">Período</th>
+                      <th className="p-2 text-left">Mes Proyectado</th>
+                      <th className="p-2 text-left">Consumo Replicado de</th>
+                      <th className="p-2 text-center">Estado</th>
+                      <th className="p-2 text-center">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {periodosProyeccion.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-slate-400">
+                          No hay meses extendidos agregados manualmente. Use el formulario superior para extender el horizonte.
+                        </td>
+                      </tr>
+                    ) : (
+                      periodosProyeccion.map((p) => (
+                        <tr key={p.id_proyeccion} className="hover:bg-slate-50">
+                          <td className="p-2 font-mono font-bold text-slate-800">{p.periodo}</td>
+                          <td className="p-2 text-slate-800 font-medium">{p.label}</td>
+                          <td className="p-2 font-mono text-slate-600">{p.periodo_copia}</td>
+                          <td className="p-2 text-center">
+                            {p.es_oficial ? (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px]">
+                                Oficializado por Ord. Suministro
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-purple-300 bg-purple-50 text-purple-700 text-[10px]">
+                                Proyección Manual
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="p-2 text-center">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleDeleteProyeccion(p.id_proyeccion)}
+                              className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                              title="Eliminar mes del horizonte"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button variant="outline" onClick={() => setHorizonteModalOpen(false)}>
+              Cerrar
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -58,6 +58,7 @@ class RundownIngresoDiaUpdate(BaseModel):
     po_numero: Optional[str] = Field(default=None, max_length=50)
     factura_numero: Optional[str] = Field(default=None, max_length=50)
     observacion: Optional[str] = Field(default=None, max_length=255)
+    fecha_origen: Optional[date] = None
 
 
 class RundownDayCell(BaseModel):
@@ -73,6 +74,7 @@ class RundownDayCell(BaseModel):
     dias_cobertura: float
     alerta_quiebre: bool
     tiene_ajuste: bool = False
+    desvio_ajuste: float = 0.0
 
 
 class RundownMaterialGrid(BaseModel):
@@ -97,6 +99,9 @@ class RundownPeriodoItem(BaseModel):
     mes: int
     label: str
     es_firme: bool
+    es_proyectado_manual: bool = False
+    periodo_copia: Optional[str] = None
+    total_volumen: float = 0.0
 
 
 class RundownSupplierReport(BaseModel):
@@ -183,3 +188,58 @@ class RundownCalendarioMesSave(BaseModel):
     anio: int
     mes: int
     dias: List[RundownCalendarioDiaUpdate]
+
+
+class MaterialCatalogoItem(BaseModel):
+    id_material: str
+    nombre: str
+    unidad: Optional[str] = "UN"
+    categoria: Optional[str] = None
+
+
+class RundownParametroMaterialCreate(BaseModel):
+    id_material: str = Field(min_length=1, max_length=50)
+    descripcion: Optional[str] = Field(default=None, max_length=150)
+    unidad: str = Field(default="MTS", max_length=10)
+    lote_mts: Optional[float] = Field(default=None, ge=0)
+    scrap_porcentaje: float = Field(default=0.0, ge=0, le=1.0)
+    factor_conversion: float = Field(default=1.0, gt=0)
+    categoria_cabina: Optional[str] = Field(default=None, max_length=30)
+    stock_inicial_planta: float = Field(default=0.0, ge=0)
+    stock_inicial_total: float = Field(default=0.0, ge=0)
+
+
+class RundownParametroMaterialItem(BaseModel):
+    id_parametro: int
+    id_proveedor: int
+    id_material: str
+    descripcion: str
+    unidad: str
+    lote_mts: Optional[float] = None
+    scrap_porcentaje: float
+    factor_conversion: float
+    categoria_cabina: Optional[str] = None
+    stock_inicial_planta: float
+    stock_inicial_total: float
+    cant_productos: int
+    activo: bool
+
+
+class RundownPeriodoProyeccionCreate(BaseModel):
+    anio: int
+    mes: int
+    periodo_copia: str
+    observacion: Optional[str] = None
+
+
+class RundownPeriodoProyeccionItem(BaseModel):
+    id_proyeccion: int
+    anio: int
+    mes: int
+    periodo: str
+    periodo_copia: str
+    label: str
+    observacion: Optional[str] = None
+    es_oficial: bool = False
+    activo: bool = True
+
