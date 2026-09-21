@@ -270,6 +270,8 @@ export interface RundownMaterialGrid {
   dias: RundownDayCell[];
   total_uso: number;
   total_ingresos: number;
+  id_proveedor?: number;
+  nombre_proveedor?: string;
 }
 
 export interface RundownPeriodoItem {
@@ -296,6 +298,8 @@ export interface RundownSupplierReport {
   meses_disponibles: RundownPeriodoItem[];
   columnas_fechas: string[];
   materiales: RundownMaterialGrid[];
+  dias_alerta_rojo?: number;
+  dias_alerta_amarillo?: number;
 }
 
 export interface RundownTransitoInput {
@@ -326,13 +330,15 @@ export async function getSupplierRundown(
   fechaDesde?: string,
   fechaHasta?: string,
   alcance: "total" | "planta" = "total",
-  periodo?: string
+  periodo?: string,
+  idSeccion?: number
 ): Promise<RundownSupplierReport> {
   const query = new URLSearchParams();
   if (fechaDesde) query.set("fecha_desde", fechaDesde);
   if (fechaHasta) query.set("fecha_hasta", fechaHasta);
   query.set("alcance", alcance);
   if (periodo) query.set("periodo", periodo);
+  if (idSeccion) query.set("id_seccion", String(idSeccion));
 
   const qs = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE_URL}/api/rundown/proveedor/${identifier}${qs}`);
@@ -428,6 +434,26 @@ export async function updateRundownStockAjuste(
   return res.json();
 }
 
+export async function deleteRundownStockAjuste(
+  idParametro: number,
+  fecha: string,
+  tipoStock: string = "total"
+): Promise<{ mensaje: string }> {
+  const query = new URLSearchParams({
+    id_parametro: String(idParametro),
+    fecha,
+    tipo_stock: tipoStock,
+  });
+  const res = await fetch(`${API_BASE_URL}/api/rundown/stock-ajuste?${query.toString()}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al eliminar ajuste de stock");
+  }
+  return res.json();
+}
+
 export async function updateRundownScrap(
   idParametro: number,
   scrapPorcentaje: number
@@ -510,6 +536,8 @@ export interface RundownProveedorItem {
   id_seccion: number | null;
   activo: boolean;
   tiene_parametros: boolean;
+  dias_alerta_rojo?: number;
+  dias_alerta_amarillo?: number;
 }
 
 export interface RundownSeccionItem {
@@ -534,6 +562,8 @@ export interface RundownProveedorInput {
   nombre: string;
   id_seccion?: number;
   pais?: string;
+  dias_alerta_rojo?: number;
+  dias_alerta_amarillo?: number;
 }
 
 export async function getRundownSecciones(): Promise<RundownSeccionItem[]> {
@@ -577,7 +607,13 @@ export async function createRundownProveedor(
 
 export async function updateRundownProveedor(
   idProveedor: number,
-  data: { nombre?: string; id_seccion?: number | null; activo?: boolean }
+  data: {
+    nombre?: string;
+    id_seccion?: number | null;
+    activo?: boolean;
+    dias_alerta_rojo?: number;
+    dias_alerta_amarillo?: number;
+  }
 ): Promise<{ mensaje: string }> {
   const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}`, {
     method: "PUT",
@@ -721,5 +757,91 @@ export async function deletePeriodoProyeccion(
   }
   return res.json();
 }
+
+export interface PlanSemanalDiaHeader {
+  nombre: string;
+  fecha: string;
+  total: number;
+}
+
+export interface PlanSemanalFila {
+  sd: string;
+  id_producto?: string | null;
+  descripcion?: string | null;
+  cantidades: Record<string, number>;
+  total_semana: number;
+  mapeado: boolean;
+}
+
+export interface PlanSemanalPreviewOut {
+  id_seccion: number;
+  seccion_nombre: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  dias: PlanSemanalDiaHeader[];
+  filas: PlanSemanalFila[];
+  totales_dia: Record<string, number>;
+  total_general: number;
+  advertencias: string[];
+}
+
+export interface PlanSemanalItemConfirm {
+  sd: string;
+  id_producto: string;
+  fecha: string;
+  cantidad: number;
+}
+
+export interface PlanSemanalConfirmRequest {
+  fecha_inicio: string;
+  fecha_fin: string;
+  items: PlanSemanalItemConfirm[];
+}
+
+export interface PlanSemanalConfirmOut {
+  success: boolean;
+  registros_plan_linea: number;
+  registros_produccion_planificada: number;
+  mensaje: string;
+}
+
+export async function previewPlanSemanal(
+  idSeccion: number,
+  file: File,
+  overrideFechaInicio?: string
+): Promise<PlanSemanalPreviewOut> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (overrideFechaInicio) {
+    formData.append("override_fecha_inicio", overrideFechaInicio);
+  }
+
+  const res = await fetch(`${API_BASE_URL}/api/rundown/secciones/${idSeccion}/plan-semanal/previsualizar`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al previsualizar el plan semanal");
+  }
+  return res.json();
+}
+
+export async function confirmPlanSemanal(
+  idSeccion: number,
+  payload: PlanSemanalConfirmRequest
+): Promise<PlanSemanalConfirmOut> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/secciones/${idSeccion}/plan-semanal/confirmar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al confirmar el plan semanal");
+  }
+  return res.json();
+}
+
 
 
