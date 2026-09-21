@@ -1,14 +1,42 @@
 from datetime import date
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 import pyodbc
 
 from app.core.config import get_db_connection
-from app.schemas.rundown import RundownTransitoCreate, RundownTransitoOut
+from app.schemas.rundown import (
+    PlanSemanalItemConfirm,
+    RundownTransitoCreate,
+    RundownTransitoOut,
+)
 
 
 class RundownRepository:
     def __init__(self, connection_factory=get_db_connection) -> None:
         self._get_connection = connection_factory
+        self._ensure_alert_columns()
+
+    def _ensure_alert_columns(self) -> None:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='proveedor' AND COLUMN_NAME='dias_alerta_rojo')
+                BEGIN
+                    ALTER TABLE dbo.proveedor ADD dias_alerta_rojo FLOAT NULL;
+                END
+            """)
+            cursor.execute("""
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='proveedor' AND COLUMN_NAME='dias_alerta_amarillo')
+                BEGIN
+                    ALTER TABLE dbo.proveedor ADD dias_alerta_amarillo FLOAT NULL;
+                END
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        finally:
+            cursor.close()
+            conn.close()
 
     def get_proveedor(self, identifier: str) -> Optional[Dict[str, Any]]:
         conn: pyodbc.Connection = self._get_connection()
@@ -16,12 +44,20 @@ class RundownRepository:
         try:
             if identifier.isdigit():
                 cursor.execute(
-                    "SELECT id_proveedor, codigo_proveedor, nombre, pais, activo FROM dbo.proveedor WHERE id_proveedor = ?",
+                    """
+                    SELECT id_proveedor, codigo_proveedor, nombre, pais, activo,
+                           ISNULL(dias_alerta_rojo, 5.0), ISNULL(dias_alerta_amarillo, 15.0)
+                    FROM dbo.proveedor WHERE id_proveedor = ?
+                    """,
                     (int(identifier),),
                 )
             else:
                 cursor.execute(
-                    "SELECT id_proveedor, codigo_proveedor, nombre, pais, activo FROM dbo.proveedor WHERE UPPER(codigo_proveedor) = UPPER(?)",
+                    """
+                    SELECT id_proveedor, codigo_proveedor, nombre, pais, activo,
+                           ISNULL(dias_alerta_rojo, 5.0), ISNULL(dias_alerta_amarillo, 15.0)
+                    FROM dbo.proveedor WHERE UPPER(codigo_proveedor) = UPPER(?)
+                    """,
                     (identifier.strip(),),
                 )
             row = cursor.fetchone()
@@ -33,6 +69,8 @@ class RundownRepository:
                 "nombre": str(row[2]),
                 "pais": str(row[3]) if row[3] else None,
                 "activo": bool(row[4]),
+                "dias_alerta_rojo": float(row[5]) if row[5] is not None else 5.0,
+                "dias_alerta_amarillo": float(row[6]) if row[6] is not None else 15.0,
             }
         finally:
             cursor.close()
@@ -141,20 +179,30 @@ class RundownRepository:
             conn.close()
 
     def get_transitos(
-        self, id_proveedor: int, fecha_desde: date, fecha_hasta: date
+        self, id_proveedor: Union[int, List[int]], fecha_desde: date, fecha_hasta: date
     ) -> List[RundownTransitoOut]:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            if isinstance(id_proveedor, (list, tuple)):
+                if not id_proveedor:
+                    return []
+                placeholders = ",".join("?" for _ in id_proveedor)
+                where_clause = f"id_proveedor IN ({placeholders})"
+                query_params = (*id_proveedor, fecha_desde, fecha_hasta)
+            else:
+                where_clause = "id_proveedor = ?"
+                query_params = (id_proveedor, fecha_desde, fecha_hasta)
+
             cursor.execute(
-                """
+                f"""
                 SELECT id_transito, id_proveedor, id_material, fecha_eta, tipo_via,
                        po_numero, factura_numero, CAST(cantidad AS FLOAT), observacion
                 FROM dbo.rundown_transito_arribo
-                WHERE id_proveedor = ? AND fecha_eta >= ? AND fecha_eta <= ?
+                WHERE {where_clause} AND fecha_eta >= ? AND fecha_eta <= ?
                 ORDER BY fecha_eta
                 """,
-                (id_proveedor, fecha_desde, fecha_hasta),
+                query_params,
             )
             rows = cursor.fetchall()
             return [
@@ -241,18 +289,28 @@ class RundownRepository:
             conn.close()
 
     def get_stock_ajustes(
-        self, id_proveedor: int, fecha_desde: date, fecha_hasta: date
+        self, id_proveedor: Union[int, List[int]], fecha_desde: date, fecha_hasta: date
     ) -> Dict[Tuple[int, date, str], float]:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            if isinstance(id_proveedor, (list, tuple)):
+                if not id_proveedor:
+                    return {}
+                placeholders = ",".join("?" for _ in id_proveedor)
+                where_clause = f"id_proveedor IN ({placeholders})"
+                query_params = (*id_proveedor, fecha_desde, fecha_hasta)
+            else:
+                where_clause = "id_proveedor = ?"
+                query_params = (id_proveedor, fecha_desde, fecha_hasta)
+
             cursor.execute(
-                """
+                f"""
                 SELECT id_parametro, fecha, tipo_stock, CAST(stock_ajustado AS FLOAT)
                 FROM dbo.rundown_stock_ajuste
-                WHERE id_proveedor = ? AND fecha >= ? AND fecha <= ?
+                WHERE {where_clause} AND fecha >= ? AND fecha <= ?
                 """,
-                (id_proveedor, fecha_desde, fecha_hasta),
+                query_params,
             )
             return {
                 (int(r[0]), r[1], str(r[2])): float(r[3])
@@ -321,6 +379,26 @@ class RundownRepository:
             cursor.close()
             conn.close()
 
+    def delete_stock_ajuste(
+        self, id_parametro: int, fecha: date, tipo_stock: str = "total"
+    ) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                DELETE FROM dbo.rundown_stock_ajuste
+                WHERE id_parametro = ? AND fecha = ? AND tipo_stock = ?
+                """,
+                (id_parametro, fecha, tipo_stock),
+            )
+            affected = cursor.rowcount
+            conn.commit()
+            return affected > 0
+        finally:
+            cursor.close()
+            conn.close()
+
     def update_scrap_porcentaje(self, id_parametro: int, scrap_porcentaje: float) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -359,6 +437,14 @@ class RundownRepository:
                     """,
                     (id_proveedor, id_material, fecha_origen, tipo_via),
                 )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        DELETE FROM dbo.rundown_transito_arribo
+                        WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ?
+                        """,
+                        (id_proveedor, id_material, fecha_origen),
+                    )
 
             if cantidad == 0:
                 cursor.execute(
@@ -368,6 +454,14 @@ class RundownRepository:
                     """,
                     (id_proveedor, id_material, fecha_eta, tipo_via),
                 )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        """
+                        DELETE FROM dbo.rundown_transito_arribo
+                        WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ?
+                        """,
+                        (id_proveedor, id_material, fecha_eta),
+                    )
             else:
                 cursor.execute(
                     """
@@ -412,7 +506,9 @@ class RundownRepository:
                 """
                 SELECT s.id_seccion, s.codigo, s.nombre, s.descripcion, s.orden, s.activo,
                        p.id_proveedor, p.codigo_proveedor, p.nombre AS prov_nombre, p.activo AS prov_activo,
-                       CASE WHEN m.cant_params > 0 THEN 1 ELSE 0 END AS tiene_parametros
+                       CASE WHEN m.cant_params > 0 THEN 1 ELSE 0 END AS tiene_parametros,
+                       ISNULL(p.dias_alerta_rojo, 5.0) AS dias_alerta_rojo,
+                       ISNULL(p.dias_alerta_amarillo, 15.0) AS dias_alerta_amarillo
                 FROM dbo.rundown_seccion s
                 LEFT JOIN dbo.proveedor p ON s.id_seccion = p.id_seccion
                 LEFT JOIN (
@@ -447,6 +543,8 @@ class RundownRepository:
                         "id_seccion": s_id,
                         "activo": bool(r[9]),
                         "tiene_parametros": bool(r[10]),
+                        "dias_alerta_rojo": float(r[11]) if r[11] is not None else 5.0,
+                        "dias_alerta_amarillo": float(r[12]) if r[12] is not None else 15.0,
                     })
             return list(secciones_map.values())
         finally:
@@ -491,7 +589,15 @@ class RundownRepository:
             cursor.close()
             conn.close()
 
-    def update_proveedor(self, id_proveedor: int, nombre: Optional[str], id_seccion: Optional[int], activo: Optional[bool]) -> bool:
+    def update_proveedor(
+        self,
+        id_proveedor: int,
+        nombre: Optional[str],
+        id_seccion: Optional[int],
+        activo: Optional[bool],
+        dias_alerta_rojo: Optional[float] = None,
+        dias_alerta_amarillo: Optional[float] = None,
+    ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
@@ -506,6 +612,12 @@ class RundownRepository:
             if activo is not None:
                 updates.append("activo = ?")
                 params.append(1 if activo else 0)
+            if dias_alerta_rojo is not None:
+                updates.append("dias_alerta_rojo = ?")
+                params.append(float(dias_alerta_rojo))
+            if dias_alerta_amarillo is not None:
+                updates.append("dias_alerta_amarillo = ?")
+                params.append(float(dias_alerta_amarillo))
 
             if not updates:
                 return False
@@ -997,5 +1109,132 @@ class RundownRepository:
         finally:
             cursor.close()
             conn.close()
+
+    def get_seccion_info(self, id_seccion: int) -> Optional[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id_seccion, codigo, nombre FROM dbo.rundown_seccion WHERE id_seccion = ?",
+                (id_seccion,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "id_seccion": int(row[0]),
+                "codigo": str(row[1]),
+                "nombre": str(row[2]),
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_sd_mappings_by_seccion(self, id_seccion: int) -> Dict[str, Dict[str, str]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT sc.sd, sc.id_material_hijo, ISNULL(p.nombre, sc.id_material_hijo) as descrip
+                FROM dbo.set_componente sc
+                INNER JOIN dbo.rundown_seccion rs ON (
+                    UPPER(sc.sector) = UPPER(rs.nombre) OR
+                    (rs.id_seccion = 1 AND (UPPER(sc.sector) = 'HEADLINER' OR sc.sd LIKE 'H%'))
+                )
+                LEFT JOIN dbo.producto p ON sc.id_material_hijo = p.id_producto
+                WHERE rs.id_seccion = ? AND sc.sd IS NOT NULL AND sc.sd != ''
+                """,
+                (id_seccion,),
+            )
+            rows = cursor.fetchall()
+            mapping: Dict[str, Dict[str, str]] = {}
+            for r in rows:
+                sd_code = str(r[0]).strip().upper()
+                if sd_code not in mapping:
+                    mapping[sd_code] = {
+                        "id_producto": str(r[1]).strip(),
+                        "descripcion": str(r[2]).strip() if r[2] else str(r[1]).strip(),
+                    }
+            return mapping
+        finally:
+            cursor.close()
+            conn.close()
+
+    def save_plan_semanal_linea(
+        self, id_seccion: int, items: List[PlanSemanalItemConfirm], id_usuario: Optional[int] = None
+    ) -> Tuple[int, int]:
+        if not items:
+            return 0, 0
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            conn.autocommit = False
+            user_id = id_usuario if id_usuario else 2
+
+            cursor.execute(
+                "SELECT nombre FROM dbo.rundown_seccion WHERE id_seccion = ?",
+                (id_seccion,),
+            )
+            sec_row = cursor.fetchone()
+            sec_nombre = str(sec_row[0]) if sec_row else f"Seccion_{id_seccion}"
+
+            cursor.execute(
+                """
+                INSERT INTO dbo.importacion_archivo (tipo, nombre_archivo, id_usuario, estado, observacion)
+                OUTPUT INSERTED.id_importacion
+                VALUES (?, ?, ?, 'procesada', ?)
+                """,
+                (
+                    "produccion_planificada",
+                    f"Plan Semanal {sec_nombre}",
+                    user_id,
+                    f"Carga de plan semanal por línea para {sec_nombre} ({len(items)} registros)",
+                ),
+            )
+            imp_row = cursor.fetchone()
+            id_importacion = int(imp_row[0]) if imp_row else 1
+
+            registros_linea = 0
+            registros_plan = 0
+
+            for item in items:
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.rundown_plan_semanal_linea
+                        (id_seccion, sd, id_producto, fecha, cantidad_diaria)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (id_seccion, item.sd, item.id_producto, item.fecha, float(item.cantidad)),
+                )
+                registros_linea += 1
+
+                cursor.execute(
+                    """
+                    MERGE dbo.produccion_planificada AS target
+                    USING (SELECT ? AS id_producto, ? AS fecha, ? AS cantidad_planificada, ? AS id_importacion, ? AS id_usuario) AS src
+                    ON target.id_producto = src.id_producto AND target.fecha = src.fecha
+                    WHEN MATCHED THEN
+                        UPDATE SET target.cantidad_planificada = src.cantidad_planificada,
+                                   target.id_importacion = src.id_importacion,
+                                   target.id_usuario = src.id_usuario,
+                                   target.fecha_carga = SYSDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_producto, fecha, cantidad_planificada, id_importacion, id_usuario, fecha_carga)
+                        VALUES (src.id_producto, src.fecha, src.cantidad_planificada, src.id_importacion, src.id_usuario, SYSDATETIME());
+                    """,
+                    (item.id_producto, item.fecha, float(item.cantidad), id_importacion, user_id),
+                )
+                registros_plan += 1
+
+            conn.commit()
+            return registros_linea, registros_plan
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
 
 

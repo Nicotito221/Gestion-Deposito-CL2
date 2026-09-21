@@ -10,6 +10,15 @@ import {
   DialogTitle,
   DialogFooter,
 } from "../components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+} from "../components/ui/alert-dialog";
 import { Label } from "../components/ui/label";
 import {
   Select,
@@ -43,6 +52,11 @@ import {
   SlidersHorizontal,
   Trash2,
   Search,
+  GripVertical,
+  FileSpreadsheet,
+  UploadCloud,
+  CheckCircle2,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -55,6 +69,7 @@ import {
   upsertRundownIngresoDia,
   updateRundownStockInicial,
   updateRundownStockAjuste,
+  deleteRundownStockAjuste,
   updateRundownScrap,
   getRundownCalendarioMes,
   saveRundownCalendarioMes,
@@ -65,6 +80,8 @@ import {
   getPeriodosProyeccion,
   createPeriodoProyeccion,
   deletePeriodoProyeccion,
+  previewPlanSemanal,
+  confirmPlanSemanal,
   type RundownSeccionItem,
   type RundownSupplierReport,
   type RundownMaterialGrid,
@@ -76,6 +93,8 @@ import {
   type RundownParametroMaterialItem,
   type RundownPeriodoProyeccionItem,
   type RundownPeriodoProyeccionCreate,
+  type PlanSemanalPreviewOut,
+  type PlanSemanalItemConfirm,
 } from "../services/api";
 
 export function RundownVivo() {
@@ -90,6 +109,16 @@ export function RundownVivo() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const [activeMaterialTab, setActiveMaterialTab] = useState<string>("todos");
+  const [filterSoloRiesgo, setFilterSoloRiesgo] = useState<boolean>(false);
+  const [riskJumpIndex, setRiskJumpIndex] = useState<number>(0);
+  const [highlightedRiskId, setHighlightedRiskId] = useState<string | null>(null);
+
+  const [umbralesModalOpen, setUmbralesModalOpen] = useState<boolean>(false);
+  const [isSavingUmbrales, setIsSavingUmbrales] = useState<boolean>(false);
+  const [umbralesForm, setUmbralesForm] = useState<{
+    dias_rojo: number;
+    dias_amarillo: number;
+  }>({ dias_rojo: 5, dias_amarillo: 15 });
 
   const [adminModalOpen, setAdminModalOpen] = useState<boolean>(false);
   const [adminTab, setAdminTab] = useState<"secciones" | "proveedores" | "materiales">("secciones");
@@ -158,6 +187,18 @@ export function RundownVivo() {
     observacion: "",
   });
 
+  const [draggedPedido, setDraggedPedido] = useState<{
+    id_material: string;
+    fecha_origen: string;
+    tipo_via: "Maritimo" | "Aereo" | "Local" | "AjusteScrap";
+    cantidad: number;
+  } | null>(null);
+  const [dragOverCell, setDragOverCell] = useState<{
+    id_material: string;
+    fecha: string;
+    tipo_via: string;
+  } | null>(null);
+
   const [stockModalOpen, setStockModalOpen] = useState<boolean>(false);
   const [isSavingStock, setIsSavingStock] = useState<boolean>(false);
   const [stockForm, setStockForm] = useState<{
@@ -179,6 +220,21 @@ export function RundownVivo() {
     tipo_stock: "total",
     observacion: "",
   });
+
+  const [confirmDelete, setConfirmDelete] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    actionText: string;
+    onConfirm: () => Promise<void>;
+  }>({
+    isOpen: false,
+    title: "",
+    description: "",
+    actionText: "Eliminar",
+    onConfirm: async () => {},
+  });
+  const [isDeletingItem, setIsDeletingItem] = useState<boolean>(false);
 
   const [scrapModalOpen, setScrapModalOpen] = useState<boolean>(false);
   const [scrapTargetMat, setScrapTargetMat] = useState<RundownMaterialGrid | null>(null);
@@ -208,6 +264,14 @@ export function RundownVivo() {
     observacion: "",
   });
 
+  const [planModalOpen, setPlanModalOpen] = useState<boolean>(false);
+  const [planFile, setPlanFile] = useState<File | null>(null);
+  const [planPreview, setPlanPreview] = useState<PlanSemanalPreviewOut | null>(null);
+  const [planLoading, setPlanLoading] = useState<boolean>(false);
+  const [planSaving, setPlanSaving] = useState<boolean>(false);
+  const [planOverrideFecha, setPlanOverrideFecha] = useState<string>("");
+  const planFileInputRef = useRef<HTMLInputElement | null>(null);
+
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
   const [scrollWidth, setScrollWidth] = useState<number>(0);
@@ -230,7 +294,7 @@ export function RundownVivo() {
         }
       }
     } catch {
-      toast.error("Error al cargar secciones de rundown");
+      toast.error("Error al cargar líneas de rundown");
     }
   }, [selectedSeccionId]);
 
@@ -244,16 +308,38 @@ export function RundownVivo() {
 
   const activeSupplier = useMemo(() => {
     if (!activeSeccion) return null;
+    if (selectedSupplierCode === "TODOS") {
+      return {
+        id_proveedor: 0,
+        codigo_proveedor: "TODOS",
+        nombre: "Todos los Proveedores",
+        tiene_parametros: true,
+      };
+    }
     return activeSeccion.proveedores.find((p) => p.codigo_proveedor === selectedSupplierCode) || null;
   }, [activeSeccion, selectedSupplierCode]);
 
-  const fetchRundown = useCallback(async () => {
+  const fetchRundown = useCallback(async (isSilent: boolean = false) => {
     if (!selectedSupplierCode) return;
-    setLoading(true);
+    if (!isSilent) {
+      setLoading(true);
+    }
     setErrorMsg(null);
     try {
-      const data = await getSupplierRundown(selectedSupplierCode, undefined, undefined, alcance, selectedPeriodo || undefined);
+      const data = await getSupplierRundown(
+        selectedSupplierCode,
+        undefined,
+        undefined,
+        alcance,
+        selectedPeriodo || undefined,
+        selectedSeccionId || undefined
+      );
+      
+      const currentScrollX = tableContainerRef.current?.scrollLeft || 0;
+      const currentScrollY = window.scrollY;
+
       setReport(data);
+
       if (!selectedPeriodo || (data.meses_disponibles.length > 0 && !data.meses_disponibles.some((m) => m.periodo === selectedPeriodo))) {
         setSelectedPeriodo(data.periodo_actual);
       }
@@ -265,14 +351,26 @@ export function RundownVivo() {
           fecha_eta: data.columnas_fechas[0] || "2026-09-01",
         }));
       }
+
+      requestAnimationFrame(() => {
+        if (tableContainerRef.current && currentScrollX > 0) {
+          tableContainerRef.current.scrollLeft = currentScrollX;
+        }
+        if (topScrollRef.current && currentScrollX > 0) {
+          topScrollRef.current.scrollLeft = currentScrollX;
+        }
+        if (currentScrollY > 0) {
+          window.scrollTo({ top: currentScrollY, behavior: "instant" as ScrollBehavior });
+        }
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al consultar rundown";
       setErrorMsg(msg);
-      setReport(null);
+      if (!isSilent) setReport(null);
     } finally {
-      setLoading(false);
+      if (!isSilent) setLoading(false);
     }
-  }, [selectedSupplierCode, alcance, selectedPeriodo]);
+  }, [selectedSupplierCode, alcance, selectedPeriodo, selectedSeccionId, transitoForm.cantidad]);
 
   useEffect(() => {
     if (activeSupplier?.tiene_parametros || selectedSupplierCode === "HOWA") {
@@ -303,35 +401,139 @@ export function RundownVivo() {
     }
   };
 
+  const riskPoints = useMemo(() => {
+    if (!report) return [];
+    const diasRojo = report.dias_alerta_rojo ?? 5.0;
+    const items: { materialId: string; fecha: string; diasCob: number; elementId: string }[] = [];
+    for (const m of report.materiales) {
+      for (const d of m.dias) {
+        if (d.alerta_quiebre || d.dias_cobertura < diasRojo) {
+          items.push({
+            materialId: m.id_material,
+            fecha: d.fecha,
+            diasCob: d.dias_cobertura,
+            elementId: `cell-risk-${m.id_material}-${d.fecha}`,
+          });
+        }
+      }
+    }
+    return items.sort((a, b) => a.fecha.localeCompare(b.fecha));
+  }, [report]);
+
+  const materialesEnRiesgoCount = useMemo(() => {
+    if (!report) return 0;
+    const diasRojo = report.dias_alerta_rojo ?? 5.0;
+    return report.materiales.filter((m) =>
+      m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojo)
+    ).length;
+  }, [report]);
+
   const filteredMaterials = useMemo(() => {
     if (!report) return [];
-    if (activeMaterialTab === "todos") return report.materiales;
-    return report.materiales.filter((m) => m.id_material === activeMaterialTab);
-  }, [report, activeMaterialTab]);
+    const diasRojo = report.dias_alerta_rojo ?? 5.0;
+    let list = report.materiales;
+    if (filterSoloRiesgo) {
+      list = list.filter((m) => m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojo));
+    }
+    if (activeMaterialTab === "todos") return list;
+    return list.filter((m) => m.id_material === activeMaterialTab);
+  }, [report, activeMaterialTab, filterSoloRiesgo]);
 
   const kpis = useMemo(() => {
     if (!report) {
       return { totalDias: 0, totalAlertas: 0, quiebresCount: 0 };
     }
-    let totalAlertas = 0;
-    for (const mat of report.materiales) {
-      for (const d of mat.dias) {
-        if (d.alerta_quiebre) {
-          totalAlertas++;
-        }
-      }
-    }
+    const count = riskPoints.length;
     return {
       totalDias: report.columnas_fechas.length,
-      totalAlertas,
-      quiebresCount: totalAlertas,
+      totalAlertas: count,
+      quiebresCount: count,
     };
-  }, [report]);
+  }, [report, riskPoints]);
+
+  const handleJumpToRisk = () => {
+    if (riskPoints.length === 0) {
+      toast.info("No hay materiales con alerta de riesgo en este período.");
+      return;
+    }
+    const idx = riskJumpIndex % riskPoints.length;
+    const target = riskPoints[idx];
+    setRiskJumpIndex(idx + 1);
+
+    if (activeMaterialTab !== "todos" && activeMaterialTab !== target.materialId) {
+      setActiveMaterialTab("todos");
+    }
+
+    setTimeout(() => {
+      const el = document.getElementById(target.elementId);
+      if (el) {
+        el.scrollIntoView({ behavior: "auto", block: "center" });
+        if (tableContainerRef.current) {
+          const containerRect = tableContainerRef.current.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          const targetScrollLeft =
+            tableContainerRef.current.scrollLeft +
+            (elRect.left - containerRect.left) -
+            containerRect.width / 2 +
+            elRect.width / 2;
+          const clampedScroll = Math.max(0, targetScrollLeft);
+          tableContainerRef.current.scrollLeft = clampedScroll;
+          if (topScrollRef.current) {
+            topScrollRef.current.scrollLeft = clampedScroll;
+          }
+        }
+        setHighlightedRiskId(target.elementId);
+        setTimeout(() => setHighlightedRiskId(null), 3000);
+      }
+    }, 50);
+
+    const diasTexto = target.diasCob < 900 ? `${target.diasCob.toFixed(1)}d` : "0d";
+    toast.warning(
+      `Alerta ${idx + 1} de ${riskPoints.length}: ${target.materialId} el ${target.fecha} (${diasTexto} de cobertura)`
+    );
+  };
+
+  const handleOpenUmbralesModal = () => {
+    if (!report) return;
+    if (selectedSupplierCode === "TODOS") {
+      toast.info("Para configurar el semáforo de un proveedor, selecciónelo individualmente en el filtro.");
+      return;
+    }
+    setUmbralesForm({
+      dias_rojo: report.dias_alerta_rojo ?? 5,
+      dias_amarillo: report.dias_alerta_amarillo ?? 15,
+    });
+    setUmbralesModalOpen(true);
+  };
+
+  const handleSaveUmbrales = async () => {
+    if (!report) return;
+    if (umbralesForm.dias_rojo < 0 || umbralesForm.dias_amarillo <= umbralesForm.dias_rojo) {
+      toast.error("El umbral amarillo debe ser mayor al umbral rojo");
+      return;
+    }
+    setIsSavingUmbrales(true);
+    try {
+      await updateRundownProveedor(report.id_proveedor, {
+        dias_alerta_rojo: umbralesForm.dias_rojo,
+        dias_alerta_amarillo: umbralesForm.dias_amarillo,
+      });
+      toast.success(`Umbrales de semáforo actualizados para ${report.nombre_proveedor}`);
+      setUmbralesModalOpen(false);
+      await fetchRundown(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al actualizar umbrales de semáforo");
+    } finally {
+      setIsSavingUmbrales(false);
+    }
+  };
 
   const handleOpenTransito = (materialId?: string) => {
     if (!report) return;
+    const targetMat = report.materiales.find((m) => m.id_material === materialId);
+    const provId = targetMat?.id_proveedor || report.id_proveedor;
     setTransitoForm({
-      id_proveedor: report.id_proveedor,
+      id_proveedor: provId,
       id_material: materialId || (report.materiales[0]?.id_material ?? ""),
       fecha_eta: report.columnas_fechas[0] || "2026-09-01",
       tipo_via: "Maritimo",
@@ -425,8 +627,9 @@ export function RundownVivo() {
     setIsSavingIngreso(true);
     try {
       const isShifted = ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta;
+      const provId = report.materiales.find((m) => m.id_material === ingresoEditForm.id_material)?.id_proveedor || report.id_proveedor;
       await upsertRundownIngresoDia({
-        id_proveedor: report.id_proveedor,
+        id_proveedor: provId,
         id_material: ingresoEditForm.id_material,
         fecha_eta: ingresoEditForm.fecha_eta,
         tipo_via: ingresoEditForm.tipo_via,
@@ -442,11 +645,157 @@ export function RundownVivo() {
           : "Ingreso actualizado correctamente"
       );
       setEditIngresoModalOpen(false);
-      await fetchRundown();
+      await fetchRundown(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al actualizar ingreso");
     } finally {
       setIsSavingIngreso(false);
+    }
+  };
+
+  const handleRequestDeleteIngreso = () => {
+    if (!report) return;
+    setConfirmDelete({
+      isOpen: true,
+      title: "¿Eliminar pedido / arribo?",
+      description: `¿Está seguro de que desea eliminar el pedido de ${ingresoEditForm.cantidad.toLocaleString("es-AR")} mts (${ingresoEditForm.tipo_via}) para el día ${ingresoEditForm.fecha_eta}?\n\nEsta acción descontará el volumen del stock proyectado inmediatamente.`,
+      actionText: "Sí, eliminar pedido",
+      onConfirm: async () => {
+        try {
+          const provId = report.materiales.find((m) => m.id_material === ingresoEditForm.id_material)?.id_proveedor || report.id_proveedor;
+          await upsertRundownIngresoDia({
+            id_proveedor: provId,
+            id_material: ingresoEditForm.id_material,
+            fecha_eta: ingresoEditForm.fecha_eta,
+            tipo_via: ingresoEditForm.tipo_via,
+            cantidad: 0,
+          });
+          if (ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta) {
+            await upsertRundownIngresoDia({
+              id_proveedor: provId,
+              id_material: ingresoEditForm.id_material,
+              fecha_eta: ingresoEditForm.fecha_origen,
+              tipo_via: ingresoEditForm.tipo_via,
+              cantidad: 0,
+            });
+          }
+          toast.success("Pedido eliminado correctamente");
+          setEditIngresoModalOpen(false);
+          await fetchRundown(true);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Error al eliminar pedido");
+        }
+      },
+    });
+  };
+
+  const handleDropPedido = async (
+    targetMaterialId: string,
+    targetFecha: string,
+    targetTipoVia?: "Maritimo" | "Aereo" | "Local" | "AjusteScrap"
+  ) => {
+    if (!report || !draggedPedido) return;
+    if (
+      draggedPedido.id_material !== targetMaterialId ||
+      draggedPedido.fecha_origen === targetFecha ||
+      (targetTipoVia && alcance === "total" && draggedPedido.tipo_via !== targetTipoVia)
+    ) {
+      setDraggedPedido(null);
+      setDragOverCell(null);
+      return;
+    }
+
+    const { id_material, fecha_origen, tipo_via, cantidad } = draggedPedido;
+    const currentScrollX = tableContainerRef.current?.scrollLeft || 0;
+    const currentScrollY = window.scrollY;
+
+    setDraggedPedido(null);
+    setDragOverCell(null);
+
+    // Optimistic UI update immediately in memory
+    setReport((prevReport) => {
+      if (!prevReport) return prevReport;
+      return {
+        ...prevReport,
+        materiales: prevReport.materiales.map((m) => {
+          if (m.id_material !== id_material) return m;
+          const newDias = m.dias.map((d) => {
+            let pMar = d.plan_maritimo;
+            let pAer = d.pedidos_aereos;
+
+            if (d.fecha === fecha_origen) {
+              const subMar = Math.min(pMar, cantidad);
+              pMar -= subMar;
+              const rem = cantidad - subMar;
+              if (rem > 0) pAer = Math.max(0, pAer - rem);
+            }
+            if (d.fecha === targetFecha) {
+              if (tipo_via === "Aereo") {
+                pAer += cantidad;
+              } else {
+                pMar += cantidad;
+              }
+            }
+            return {
+              ...d,
+              plan_maritimo: pMar,
+              pedidos_aereos: pAer,
+            };
+          });
+
+          let runningStock = alcance === "planta" ? m.stock_inicial_planta : m.stock_inicial_total;
+          const recalculatedDias = newDias.map((d) => {
+            if (d.tiene_ajuste) {
+              runningStock = d.stock_final;
+            } else {
+              runningStock = Math.round(
+                runningStock - d.uso + (d.plan_maritimo + d.pedidos_aereos + d.entregas_locales) - d.ajuste_scrap
+              );
+            }
+            const diasCob = d.uso > 0 ? Math.round((runningStock / d.uso) * 100) / 100 : runningStock > 0 ? 999 : 0;
+            return {
+              ...d,
+              stock_final: runningStock,
+              dias_cobertura: diasCob,
+              alerta_quiebre: diasCob < 5 || runningStock <= 0,
+            };
+          });
+
+          return {
+            ...m,
+            dias: recalculatedDias,
+          };
+        }),
+      };
+    });
+
+    try {
+      const provId = report.materiales.find((m) => m.id_material === id_material)?.id_proveedor || report.id_proveedor;
+      await upsertRundownIngresoDia({
+        id_proveedor: provId,
+        id_material,
+        fecha_eta: targetFecha,
+        tipo_via,
+        cantidad,
+        fecha_origen,
+      });
+      toast.success(`Pedido desplazado del ${fecha_origen} al ${targetFecha}`);
+      await fetchRundown(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al desplazar pedido");
+      await fetchRundown(true);
+    } finally {
+      requestAnimationFrame(() => {
+        if (tableContainerRef.current && currentScrollX > 0) {
+          tableContainerRef.current.scrollLeft = currentScrollX;
+        }
+        if (topScrollRef.current && currentScrollX > 0) {
+          topScrollRef.current.scrollLeft = currentScrollX;
+        }
+        if (currentScrollY > 0) {
+          window.scrollTo({ top: currentScrollY, behavior: "instant" as ScrollBehavior });
+        }
+      });
     }
   };
 
@@ -460,9 +809,10 @@ export function RundownVivo() {
       ? Math.round(mat.stock_inicial_planta)
       : Math.round(mat.stock_inicial_total);
 
+    const provId = mat.id_proveedor || report.id_proveedor;
     setStockForm({
       id_parametro: mat.id_parametro,
-      id_proveedor: report.id_proveedor,
+      id_proveedor: provId,
       id_material: mat.id_material,
       fecha: fechaToUse,
       material_label: `${mat.id_material} — ${mat.descripcion}`,
@@ -495,13 +845,36 @@ export function RundownVivo() {
       });
       toast.success(res.mensaje);
       setStockModalOpen(false);
-      await fetchRundown();
+      await fetchRundown(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al actualizar stock";
       toast.error(msg);
     } finally {
       setIsSavingStock(false);
     }
+  };
+
+  const handleRequestDeleteStockAjuste = () => {
+    setConfirmDelete({
+      isOpen: true,
+      title: "¿Eliminar ajuste de stock?",
+      description: `¿Está seguro de que desea eliminar el ajuste de stock del día ${stockForm.fecha} para ${stockForm.material_label}?\n\nEl stock volverá a calcularse de forma teórica automáticamente a partir de los consumos y arribos.`,
+      actionText: "Sí, eliminar ajuste",
+      onConfirm: async () => {
+        try {
+          await deleteRundownStockAjuste(
+            stockForm.id_parametro,
+            stockForm.fecha,
+            stockForm.tipo_stock
+          );
+          toast.success("Ajuste de stock eliminado correctamente");
+          setStockModalOpen(false);
+          await fetchRundown(true);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : "Error al eliminar ajuste de stock");
+        }
+      },
+    });
   };
 
   const handleOpenScrapModal = (mat: RundownMaterialGrid) => {
@@ -522,7 +895,7 @@ export function RundownVivo() {
       const res = await updateRundownScrap(scrapTargetMat.id_parametro, parsed / 100);
       toast.success(res.mensaje);
       setScrapModalOpen(false);
-      await fetchRundown();
+      await fetchRundown(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al actualizar scrap";
       toast.error(msg);
@@ -533,7 +906,7 @@ export function RundownVivo() {
 
   const handleCreateSeccion = async () => {
     if (!newSeccionForm.nombre.trim()) {
-      toast.error("El nombre de la sección es obligatorio");
+      toast.error("El nombre de la línea es obligatorio");
       return;
     }
     const cod = newSeccionForm.codigo.trim() || newSeccionForm.nombre.trim().toUpperCase().replace(/\s+/g, "_");
@@ -544,11 +917,11 @@ export function RundownVivo() {
         nombre: newSeccionForm.nombre.trim(),
         descripcion: newSeccionForm.descripcion.trim() || undefined,
       });
-      toast.success("Sección creada correctamente");
+      toast.success("Línea creada correctamente");
       setNewSeccionForm({ codigo: "", nombre: "", descripcion: "" });
       await fetchSecciones();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al crear sección");
+      toast.error(err instanceof Error ? err.message : "Error al crear línea");
     } finally {
       setIsSavingAdmin(false);
     }
@@ -580,7 +953,7 @@ export function RundownVivo() {
   const handleReassignProveedor = async (idProveedor: number, newSeccionId: number) => {
     try {
       await updateRundownProveedor(idProveedor, { id_seccion: newSeccionId });
-      toast.success("Sección del proveedor actualizada");
+      toast.success("Línea del proveedor actualizada");
       await fetchSecciones();
     } catch {
       toast.error("Error al reasignar proveedor");
@@ -861,6 +1234,77 @@ export function RundownVivo() {
     }
   };
 
+  const handleOpenPlanSemanalModal = () => {
+    setPlanFile(null);
+    setPlanPreview(null);
+    setPlanOverrideFecha("");
+    setPlanModalOpen(true);
+  };
+
+  const executePlanPreview = async (file: File, overrideFecha?: string) => {
+    if (!selectedSeccionId) {
+      toast.error("Seleccione una línea");
+      return;
+    }
+    setPlanLoading(true);
+    try {
+      const preview = await previewPlanSemanal(selectedSeccionId, file, overrideFecha || undefined);
+      setPlanPreview(preview);
+      if (!overrideFecha) {
+        setPlanOverrideFecha(preview.fecha_inicio);
+      }
+      toast.success(`Plan analizado: ${preview.filas.length} SDs identificados`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al previsualizar plan semanal";
+      toast.error(msg);
+      setPlanPreview(null);
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  const handlePlanFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPlanFile(file);
+    await executePlanPreview(file, planOverrideFecha);
+  };
+
+  const handleConfirmPlan = async () => {
+    if (!planPreview || !selectedSeccionId) return;
+    setPlanSaving(true);
+    try {
+      const items: PlanSemanalItemConfirm[] = [];
+      for (const f of planPreview.filas) {
+        if (f.mapeado && f.id_producto) {
+          for (const [diaStr, cant] of Object.entries(f.cantidades)) {
+            items.push({
+              sd: f.sd,
+              id_producto: f.id_producto,
+              fecha: diaStr,
+              cantidad: cant,
+            });
+          }
+        }
+      }
+
+      const res = await confirmPlanSemanal(selectedSeccionId, {
+        fecha_inicio: planPreview.fecha_inicio,
+        fecha_fin: planPreview.fecha_fin,
+        items,
+      });
+
+      toast.success(res.mensaje);
+      setPlanModalOpen(false);
+      await fetchRundown(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al guardar el plan semanal";
+      toast.error(msg);
+    } finally {
+      setPlanSaving(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-full">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -917,6 +1361,16 @@ export function RundownVivo() {
           <Button
             variant="outline"
             size="sm"
+            onClick={handleOpenPlanSemanalModal}
+            className="flex items-center gap-1.5 text-indigo-700 hover:text-indigo-900 border-indigo-300 hover:bg-indigo-50 shadow-xs"
+          >
+            <FileSpreadsheet className="w-4 h-4 text-indigo-600" />
+            <span>Plan Semanal de Línea</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => {
               const [a, m] = (selectedPeriodo || "2026-10").split("-").map(Number);
               handleOpenCalendarioModal(a, m);
@@ -950,100 +1404,112 @@ export function RundownVivo() {
         </div>
       </div>
 
-      <div className="bg-white border rounded-xl p-3 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center gap-2 border-b pb-3">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1">
-            Sección / Línea:
-          </span>
-          {secciones.map((sec) => (
-            <Button
-              key={sec.id_seccion}
-              size="sm"
-              variant={selectedSeccionId === sec.id_seccion ? "default" : "outline"}
-              onClick={() => {
-                setSelectedSeccionId(sec.id_seccion);
-                if (sec.proveedores.length > 0) {
-                  const hasHowa = sec.proveedores.find((p) => p.codigo_proveedor === "HOWA");
-                  setSelectedSupplierCode(hasHowa ? "HOWA" : sec.proveedores[0].codigo_proveedor);
+      <div className="bg-white border rounded-xl p-3 shadow-xs flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Línea:
+            </span>
+            <Select
+              value={String(selectedSeccionId)}
+              onValueChange={(val) => {
+                const secId = Number(val);
+                setSelectedSeccionId(secId);
+                const targetSec = secciones.find((s) => s.id_seccion === secId);
+                if (targetSec && targetSec.proveedores.length > 0) {
+                  const hasHowa = targetSec.proveedores.find((p) => p.codigo_proveedor === "HOWA");
+                  setSelectedSupplierCode(hasHowa ? "HOWA" : targetSec.proveedores[0].codigo_proveedor);
                 } else {
                   setSelectedSupplierCode("");
                 }
               }}
-              className="text-xs h-8 font-medium"
             >
-              {sec.nombre}
-              <span className="ml-1.5 text-[10px] opacity-70">
-                ({sec.proveedores.length})
-              </span>
-            </Button>
-          ))}
-        </div>
+              <SelectTrigger className="h-8 w-44 text-xs font-medium bg-slate-50/50 border-slate-300">
+                <SelectValue placeholder="Seleccionar Línea" />
+              </SelectTrigger>
+              <SelectContent>
+                {secciones.map((sec) => (
+                  <SelectItem key={sec.id_seccion} value={String(sec.id_seccion)} className="text-xs">
+                    {sec.nombre} ({sec.proveedores.length})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1">
-            Proveedores en {activeSeccion?.nombre || "Línea"}:
-          </span>
-          {activeSeccion && activeSeccion.proveedores.length > 0 ? (
-            activeSeccion.proveedores.map((prov) => (
-              <Button
-                key={prov.id_proveedor}
-                size="sm"
-                variant={selectedSupplierCode === prov.codigo_proveedor ? "default" : "outline"}
-                onClick={() => setSelectedSupplierCode(prov.codigo_proveedor)}
-                className={`text-xs h-8 font-mono ${
-                  selectedSupplierCode === prov.codigo_proveedor
-                    ? "bg-blue-600 hover:bg-blue-700 text-white"
-                    : "text-slate-700"
-                }`}
-              >
-                {prov.nombre}
-                {prov.tiene_parametros && (
-                  <span className="ml-1.5 w-2 h-2 rounded-full bg-emerald-400 inline-block" title="Rundown activo" />
-                )}
-              </Button>
-            ))
-          ) : (
-            <span className="text-xs text-slate-400 italic">
-              No hay proveedores asignados a esta sección. Haz clic en "Configurar Secciones" para vincularlos.
+          <div className="h-4 w-px bg-slate-200 hidden sm:block" />
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Proveedor:
             </span>
-          )}
-        </div>
+            {activeSeccion && activeSeccion.proveedores.length > 0 ? (
+              <Select
+                value={selectedSupplierCode}
+                onValueChange={(val) => setSelectedSupplierCode(val)}
+              >
+                <SelectTrigger className="h-8 w-48 text-xs font-mono font-medium bg-slate-50/50 border-slate-300">
+                  <SelectValue placeholder="Seleccionar Proveedor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="TODOS" className="text-xs font-mono font-semibold">
+                    <div className="flex items-center justify-between w-full gap-2">
+                      <span>★ Todos los proveedores</span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        ({activeSeccion.proveedores.length})
+                      </span>
+                    </div>
+                  </SelectItem>
+                  {activeSeccion.proveedores.map((prov) => (
+                    <SelectItem key={prov.id_proveedor} value={prov.codigo_proveedor} className="text-xs font-mono">
+                      <div className="flex items-center justify-between w-full gap-2">
+                        <span>{prov.nombre}</span>
+                        {prov.tiene_parametros && (
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Rundown activo" />
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <span className="text-xs text-slate-400 italic">
+                Sin proveedores en esta línea
+              </span>
+            )}
+          </div>
 
-        {report && report.meses_disponibles && report.meses_disponibles.length > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1">
+          <div className="h-4 w-px bg-slate-200 hidden sm:block" />
+
+          {report && report.meses_disponibles && report.meses_disponibles.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 Período:
               </span>
-              {report.meses_disponibles.map((p) => (
-                <Button
-                  key={p.periodo}
-                  size="sm"
-                  variant={selectedPeriodo === p.periodo ? "default" : "outline"}
-                  onClick={() => setSelectedPeriodo(p.periodo)}
-                  className={`text-xs h-8 font-medium ${
-                    selectedPeriodo === p.periodo
-                      ? "bg-slate-900 hover:bg-slate-800 text-white shadow-xs"
-                      : "text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  <Calendar className="w-3.5 h-3.5 mr-1 text-slate-400" />
-                  {p.label}
-                  {p.es_firme ? (
-                    <Badge className="ml-1.5 bg-emerald-600 text-white text-[9px] px-1 py-0 h-4 hover:bg-emerald-600">
-                      Firme
-                    </Badge>
-                  ) : p.es_proyectado_manual ? (
-                    <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 h-4 border-purple-300 bg-purple-50 text-purple-700 font-bold">
-                      Extendido
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 h-4 border-slate-300 text-slate-500">
-                      Proyección
-                    </Badge>
-                  )}
-                </Button>
-              ))}
+              <Select
+                value={selectedPeriodo}
+                onValueChange={(val) => setSelectedPeriodo(val)}
+              >
+                <SelectTrigger className="h-8 w-60 text-xs font-medium bg-slate-50/50 border-slate-300">
+                  <SelectValue placeholder="Seleccionar Período" />
+                </SelectTrigger>
+                <SelectContent className="min-w-[15rem]">
+                  {report.meses_disponibles.map((p) => (
+                    <SelectItem key={p.periodo} value={p.periodo} className="text-xs">
+                      <div className="flex items-center justify-between w-full gap-2">
+                        <span>{p.label}</span>
+                        {p.es_firme ? (
+                          <Badge className="bg-emerald-600 text-white text-[9px] px-1 py-0 h-4">Firme</Badge>
+                        ) : p.es_proyectado_manual ? (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-purple-300 bg-purple-50 text-purple-700">Extendido</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-slate-300 text-slate-500">Proy.</Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
               <Button
                 size="sm"
@@ -1056,26 +1522,26 @@ export function RundownVivo() {
                 <span>Extender Meses</span>
               </Button>
             </div>
+          )}
+        </div>
 
-            {!report.es_mes_firme && (
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-[11px] bg-blue-50 text-blue-700 border-blue-200 font-medium">
-                  <CalendarDays className="w-3.5 h-3.5 mr-1 text-blue-600" />
-                  {report.dias_laborales_mes} días laborales (Promedio diario)
-                </Badge>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    const [a, m] = (selectedPeriodo || "2026-10").split("-").map(Number);
-                    handleOpenCalendarioModal(a, m);
-                  }}
-                  className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 font-medium"
-                >
-                  Editar días de este mes
-                </Button>
-              </div>
-            )}
+        {report && !report.es_mes_firme && (
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-[11px] bg-blue-50 text-blue-700 border-blue-200 font-medium">
+              <CalendarDays className="w-3.5 h-3.5 mr-1 text-blue-600" />
+              {report.dias_laborales_mes} días laborales
+            </Badge>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                const [a, m] = (selectedPeriodo || "2026-10").split("-").map(Number);
+                handleOpenCalendarioModal(a, m);
+              }}
+              className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 font-medium"
+            >
+              Editar días
+            </Button>
           </div>
         )}
       </div>
@@ -1090,9 +1556,9 @@ export function RundownVivo() {
               <div>
                 <p className="text-xs font-medium text-slate-500">Proveedor</p>
                 <h3 className="text-base font-bold text-slate-900 truncate">
-                  {report.nombre_proveedor}
+                  {selectedSupplierCode === "TODOS" ? "Todos los Proveedores" : report.nombre_proveedor}
                 </h3>
-                <p className="text-[11px] text-slate-400">Sección: {activeSeccion?.nombre || "Headliner"}</p>
+                <p className="text-[11px] text-slate-400">Línea: {activeSeccion?.nombre || "Headliner"}</p>
               </div>
             </CardContent>
           </Card>
@@ -1131,25 +1597,48 @@ export function RundownVivo() {
             </CardContent>
           </Card>
 
-          <Card className={`border shadow-sm ${kpis.quiebresCount > 0 ? "border-red-200 bg-red-50/20" : ""}`}>
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className={`p-2.5 rounded-lg ${kpis.quiebresCount > 0 ? "bg-red-100 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
-                {kpis.quiebresCount > 0 ? <AlertTriangle className="w-5 h-5" /> : <PackageCheck className="w-5 h-5" />}
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Alertas de Cobertura</p>
-                <div className="flex items-center gap-2">
-                  <h3 className={`text-base font-bold ${kpis.quiebresCount > 0 ? "text-red-700" : "text-emerald-700"}`}>
-                    {kpis.quiebresCount} días en riesgo
-                  </h3>
-                  {kpis.quiebresCount > 0 && (
-                    <Badge className="bg-red-600 text-white text-[10px] px-1.5 py-0">
-                      {"< 5 días"}
-                    </Badge>
-                  )}
+          <Card
+            onClick={kpis.quiebresCount > 0 ? handleJumpToRisk : undefined}
+            className={`border shadow-sm transition-all select-none ${
+              kpis.quiebresCount > 0
+                ? "border-red-300 bg-red-50/30 hover:bg-red-50/60 cursor-pointer hover:shadow-md"
+                : ""
+            }`}
+            title={kpis.quiebresCount > 0 ? "Haz clic para ir a la próxima celda en riesgo" : undefined}
+          >
+            <CardContent className="p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-lg ${kpis.quiebresCount > 0 ? "bg-red-100 text-red-600" : "bg-emerald-50 text-emerald-600"}`}>
+                  {kpis.quiebresCount > 0 ? <AlertTriangle className="w-5 h-5 animate-pulse" /> : <PackageCheck className="w-5 h-5" />}
                 </div>
-                <p className="text-[11px] text-slate-400">Riesgo inminente de quiebre</p>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Alertas de Cobertura</p>
+                  <div className="flex items-center gap-2">
+                    <h3 className={`text-base font-bold ${kpis.quiebresCount > 0 ? "text-red-700" : "text-emerald-700"}`}>
+                      {kpis.quiebresCount} {kpis.quiebresCount === 1 ? "día en riesgo" : "días en riesgo"}
+                    </h3>
+                    <Badge className={kpis.quiebresCount > 0 ? "bg-red-600 text-white text-[10px] px-1.5 py-0" : "bg-emerald-600 text-white text-[10px] px-1.5 py-0"}>
+                      {`< ${report.dias_alerta_rojo ?? 5}d`}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    {kpis.quiebresCount > 0 ? "Clic para saltar a celda crítica" : "Sin alertas en el período"}
+                  </p>
+                </div>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenUmbralesModal();
+                }}
+                className="h-8 px-2 text-xs text-slate-600 hover:text-slate-900 border-slate-300 gap-1 shrink-0 bg-white"
+                title="Configurar semáforo de días de cobertura"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden xl:inline">Semáforo</span>
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -1160,18 +1649,39 @@ export function RundownVivo() {
           <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
             <Button
               size="sm"
-              variant={activeMaterialTab === "todos" ? "default" : "outline"}
-              onClick={() => setActiveMaterialTab("todos")}
+              variant={activeMaterialTab === "todos" && !filterSoloRiesgo ? "default" : "outline"}
+              onClick={() => {
+                setActiveMaterialTab("todos");
+                setFilterSoloRiesgo(false);
+              }}
               className="text-xs h-8"
             >
               Todas las espumas ({report.materiales.length})
             </Button>
+            {materialesEnRiesgoCount > 0 && (
+              <Button
+                size="sm"
+                variant={filterSoloRiesgo ? "destructive" : "outline"}
+                onClick={() => setFilterSoloRiesgo(!filterSoloRiesgo)}
+                className={`text-xs h-8 gap-1.5 ${
+                  filterSoloRiesgo
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "text-red-700 border-red-300 hover:bg-red-50"
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                <span>Solo en Riesgo ({materialesEnRiesgoCount})</span>
+              </Button>
+            )}
             {report.materiales.map((m) => (
               <Button
                 key={m.id_material}
                 size="sm"
-                variant={activeMaterialTab === m.id_material ? "default" : "outline"}
-                onClick={() => setActiveMaterialTab(m.id_material)}
+                variant={activeMaterialTab === m.id_material && !filterSoloRiesgo ? "default" : "outline"}
+                onClick={() => {
+                  setActiveMaterialTab(m.id_material);
+                  setFilterSoloRiesgo(false);
+                }}
                 className="text-xs h-8 font-mono"
               >
                 {m.id_material}
@@ -1181,7 +1691,7 @@ export function RundownVivo() {
         </div>
       )}
 
-      {loading ? (
+      {loading && !report ? (
         <Card className="p-12 text-center text-slate-500 border">
           <RefreshCw className="w-8 h-8 animate-spin mx-auto text-blue-600 mb-3" />
           <p className="font-medium text-slate-700">Calculando proyección y cobertura de stock para {selectedSupplierCode}...</p>
@@ -1194,7 +1704,7 @@ export function RundownVivo() {
             {activeSupplier ? activeSupplier.nombre : selectedSupplierCode}
           </h3>
           <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-            Este proveedor está registrado en la sección <strong>{activeSeccion?.nombre}</strong>. Sus recetas de consumo y materiales aún no han sido configurados en el sistema.
+            Este proveedor está registrado en la línea <strong>{activeSeccion?.nombre}</strong>. Sus recetas de consumo y materiales aún no han sido configurados en el sistema.
           </p>
           <div className="mt-4 flex items-center justify-center gap-2">
             <Button
@@ -1225,22 +1735,27 @@ export function RundownVivo() {
             onScroll={handleTableScroll}
             className="overflow-x-auto border rounded-xl shadow-sm bg-white"
           >
-            <div className="min-w-max divide-y divide-slate-200">
-              {filteredMaterials.map((mat) => (
-                <div key={mat.id_material} className="p-0">
-                  <div className="bg-slate-100/90 border-b border-slate-200">
-                    <div className="sticky left-0 z-20 px-4 py-2 flex items-center gap-3 w-fit bg-slate-100/95 border-r border-slate-300 shadow-xs">
-                      <span className="font-mono text-base font-bold text-slate-900">
+            <div className="min-w-max">
+              {filteredMaterials.map((mat, idx) => (
+                <div key={mat.id_material} className={`p-0 ${idx > 0 ? "border-t-4 border-[oklch(0.59_0_0)]" : ""}`}>
+                  <div className="bg-[oklch(0.59_0_0)] border-b border-[oklch(0.50_0_0)]">
+                    <div className="sticky left-0 z-20 px-4 py-2 flex items-center gap-3 w-fit bg-[oklch(0.59_0_0)] border-r border-[oklch(0.50_0_0)] shadow-xs">
+                      <span className="font-mono text-base font-bold text-white tracking-wide">
                         {mat.id_material}
                       </span>
+                      {mat.nombre_proveedor && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-black/30 text-white/95 border border-white/20 tracking-wide uppercase shadow-xs">
+                          {mat.nombre_proveedor}
+                        </span>
+                      )}
 
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleOpenTransito(mat.id_material)}
-                        className="h-7 text-xs flex items-center gap-1 text-blue-700 border-blue-200 bg-blue-50/50 hover:bg-blue-100"
+                        className="h-7 text-xs flex items-center gap-1 text-blue-900 border border-blue-200 bg-white/95 hover:bg-white shadow-xs font-semibold"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5 text-blue-600" />
                         <span>Arribo</span>
                       </Button>
 
@@ -1248,43 +1763,43 @@ export function RundownVivo() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleOpenStockModal(mat)}
-                        className="h-7 text-xs flex items-center gap-1 text-slate-600 border border-slate-200 bg-white hover:bg-slate-100 shadow-xs"
+                        className="h-7 text-xs flex items-center gap-1 text-slate-800 border border-slate-300 bg-white/95 hover:bg-white shadow-xs font-medium"
                         title="Ajustar stock inicial"
                       >
                         <Edit3 className="w-3 h-3 text-slate-500" />
                         <span>Editar Stock</span>
                       </Button>
 
-                      <span className="text-xs text-slate-500 ml-1">
-                        Lote: <strong className="text-slate-700">{mat.lote_mts ? `${mat.lote_mts} ${mat.unidad}` : "—"}</strong>
+                      <span className="text-xs text-white/90 ml-1">
+                        Lote: <strong className="text-white font-bold">{mat.lote_mts ? `${mat.lote_mts} ${mat.unidad}` : "—"}</strong>
                       </span>
 
                       <button
                         type="button"
                         onClick={() => handleOpenScrapModal(mat)}
-                        className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 transition-colors shadow-xs ml-1"
+                        className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white/95 hover:bg-white text-slate-800 transition-colors shadow-xs ml-1"
                         title="Haga clic para editar porcentaje de scrap"
                       >
-                        <Percent className="w-3 h-3 text-slate-400" />
-                        <span className="text-slate-500">Scrap:</span>
+                        <Percent className="w-3 h-3 text-slate-500" />
+                        <span className="text-slate-600">Scrap:</span>
                         <strong className="text-slate-900 font-mono font-bold">
                           {(mat.scrap_porcentaje * 100).toFixed(1)}%
                         </strong>
-                        <Edit3 className="w-3 h-3 text-slate-400 hover:text-slate-600 ml-0.5" />
+                        <Edit3 className="w-3 h-3 text-slate-500 hover:text-slate-700 ml-0.5" />
                       </button>
                     </div>
                   </div>
 
                   <table className="w-full border-collapse text-xs">
                     <thead>
-                      <tr className="bg-slate-100/80 border-b border-slate-200">
-                        <th className="sticky left-0 z-10 bg-slate-100 text-left font-semibold text-slate-700 px-3 py-2 w-48 border-r border-slate-200">
+                      <tr className="bg-[oklch(0.93_0_0)] border-b-2 border-[oklch(0.59_0_0)]">
+                        <th className="sticky left-0 z-10 bg-[oklch(0.93_0_0)] text-left font-bold text-slate-800 px-3 py-2 w-48 border-r border-[oklch(0.80_0_0)]">
                           Concepto / Fecha
                         </th>
                         {mat.dias.map((d) => (
-                          <th key={d.fecha} className="px-2 py-1.5 text-center font-semibold text-slate-700 min-w-[90px] border-r border-slate-200">
-                            <div className="text-[11px] font-mono text-slate-900">{d.dia_nombre.split(" ")[0]}</div>
-                            <div className="text-[10px] text-slate-500 font-normal">{d.dia_nombre.split(" ")[1]}</div>
+                          <th key={d.fecha} className="px-2 py-1.5 text-center font-bold text-slate-800 min-w-[90px] border-r border-[oklch(0.85_0_0)] bg-[oklch(0.93_0_0)]">
+                            <div className="text-[11px] font-mono text-slate-900 font-bold">{d.dia_nombre.split(" ")[0]}</div>
+                            <div className="text-[10px] text-slate-600 font-semibold">{d.dia_nombre.split(" ")[1]}</div>
                           </th>
                         ))}
                       </tr>
@@ -1322,19 +1837,81 @@ export function RundownVivo() {
                           </td>
                           {mat.dias.map((d) => {
                             const pedidoVal = d.plan_maritimo + d.pedidos_aereos;
+                            const viaToUse: "Maritimo" | "Aereo" = d.pedidos_aereos > 0 ? "Aereo" : "Maritimo";
+                            const isBeingDragged =
+                              draggedPedido?.id_material === mat.id_material &&
+                              draggedPedido?.fecha_origen === d.fecha;
+                            const isDropTarget =
+                              dragOverCell?.id_material === mat.id_material &&
+                              dragOverCell?.fecha === d.fecha;
+                            const isValidDropZone =
+                              draggedPedido &&
+                              draggedPedido.id_material === mat.id_material &&
+                              draggedPedido.fecha_origen !== d.fecha;
+
                             return (
                               <td
                                 key={d.fecha}
-                                onClick={() => handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", pedidoVal)}
-                                className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-blue-100/70 transition-colors"
-                                title="Haz clic para editar pedido a CL2"
+                                onClick={() => {
+                                  if (!draggedPedido) {
+                                    handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal);
+                                  }
+                                }}
+                                onDragOver={(e) => {
+                                  if (isValidDropZone) {
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = "move";
+                                    if (dragOverCell?.fecha !== d.fecha) {
+                                      setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: viaToUse });
+                                    }
+                                  }
+                                }}
+                                onDragLeave={() => {
+                                  if (dragOverCell?.fecha === d.fecha) {
+                                    setDragOverCell(null);
+                                  }
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDropPedido(mat.id_material, d.fecha);
+                                }}
+                                className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${
+                                  isDropTarget
+                                    ? "bg-blue-200 ring-2 ring-blue-500 ring-inset scale-105"
+                                    : isValidDropZone
+                                    ? "hover:bg-blue-100/60"
+                                    : "hover:bg-blue-100/70"
+                                }`}
+                                title={pedidoVal > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido"}
                               >
                                 {pedidoVal > 0 ? (
-                                  <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200">
+                                  <span
+                                    draggable
+                                    onDragStart={(e) => {
+                                      e.stopPropagation();
+                                      e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
+                                      e.dataTransfer.effectAllowed = "move";
+                                      setDraggedPedido({
+                                        id_material: mat.id_material,
+                                        fecha_origen: d.fecha,
+                                        tipo_via: viaToUse,
+                                        cantidad: pedidoVal,
+                                      });
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedPedido(null);
+                                      setDragOverCell(null);
+                                    }}
+                                    className={`inline-flex items-center gap-0.5 bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${
+                                      isBeingDragged ? "opacity-30 scale-95" : ""
+                                    }`}
+                                  >
+                                    <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
                                     +{pedidoVal.toLocaleString()}
                                   </span>
                                 ) : (
-                                  <span className="text-slate-300 hover:text-slate-600 text-[11px]">—</span>
+                                  <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
                                 )}
                               </td>
                             );
@@ -1347,22 +1924,88 @@ export function RundownVivo() {
                               <Ship className="w-3.5 h-3.5 text-blue-600" />
                               <span>Plan Marítimo</span>
                             </td>
-                            {mat.dias.map((d) => (
-                              <td
-                                key={d.fecha}
-                                onClick={() => handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo)}
-                                className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-blue-100/70 transition-colors"
-                                title="Haz clic para editar arribo marítimo"
-                              >
-                                {d.plan_maritimo > 0 ? (
-                                  <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200">
-                                    +{d.plan_maritimo.toLocaleString()}
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-300 hover:text-slate-600 text-[11px]">—</span>
-                                )}
-                              </td>
-                            ))}
+                            {mat.dias.map((d) => {
+                              const isBeingDragged =
+                                draggedPedido?.id_material === mat.id_material &&
+                                draggedPedido?.fecha_origen === d.fecha &&
+                                draggedPedido?.tipo_via === "Maritimo";
+                              const isDropTarget =
+                                dragOverCell?.id_material === mat.id_material &&
+                                dragOverCell?.fecha === d.fecha &&
+                                dragOverCell?.tipo_via === "Maritimo";
+                              const isValidDropZone =
+                                draggedPedido &&
+                                draggedPedido.id_material === mat.id_material &&
+                                draggedPedido.tipo_via === "Maritimo" &&
+                                draggedPedido.fecha_origen !== d.fecha;
+
+                              return (
+                                <td
+                                  key={d.fecha}
+                                  onClick={() => {
+                                    if (!draggedPedido) {
+                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo);
+                                    }
+                                  }}
+                                  onDragOver={(e) => {
+                                    if (isValidDropZone) {
+                                      e.preventDefault();
+                                      e.dataTransfer.dropEffect = "move";
+                                      if (dragOverCell?.fecha !== d.fecha) {
+                                        setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: "Maritimo" });
+                                      }
+                                    }
+                                  }}
+                                  onDragLeave={() => {
+                                    if (dragOverCell?.fecha === d.fecha) {
+                                      setDragOverCell(null);
+                                    }
+                                  }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDropPedido(mat.id_material, d.fecha, "Maritimo");
+                                  }}
+                                  className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${
+                                    isDropTarget
+                                      ? "bg-blue-200 ring-2 ring-blue-500 ring-inset scale-105"
+                                      : isValidDropZone
+                                      ? "hover:bg-blue-100/60"
+                                      : "hover:bg-blue-100/70"
+                                  }`}
+                                  title={d.plan_maritimo > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar arribo marítimo"}
+                                >
+                                  {d.plan_maritimo > 0 ? (
+                                    <span
+                                      draggable
+                                      onDragStart={(e) => {
+                                        e.stopPropagation();
+                                        e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
+                                        e.dataTransfer.effectAllowed = "move";
+                                        setDraggedPedido({
+                                          id_material: mat.id_material,
+                                          fecha_origen: d.fecha,
+                                          tipo_via: "Maritimo",
+                                          cantidad: d.plan_maritimo,
+                                        });
+                                      }}
+                                      onDragEnd={() => {
+                                        setDraggedPedido(null);
+                                        setDragOverCell(null);
+                                      }}
+                                      className={`inline-flex items-center gap-0.5 bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${
+                                        isBeingDragged ? "opacity-30 scale-95" : ""
+                                      }`}
+                                    >
+                                      <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
+                                      +{d.plan_maritimo.toLocaleString()}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
                           </tr>
 
                           <tr className="hover:bg-purple-50/30">
@@ -1370,22 +2013,88 @@ export function RundownVivo() {
                               <Plane className="w-3.5 h-3.5 text-purple-600" />
                               <span>Pedidos Aéreos</span>
                             </td>
-                            {mat.dias.map((d) => (
-                              <td
-                                key={d.fecha}
-                                onClick={() => handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Aereo", d.pedidos_aereos)}
-                                className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-purple-100/70 transition-colors"
-                                title="Haz clic para editar pedido aéreo"
-                              >
-                                {d.pedidos_aereos > 0 ? (
-                                  <span className="bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-purple-200">
-                                    +{d.pedidos_aereos.toLocaleString()}
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-300 hover:text-slate-600 text-[11px]">—</span>
-                                )}
-                              </td>
-                            ))}
+                            {mat.dias.map((d) => {
+                              const isBeingDragged =
+                                draggedPedido?.id_material === mat.id_material &&
+                                draggedPedido?.fecha_origen === d.fecha &&
+                                draggedPedido?.tipo_via === "Aereo";
+                              const isDropTarget =
+                                dragOverCell?.id_material === mat.id_material &&
+                                dragOverCell?.fecha === d.fecha &&
+                                dragOverCell?.tipo_via === "Aereo";
+                              const isValidDropZone =
+                                draggedPedido &&
+                                draggedPedido.id_material === mat.id_material &&
+                                draggedPedido.tipo_via === "Aereo" &&
+                                draggedPedido.fecha_origen !== d.fecha;
+
+                              return (
+                                <td
+                                  key={d.fecha}
+                                  onClick={() => {
+                                    if (!draggedPedido) {
+                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Aereo", d.pedidos_aereos);
+                                    }
+                                  }}
+                                  onDragOver={(e) => {
+                                    if (isValidDropZone) {
+                                      e.preventDefault();
+                                      e.dataTransfer.dropEffect = "move";
+                                      if (dragOverCell?.fecha !== d.fecha) {
+                                        setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: "Aereo" });
+                                      }
+                                    }
+                                  }}
+                                  onDragLeave={() => {
+                                    if (dragOverCell?.fecha === d.fecha) {
+                                      setDragOverCell(null);
+                                    }
+                                  }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDropPedido(mat.id_material, d.fecha, "Aereo");
+                                  }}
+                                  className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${
+                                    isDropTarget
+                                      ? "bg-purple-200 ring-2 ring-purple-500 ring-inset scale-105"
+                                      : isValidDropZone
+                                      ? "hover:bg-purple-100/60"
+                                      : "hover:bg-purple-100/70"
+                                  }`}
+                                  title={d.pedidos_aereos > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido aéreo"}
+                                >
+                                  {d.pedidos_aereos > 0 ? (
+                                    <span
+                                      draggable
+                                      onDragStart={(e) => {
+                                        e.stopPropagation();
+                                        e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
+                                        e.dataTransfer.effectAllowed = "move";
+                                        setDraggedPedido({
+                                          id_material: mat.id_material,
+                                          fecha_origen: d.fecha,
+                                          tipo_via: "Aereo",
+                                          cantidad: d.pedidos_aereos,
+                                        });
+                                      }}
+                                      onDragEnd={() => {
+                                        setDraggedPedido(null);
+                                        setDragOverCell(null);
+                                      }}
+                                      className={`inline-flex items-center gap-0.5 bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-purple-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${
+                                        isBeingDragged ? "opacity-30 scale-95" : ""
+                                      }`}
+                                    >
+                                      <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
+                                      +{d.pedidos_aereos.toLocaleString()}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
                           </tr>
                         </>
                       )}
@@ -1458,14 +2167,28 @@ export function RundownVivo() {
                           Días de Cobertura
                         </td>
                         {mat.dias.map((d) => {
+                          const diasRojo = report?.dias_alerta_rojo ?? 5;
+                          const diasAmarillo = report?.dias_alerta_amarillo ?? 15;
+                          const cellId = `cell-risk-${mat.id_material}-${d.fecha}`;
+                          const isHighlighted = highlightedRiskId === cellId;
+                          const isCritical = d.alerta_quiebre || d.dias_cobertura < diasRojo;
+
                           let badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-300";
-                          if (d.alerta_quiebre || d.dias_cobertura < 5) {
+                          if (isCritical) {
                             badgeClass = "bg-red-600 text-white font-bold animate-pulse";
-                          } else if (d.dias_cobertura <= 15) {
+                          } else if (d.dias_cobertura <= diasAmarillo) {
                             badgeClass = "bg-amber-100 text-amber-800 border-amber-300 font-semibold";
                           }
                           return (
-                            <td key={d.fecha} className="px-2 py-1.5 text-center border-r border-slate-100">
+                            <td
+                              key={d.fecha}
+                              id={cellId}
+                              className={`px-2 py-1.5 text-center border-r border-slate-100 transition-all duration-300 ${
+                                isHighlighted
+                                  ? "ring-4 ring-red-500 ring-offset-2 z-20 bg-red-100 scale-105 shadow-md"
+                                  : ""
+                              }`}
+                            >
                               <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono border ${badgeClass}`}>
                                 {d.dias_cobertura >= 900 ? "∞" : `${d.dias_cobertura.toFixed(1)}d`}
                               </span>
@@ -1636,25 +2359,37 @@ export function RundownVivo() {
             </div>
           </div>
 
-          <DialogFooter className="pt-2">
-            <Button variant="outline" onClick={() => setEditIngresoModalOpen(false)}>
-              Cancelar
-            </Button>
+          <DialogFooter className="pt-2 flex items-center justify-between sm:justify-between w-full">
             <Button
-              onClick={handleSubmitEditIngreso}
+              type="button"
+              variant="outline"
+              onClick={handleRequestDeleteIngreso}
               disabled={isSavingIngreso}
-              className={
-                ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
-                  ? "bg-amber-600 hover:bg-amber-700 text-white"
-                  : "bg-blue-600 hover:bg-blue-700 text-white"
-              }
+              className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 gap-1.5"
             >
-              {isSavingIngreso
-                ? "Guardando..."
-                : ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
-                ? `Desplazar pedido al ${ingresoEditForm.fecha_eta}`
-                : "Guardar Cambios"}
+              <Trash2 className="w-4 h-4 text-red-500" />
+              <span>Eliminar Pedido</span>
             </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setEditIngresoModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleSubmitEditIngreso}
+                disabled={isSavingIngreso}
+                className={
+                  ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
+                    ? "bg-amber-600 hover:bg-amber-700 text-white"
+                    : "bg-blue-600 hover:bg-blue-700 text-white"
+                }
+              >
+                {isSavingIngreso
+                  ? "Guardando..."
+                  : ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
+                  ? `Desplazar pedido al ${ingresoEditForm.fecha_eta}`
+                  : "Guardar Cambios"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1664,7 +2399,7 @@ export function RundownVivo() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings className="w-5 h-5 text-blue-600" />
-              <span>Administrar Rundown — Secciones, Proveedores y Materiales</span>
+              <span>Administrar Rundown — Líneas, Proveedores y Materiales</span>
             </DialogTitle>
           </DialogHeader>
 
@@ -1678,7 +2413,7 @@ export function RundownVivo() {
                     : "border-transparent text-slate-500 hover:text-slate-700"
                 }`}
               >
-                Secciones / Líneas
+                Líneas
               </button>
               <button
                 onClick={() => setAdminTab("proveedores")}
@@ -1714,7 +2449,7 @@ export function RundownVivo() {
                 <div className="border rounded-lg p-3 bg-slate-50 space-y-3">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
                     <FolderPlus className="w-4 h-4 text-blue-600" />
-                    <span>Nueva Sección</span>
+                    <span>Nueva Línea</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <Input
@@ -1734,7 +2469,7 @@ export function RundownVivo() {
                       disabled={isSavingAdmin || !newSeccionForm.nombre.trim()}
                       className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white"
                     >
-                      {isSavingAdmin ? "Guardando..." : "Agregar Sección"}
+                      {isSavingAdmin ? "Guardando..." : "Agregar Línea"}
                     </Button>
                   </div>
                 </div>
@@ -1783,7 +2518,7 @@ export function RundownVivo() {
                       onValueChange={(val) => setNewProvForm({ ...newProvForm, id_seccion: parseInt(val, 10) })}
                     >
                       <SelectTrigger className="text-xs h-8">
-                        <SelectValue placeholder="Sección" />
+                        <SelectValue placeholder="Línea" />
                       </SelectTrigger>
                       <SelectContent>
                         {secciones.map((s) => (
@@ -1808,7 +2543,7 @@ export function RundownVivo() {
                     <thead className="bg-slate-100 text-slate-700 border-b">
                       <tr>
                         <th className="p-2 text-left">Proveedor</th>
-                        <th className="p-2 text-left">Sección Asignada</th>
+                        <th className="p-2 text-left">Línea Asignada</th>
                         <th className="p-2 text-center">Estado</th>
                         <th className="p-2 text-center">Acción</th>
                       </tr>
@@ -1823,7 +2558,7 @@ export function RundownVivo() {
                               onValueChange={(val) => handleReassignProveedor(p.id_proveedor, parseInt(val, 10))}
                             >
                               <SelectTrigger className="text-xs h-7 w-40">
-                                <SelectValue placeholder="Asignar sección" />
+                                <SelectValue placeholder="Asignar línea" />
                               </SelectTrigger>
                               <SelectContent>
                                 {secciones.map((sec) => (
@@ -2304,7 +3039,7 @@ export function RundownVivo() {
               </div>
 
               <div className="space-y-1">
-                <Label>Stock de Arranque (Metros) *</Label>
+                <Label>Stock Real / Revalidado (Metros) *</Label>
                 <Input
                   type="number"
                   step="1"
@@ -2328,21 +3063,39 @@ export function RundownVivo() {
             </div>
 
             <p className="text-[11px] bg-blue-50/80 p-2.5 rounded-lg border border-blue-100 text-blue-900 leading-relaxed">
-              El valor ingresado se toma como el <strong>stock real de arranque</strong> para la fecha <strong>{stockForm.fecha}</strong>, recalculando y encadenando el saldo teórico hacia todos los días posteriores.
+              El valor ingresado se toma como el <strong>stock real definitivo</strong> para la fecha <strong>{stockForm.fecha}</strong> (fijando el valor final de ese día y calculando el desvío contra el teórico). A partir del día siguiente se reanuda el encadenamiento restando consumos y sumando ingresos.
             </p>
           </div>
 
-          <DialogFooter className="pt-2">
-            <Button variant="outline" onClick={() => setStockModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleSubmitStock}
-              disabled={isSavingStock}
-              className="bg-blue-600 text-white hover:bg-blue-700"
-            >
-              {isSavingStock ? "Guardando..." : "Guardar Ajuste"}
-            </Button>
+          <DialogFooter className="pt-2 flex items-center justify-between sm:justify-between w-full">
+            {report?.materiales
+              .find((m) => m.id_parametro === stockForm.id_parametro)
+              ?.dias.find((d) => d.fecha === stockForm.fecha)?.tiene_ajuste ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleRequestDeleteStockAjuste}
+                disabled={isSavingStock}
+                className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 gap-1.5"
+              >
+                <Trash2 className="w-4 h-4 text-red-500" />
+                <span>Eliminar Ajuste</span>
+              </Button>
+            ) : (
+              <div />
+            )}
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setStockModalOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleSubmitStock}
+                disabled={isSavingStock}
+                className="bg-blue-600 text-white hover:bg-blue-700"
+              >
+                {isSavingStock ? "Guardando..." : "Guardar Ajuste"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2775,6 +3528,369 @@ export function RundownVivo() {
           <DialogFooter className="pt-2">
             <Button variant="outline" onClick={() => setHorizonteModalOpen(false)}>
               Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: Plan de Producción Semanal por Línea */}
+      <Dialog open={planModalOpen} onOpenChange={setPlanModalOpen}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-indigo-900 text-lg">
+              <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
+              <span>Importar Plan de Producción Semanal por Línea</span>
+            </DialogTitle>
+            <p className="text-xs text-slate-500">
+              Línea seleccionada: <strong className="text-slate-800">{activeSeccion?.nombre || "Headliner"}</strong>.
+              Permite cargar la distribución de turnos por código SD, sumar automáticamente los turnos por día e impactar el cálculo de consumos.
+            </p>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+              <div className="md:col-span-2 space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">Archivo Excel del Plan (.xlsx)</Label>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={planFileInputRef}
+                    type="file"
+                    accept=".xlsx, .xls"
+                    onChange={handlePlanFileChange}
+                    className="hidden"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => planFileInputRef.current?.click()}
+                    className="border-dashed border-2 border-indigo-300 hover:border-indigo-500 text-indigo-700 bg-indigo-50/50 hover:bg-indigo-50 w-full justify-center h-10 gap-2 font-medium"
+                  >
+                    <UploadCloud className="w-4 h-4 text-indigo-600" />
+                    <span>{planFile ? planFile.name : "Seleccionar o arrastrar archivo de plan..."}</span>
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">Lunes de Inicio (Semana)</Label>
+                <div className="flex gap-1.5">
+                  <Input
+                    type="date"
+                    value={planOverrideFecha}
+                    onChange={(e) => setPlanOverrideFecha(e.target.value)}
+                    className="text-xs h-10 bg-white"
+                  />
+                  {planFile && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => planFile && executePlanPreview(planFile, planOverrideFecha)}
+                      disabled={planLoading}
+                      className="h-10 px-2.5 text-xs text-indigo-700"
+                      title="Re-analizar con nueva fecha"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${planLoading ? "animate-spin" : ""}`} />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {planLoading && (
+              <div className="flex items-center justify-center p-8 bg-white border rounded-xl">
+                <div className="flex flex-col items-center gap-2 text-slate-500">
+                  <RefreshCw className="w-6 h-6 animate-spin text-indigo-600" />
+                  <span className="text-xs font-medium">Interpretando turnos y mapeando SDs a piezas...</span>
+                </div>
+              </div>
+            )}
+
+            {planPreview && !planLoading && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-indigo-50/70 border border-indigo-100 rounded-lg p-3 text-xs">
+                  <div className="flex items-center gap-3">
+                    <span className="text-slate-600">
+                      Período: <strong className="text-indigo-950 font-mono">{planPreview.fecha_inicio}</strong> al <strong className="text-indigo-950 font-mono">{planPreview.fecha_fin}</strong>
+                    </span>
+                    <span className="text-slate-300">|</span>
+                    <span className="text-slate-600">
+                      SDs Detectados: <strong className="text-indigo-950">{planPreview.filas.length}</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-indigo-600 hover:bg-indigo-600 text-white font-mono text-xs">
+                      Total Semana: {Math.round(planPreview.total_general).toLocaleString()} un.
+                    </Badge>
+                  </div>
+                </div>
+
+                {planPreview.advertencias.length > 0 && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+                    <div className="flex items-center gap-1.5 text-amber-800 text-xs font-semibold">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      <span>Advertencias de mapeo:</span>
+                    </div>
+                    {planPreview.advertencias.map((adv, idx) => (
+                      <p key={idx} className="text-xs text-amber-700 pl-5">
+                        • {adv}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                <div className="border rounded-lg overflow-hidden max-h-72 overflow-y-auto bg-white">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-100 text-slate-700 border-b sticky top-0 z-10">
+                      <tr>
+                        <th className="p-2 text-left font-semibold">SD</th>
+                        <th className="p-2 text-left font-semibold">Parte Toyota</th>
+                        {planPreview.dias.map((d) => (
+                          <th key={d.fecha} className="p-2 text-right font-semibold">
+                            <div>{d.nombre.slice(0, 3)}</div>
+                            <div className="text-[10px] font-normal text-slate-500 font-mono">
+                              {d.fecha.slice(5).replace("-", "/")}
+                            </div>
+                          </th>
+                        ))}
+                        <th className="p-2 text-right font-semibold bg-indigo-50/50 text-indigo-950">Total</th>
+                        <th className="p-2 text-center font-semibold">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {planPreview.filas.map((f) => (
+                        <tr key={f.sd} className="hover:bg-slate-50">
+                          <td className="p-2 font-mono font-bold text-slate-800">{f.sd}</td>
+                          <td className="p-2 font-mono text-slate-600">
+                            {f.id_producto ? (
+                              <span>{f.id_producto}</span>
+                            ) : (
+                              <span className="text-amber-600 italic">Sin mapeo</span>
+                            )}
+                          </td>
+                          {planPreview.dias.map((d) => {
+                            const val = f.cantidades[d.fecha] || 0;
+                            return (
+                              <td
+                                key={d.fecha}
+                                className={`p-2 text-right font-mono ${
+                                  val > 0 ? "font-semibold text-slate-900 bg-slate-50/40" : "text-slate-300"
+                                }`}
+                              >
+                                {val > 0 ? Math.round(val).toLocaleString() : "-"}
+                              </td>
+                            );
+                          })}
+                          <td className="p-2 text-right font-mono font-bold text-indigo-900 bg-indigo-50/40">
+                            {Math.round(f.total_semana).toLocaleString()}
+                          </td>
+                          <td className="p-2 text-center">
+                            {f.mapeado ? (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px] gap-1 py-0 h-5">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                Vinculado
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 text-[10px]">
+                                Pendiente
+                              </Badge>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-slate-50 font-bold border-t text-slate-900 sticky bottom-0">
+                      <tr>
+                        <td colSpan={2} className="p-2 text-right text-xs">
+                          TOTAL DIARIO:
+                        </td>
+                        {planPreview.dias.map((d) => (
+                          <td key={d.fecha} className="p-2 text-right font-mono text-xs text-indigo-900">
+                            {Math.round(planPreview.totales_dia[d.fecha] || 0).toLocaleString()}
+                          </td>
+                        ))}
+                        <td className="p-2 text-right font-mono text-xs text-indigo-950 bg-indigo-100/50">
+                          {Math.round(planPreview.total_general).toLocaleString()}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button variant="outline" onClick={() => setPlanModalOpen(false)}>
+              Cerrar
+            </Button>
+            <Button
+              onClick={handleConfirmPlan}
+              disabled={planSaving || planLoading || !planPreview || planPreview.filas.length === 0}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+            >
+              {planSaving ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Sincronizando producción...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Confirmar e Impactar Plan</span>
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={confirmDelete.isOpen}
+        onOpenChange={(open) => setConfirmDelete((prev) => ({ ...prev, isOpen: open }))}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-slate-900">
+              <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
+              <span>{confirmDelete.title}</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">
+              {confirmDelete.description}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="pt-2">
+            <AlertDialogCancel disabled={isDeletingItem}>Cancelar</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={isDeletingItem}
+              onClick={async () => {
+                setIsDeletingItem(true);
+                try {
+                  await confirmDelete.onConfirm();
+                  setConfirmDelete((prev) => ({ ...prev, isOpen: false }));
+                } finally {
+                  setIsDeletingItem(false);
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700 text-white gap-1.5"
+            >
+              {isDeletingItem ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Eliminando...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  <span>{confirmDelete.actionText}</span>
+                </>
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog open={umbralesModalOpen} onOpenChange={setUmbralesModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-slate-900">
+              <SlidersHorizontal className="w-5 h-5 text-blue-600" />
+              <span>Configuración de Semáforo ({report?.nombre_proveedor})</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-sm">
+            <p className="text-xs text-slate-500">
+              Define los umbrales de cobertura en días para clasificar el stock de este proveedor en el Rundown.
+            </p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5 p-3 rounded-lg border border-red-200 bg-red-50/40">
+                <Label className="text-xs font-bold text-red-900 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-600 inline-block" />
+                  Alerta Crítica / Rojo
+                </Label>
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={umbralesForm.dias_rojo}
+                    onChange={(e) =>
+                      setUmbralesForm((prev) => ({
+                        ...prev,
+                        dias_rojo: Math.max(0, parseFloat(e.target.value) || 0),
+                      }))
+                    }
+                    className="h-8 font-mono text-sm bg-white"
+                  />
+                  <span className="text-xs text-slate-500 font-medium">días</span>
+                </div>
+                <p className="text-[10px] text-red-700">
+                  Menor a este valor se marcará en rojo con alerta de quiebre.
+                </p>
+              </div>
+
+              <div className="space-y-1.5 p-3 rounded-lg border border-amber-200 bg-amber-50/40">
+                <Label className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
+                  Precaución / Amarillo
+                </Label>
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={umbralesForm.dias_amarillo}
+                    onChange={(e) =>
+                      setUmbralesForm((prev) => ({
+                        ...prev,
+                        dias_amarillo: Math.max(0, parseFloat(e.target.value) || 0),
+                      }))
+                    }
+                    className="h-8 font-mono text-sm bg-white"
+                  />
+                  <span className="text-xs text-slate-500 font-medium">días</span>
+                </div>
+                <p className="text-[10px] text-amber-700">
+                  Entre rojo y este valor se marcará en amarillo como advertencia.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 border rounded-lg text-xs space-y-1.5">
+              <span className="font-semibold text-slate-700">Escala resultante para {report?.nombre_proveedor}:</span>
+              <div className="flex items-center gap-2 pt-1 font-mono text-[11px]">
+                <Badge className="bg-red-600 text-white">&lt; {umbralesForm.dias_rojo}d (Riesgo)</Badge>
+                <Badge className="bg-amber-100 text-amber-800 border-amber-300">{umbralesForm.dias_rojo}d - {umbralesForm.dias_amarillo}d (Atención)</Badge>
+                <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300">&gt; {umbralesForm.dias_amarillo}d (Óptimo)</Badge>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button variant="outline" onClick={() => setUmbralesModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleSaveUmbrales}
+              disabled={isSavingUmbrales || umbralesForm.dias_amarillo <= umbralesForm.dias_rojo}
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            >
+              {isSavingUmbrales ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Guardando...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Guardar Umbrales</span>
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

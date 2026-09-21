@@ -26,7 +26,13 @@ from app.schemas.rundown import (
     RundownParametroMaterialItem,
     RundownPeriodoProyeccionItem,
     RundownPeriodoProyeccionCreate,
+    PlanSemanalPreviewOut,
+    PlanSemanalDiaHeader,
+    PlanSemanalFila,
+    PlanSemanalConfirmRequest,
+    PlanSemanalConfirmOut,
 )
+from app.services.plan_semanal_parser import parse_plan_semanal_excel
 
 DIAS_ESP = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
@@ -42,20 +48,50 @@ class RundownService:
         fecha_hasta: Optional[date] = None,
         alcance: str = "total",
         periodo: Optional[str] = None,
+        id_seccion: Optional[int] = None,
     ) -> RundownSupplierReport:
-        proveedor = self._repo.get_proveedor(identifier)
-        if not proveedor:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Proveedor '{identifier}' no encontrado en el sistema",
-            )
+        is_multi_prov = identifier.upper() in ["TODOS", "ALL"]
+        if is_multi_prov:
+            secciones_raw = self._repo.get_secciones_con_proveedores()
+            if id_seccion:
+                target_sec = next((s for s in secciones_raw if s["id_seccion"] == id_seccion), None)
+                prov_list = target_sec["proveedores"] if target_sec else []
+            else:
+                prov_list = [p for s in secciones_raw for p in s["proveedores"]]
 
-        parametros = self._repo.get_parametros_proveedor(proveedor["id_proveedor"])
-        if not parametros:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No se encontraron parámetros de rundown configurados para {proveedor['nombre']}",
-            )
+            prov_ids = [p["id_proveedor"] for p in prov_list]
+            prov_map = {p["id_proveedor"]: p for p in prov_list}
+            parametros = []
+            for pid in prov_ids:
+                parametros.extend(self._repo.get_parametros_proveedor(pid))
+
+            proveedor_nombre = "Todos los Proveedores"
+            proveedor_codigo = "TODOS"
+            proveedor_id = 0
+            default_rojo = 5.0
+            default_amarillo = 15.0
+        else:
+            proveedor = self._repo.get_proveedor(identifier)
+            if not proveedor:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Proveedor '{identifier}' no encontrado en el sistema",
+                )
+
+            parametros = self._repo.get_parametros_proveedor(proveedor["id_proveedor"])
+            if not parametros:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No se encontraron parámetros de rundown configurados para {proveedor['nombre']}",
+                )
+
+            prov_ids = [proveedor["id_proveedor"]]
+            prov_map = {proveedor["id_proveedor"]: proveedor}
+            proveedor_nombre = proveedor["nombre"]
+            proveedor_codigo = proveedor["codigo_proveedor"]
+            proveedor_id = proveedor["id_proveedor"]
+            default_rojo = float(proveedor.get("dias_alerta_rojo") if proveedor.get("dias_alerta_rojo") is not None else 5.0)
+            default_amarillo = float(proveedor.get("dias_alerta_amarillo") if proveedor.get("dias_alerta_amarillo") is not None else 15.0)
 
         all_products = sorted(
             list(
@@ -122,8 +158,8 @@ class RundownService:
                 daily_p = round(tot_p / cant_laborales, 2) if cant_laborales > 0 else 0.0
                 prod_map[p] = {d: daily_p for d in dias_laborales}
 
-        transitos = self._repo.get_transitos(proveedor["id_proveedor"], d_start, d_end)
-        ajustes_map = self._repo.get_stock_ajustes(proveedor["id_proveedor"], d_start, d_end)
+        transitos = self._repo.get_transitos(prov_ids, d_start, d_end)
+        ajustes_map = self._repo.get_stock_ajustes(prov_ids, d_start, d_end)
 
         transito_map: Dict[Tuple[str, date, str], float] = {}
         for t in transitos:
@@ -135,6 +171,10 @@ class RundownService:
         material_grids: List[RundownMaterialGrid] = []
 
         for param in parametros:
+            p_info = prov_map.get(param["id_proveedor"], {})
+            dias_rojo = float(p_info.get("dias_alerta_rojo", default_rojo))
+            dias_amarillo = float(p_info.get("dias_alerta_amarillo", default_amarillo))
+
             s_planta = float(round(self._compute_carryover_stock(param, all_products, d_start, "planta", meses_raw)))
             s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw)))
             stock_corriente = s_planta if alcance == "planta" else s_total
@@ -145,11 +185,6 @@ class RundownService:
             for d in dates_timeline:
                 ajuste_key = (param["id_parametro"], d, alcance)
                 tiene_ajuste = ajuste_key in ajustes_map
-                desvio = 0.0
-                if tiene_ajuste:
-                    stock_real = float(round(ajustes_map[ajuste_key]))
-                    desvio = float(round(stock_real - stock_corriente))
-                    stock_corriente = stock_real
 
                 veh_prod = sum(
                     prod_map.get(p["id_producto"], {}).get(d, 0.0) * p["factor_uso"]
@@ -169,7 +204,15 @@ class RundownService:
                 scrap = transito_map.get((param["id_material"], d, "AjusteScrap"), 0.0)
 
                 ingresos_dia = maritimo + aereo + local
-                stock_corriente = float(round(stock_corriente - uso + ingresos_dia - scrap))
+                stock_teorico = float(round(stock_corriente - uso + ingresos_dia - scrap))
+
+                desvio = 0.0
+                if tiene_ajuste:
+                    stock_real = float(round(ajustes_map[ajuste_key]))
+                    desvio = float(round(stock_real - stock_teorico))
+                    stock_corriente = stock_real
+                else:
+                    stock_corriente = stock_teorico
 
                 if uso > 0:
                     dias_cobertura = round(stock_corriente / uso, 2)
@@ -178,7 +221,7 @@ class RundownService:
                 else:
                     dias_cobertura = 0.0
 
-                alerta_quiebre = dias_cobertura < 5.0 or stock_corriente <= 0
+                alerta_quiebre = dias_cobertura < dias_rojo or stock_corriente <= 0
 
                 cells.append(
                     RundownDayCell(
@@ -216,13 +259,15 @@ class RundownService:
                     dias=cells,
                     total_uso=round(total_uso, 2),
                     total_ingresos=round(total_ingresos, 2),
+                    id_proveedor=param["id_proveedor"],
+                    nombre_proveedor=p_info.get("nombre"),
                 )
             )
 
         return RundownSupplierReport(
-            id_proveedor=proveedor["id_proveedor"],
-            codigo_proveedor=proveedor["codigo_proveedor"],
-            nombre_proveedor=proveedor["nombre"],
+            id_proveedor=proveedor_id,
+            codigo_proveedor=proveedor_codigo,
+            nombre_proveedor=proveedor_nombre,
             fecha_desde=d_start.strftime("%Y-%m-%d"),
             fecha_hasta=d_end.strftime("%Y-%m-%d"),
             alcance=alcance,
@@ -232,6 +277,8 @@ class RundownService:
             meses_disponibles=meses_disponibles,
             columnas_fechas=columnas_fechas,
             materiales=material_grids,
+            dias_alerta_rojo=default_rojo,
+            dias_alerta_amarillo=default_amarillo,
         )
 
     def add_transito(self, data: RundownTransitoCreate) -> int:
@@ -265,6 +312,9 @@ class RundownService:
             stock_ajustado=data.stock_ajustado,
             observacion=data.observacion,
         )
+
+    def delete_stock_ajuste(self, id_parametro: int, fecha: date, tipo_stock: str = "total") -> bool:
+        return self._repo.delete_stock_ajuste(id_parametro, fecha, tipo_stock)
 
     def update_scrap_porcentaje(self, id_parametro: int, scrap_porcentaje: float) -> bool:
         if scrap_porcentaje < 0:
@@ -305,6 +355,8 @@ class RundownService:
                     id_seccion=p["id_seccion"],
                     activo=p["activo"],
                     tiene_parametros=p["tiene_parametros"],
+                    dias_alerta_rojo=float(p.get("dias_alerta_rojo") or 5.0),
+                    dias_alerta_amarillo=float(p.get("dias_alerta_amarillo") or 15.0),
                 )
                 for p in s["proveedores"]
             ]
@@ -343,6 +395,8 @@ class RundownService:
             nombre=data.nombre,
             id_seccion=data.id_seccion,
             activo=data.activo,
+            dias_alerta_rojo=data.dias_alerta_rojo,
+            dias_alerta_amarillo=data.dias_alerta_amarillo,
         )
         if not updated:
             raise HTTPException(
@@ -541,10 +595,6 @@ class RundownService:
 
         curr = init_date
         while curr <= end_prev:
-            aj_key = (param["id_parametro"], curr, alcance)
-            if aj_key in prev_ajustes:
-                s_val = prev_ajustes[aj_key]
-
             m_key = (curr.year, curr.month)
             m_info = next((m for m in meses_raw if m["anio"] == curr.year and m["mes"] == curr.month), None)
             is_firm = m_info["es_firme"] if m_info else (curr.month == 9 and curr.year == 2026)
@@ -581,8 +631,105 @@ class RundownService:
             aereo = transito_map.get((param["id_material"], curr, "Aereo"), 0.0)
             local = transito_map.get((param["id_material"], curr, "Local"), 0.0)
             scrap = transito_map.get((param["id_material"], curr, "AjusteScrap"), 0.0)
-            s_val = float(round(s_val - uso + (maritimo + aereo + local) - scrap))
+            stock_teorico = float(round(s_val - uso + (maritimo + aereo + local) - scrap))
+
+            aj_key = (param["id_parametro"], curr, alcance)
+            if aj_key in prev_ajustes:
+                s_val = float(round(prev_ajustes[aj_key]))
+            else:
+                s_val = stock_teorico
+
             curr += timedelta(days=1)
 
         return float(round(s_val))
+
+    def preview_plan_semanal(
+        self, id_seccion: int, file_bytes: bytes, override_fecha_inicio: Optional[date] = None
+    ) -> PlanSemanalPreviewOut:
+        seccion = self._repo.get_seccion_info(id_seccion)
+        if not seccion:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Sección con ID {id_seccion} no encontrada",
+            )
+
+        try:
+            parsed = parse_plan_semanal_excel(file_bytes, override_fecha_inicio)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error al interpretar el archivo de plan semanal: {str(e)}",
+            )
+
+        sd_mapping = self._repo.get_sd_mappings_by_seccion(id_seccion)
+        advertencias: List[str] = []
+        filas_out: List[PlanSemanalFila] = []
+
+        for f in parsed["filas"]:
+            sd_code = f["sd"].strip().upper()
+            mapping_info = sd_mapping.get(sd_code)
+            is_mapped = mapping_info is not None
+            if not is_mapped:
+                advertencias.append(f"El código SD '{sd_code}' no tiene un número de parte asociado en la sección.")
+
+            filas_out.append(
+                PlanSemanalFila(
+                    sd=sd_code,
+                    id_producto=mapping_info["id_producto"] if mapping_info else None,
+                    descripcion=mapping_info["descripcion"] if mapping_info else None,
+                    cantidades=f["cantidades"],
+                    total_semana=f["total_semana"],
+                    mapeado=is_mapped,
+                )
+            )
+
+        dias_out = [
+            PlanSemanalDiaHeader(
+                nombre=d["nombre"],
+                fecha=d["fecha"],
+                total=d["total"],
+            )
+            for d in parsed["dias"]
+        ]
+
+        return PlanSemanalPreviewOut(
+            id_seccion=id_seccion,
+            seccion_nombre=seccion["nombre"],
+            fecha_inicio=parsed["fecha_inicio"],
+            fecha_fin=parsed["fecha_fin"],
+            dias=dias_out,
+            filas=filas_out,
+            totales_dia=parsed["totales_dia"],
+            total_general=parsed["total_general"],
+            advertencias=advertencias,
+        )
+
+    def confirm_plan_semanal(
+        self, id_seccion: int, payload: PlanSemanalConfirmRequest
+    ) -> PlanSemanalConfirmOut:
+        seccion = self._repo.get_seccion_info(id_seccion)
+        if not seccion:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Sección con ID {id_seccion} no encontrada",
+            )
+
+        if not payload.items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se enviaron registros para confirmar en el plan semanal",
+            )
+
+        reg_linea, reg_plan = self._repo.save_plan_semanal_linea(
+            id_seccion=id_seccion,
+            items=payload.items,
+        )
+
+        return PlanSemanalConfirmOut(
+            success=True,
+            registros_plan_linea=reg_linea,
+            registros_produccion_planificada=reg_plan,
+            mensaje=f"Plan semanal para {seccion['nombre']} guardado exitosamente. Se sincronizaron {reg_plan} registros de producción.",
+        )
+
 

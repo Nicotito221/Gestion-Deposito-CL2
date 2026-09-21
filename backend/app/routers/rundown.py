@@ -1,6 +1,6 @@
 from datetime import date
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from app.schemas.rundown import (
     RundownProveedorCreate,
@@ -20,6 +20,9 @@ from app.schemas.rundown import (
     RundownParametroMaterialItem,
     RundownPeriodoProyeccionItem,
     RundownPeriodoProyeccionCreate,
+    PlanSemanalPreviewOut,
+    PlanSemanalConfirmRequest,
+    PlanSemanalConfirmOut,
 )
 from app.services.rundown_service import RundownService
 
@@ -110,6 +113,7 @@ def get_supplier_rundown(
     fecha_hasta: Optional[date] = Query(default=None),
     alcance: str = Query(default="total", pattern=r"^(total|planta)$"),
     periodo: Optional[str] = Query(default=None),
+    id_seccion: Optional[int] = Query(default=None),
     service: RundownService = Depends(get_rundown_service),
 ) -> RundownSupplierReport:
     return service.get_supplier_rundown(
@@ -118,6 +122,7 @@ def get_supplier_rundown(
         fecha_hasta=fecha_hasta,
         alcance=alcance,
         periodo=periodo,
+        id_seccion=id_seccion,
     )
 
 
@@ -209,6 +214,17 @@ def update_stock_ajuste(
     return {"mensaje": f"Stock ({data.tipo_stock}) para la fecha {data.fecha} actualizado correctamente"}
 
 
+@router.delete("/stock-ajuste")
+def delete_stock_ajuste(
+    id_parametro: int = Query(...),
+    fecha: date = Query(...),
+    tipo_stock: str = Query(default="total"),
+    service: RundownService = Depends(get_rundown_service),
+):
+    service.delete_stock_ajuste(id_parametro, fecha, tipo_stock)
+    return {"mensaje": f"Ajuste de stock ({tipo_stock}) para la fecha {fecha} eliminado correctamente"}
+
+
 @router.put("/scrap")
 def update_scrap(
     data: RundownScrapUpdate,
@@ -216,4 +232,25 @@ def update_scrap(
 ):
     service.update_scrap_porcentaje(data.id_parametro, data.scrap_porcentaje)
     return {"mensaje": "Porcentaje de scrap actualizado correctamente"}
+
+
+@router.post("/secciones/{id_seccion}/plan-semanal/previsualizar", response_model=PlanSemanalPreviewOut)
+async def preview_plan_semanal(
+    id_seccion: int,
+    file: UploadFile = File(...),
+    override_fecha_inicio: Optional[date] = Form(default=None),
+    service: RundownService = Depends(get_rundown_service),
+) -> PlanSemanalPreviewOut:
+    contents = await file.read()
+    return service.preview_plan_semanal(id_seccion, contents, override_fecha_inicio)
+
+
+@router.post("/secciones/{id_seccion}/plan-semanal/confirmar", response_model=PlanSemanalConfirmOut)
+def confirm_plan_semanal(
+    id_seccion: int,
+    payload: PlanSemanalConfirmRequest,
+    service: RundownService = Depends(get_rundown_service),
+) -> PlanSemanalConfirmOut:
+    return service.confirm_plan_semanal(id_seccion, payload)
+
 

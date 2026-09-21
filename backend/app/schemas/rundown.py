@@ -1,5 +1,5 @@
 from datetime import date
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -91,6 +91,8 @@ class RundownMaterialGrid(BaseModel):
     dias: List[RundownDayCell]
     total_uso: float
     total_ingresos: float
+    id_proveedor: Optional[int] = None
+    nombre_proveedor: Optional[str] = None
 
 
 class RundownPeriodoItem(BaseModel):
@@ -117,6 +119,8 @@ class RundownSupplierReport(BaseModel):
     meses_disponibles: List[RundownPeriodoItem] = []
     columnas_fechas: List[str]
     materiales: List[RundownMaterialGrid]
+    dias_alerta_rojo: float = 5.0
+    dias_alerta_amarillo: float = 15.0
 
 
 class RundownProveedorItem(BaseModel):
@@ -126,6 +130,8 @@ class RundownProveedorItem(BaseModel):
     id_seccion: Optional[int] = None
     activo: bool = True
     tiene_parametros: bool = False
+    dias_alerta_rojo: float = 5.0
+    dias_alerta_amarillo: float = 15.0
 
 
 class RundownSeccionItem(BaseModel):
@@ -150,12 +156,16 @@ class RundownProveedorCreate(BaseModel):
     nombre: str = Field(min_length=1, max_length=80)
     id_seccion: Optional[int] = None
     pais: Optional[str] = Field(default=None, max_length=30)
+    dias_alerta_rojo: Optional[float] = Field(default=5.0, ge=0)
+    dias_alerta_amarillo: Optional[float] = Field(default=15.0, ge=0)
 
 
 class RundownProveedorUpdate(BaseModel):
     nombre: Optional[str] = Field(default=None, max_length=80)
     id_seccion: Optional[int] = None
     activo: Optional[bool] = None
+    dias_alerta_rojo: Optional[float] = Field(default=None, ge=0)
+    dias_alerta_amarillo: Optional[float] = Field(default=None, ge=0)
 
 
 class RundownCalendarioDia(BaseModel):
@@ -242,4 +252,52 @@ class RundownPeriodoProyeccionItem(BaseModel):
     observacion: Optional[str] = None
     es_oficial: bool = False
     activo: bool = True
+
+
+class PlanSemanalDiaHeader(BaseModel):
+    nombre: str
+    fecha: str
+    total: float
+
+
+class PlanSemanalFila(BaseModel):
+    sd: str
+    id_producto: Optional[str] = None
+    descripcion: Optional[str] = None
+    cantidades: Dict[str, float]
+    total_semana: float
+    mapeado: bool = True
+
+
+class PlanSemanalPreviewOut(BaseModel):
+    id_seccion: int
+    seccion_nombre: str
+    fecha_inicio: str
+    fecha_fin: str
+    dias: List[PlanSemanalDiaHeader]
+    filas: List[PlanSemanalFila]
+    totales_dia: Dict[str, float]
+    total_general: float
+    advertencias: List[str] = []
+
+
+class PlanSemanalItemConfirm(BaseModel):
+    sd: str
+    id_producto: str
+    fecha: date
+    cantidad: float = Field(ge=0)
+
+
+class PlanSemanalConfirmRequest(BaseModel):
+    fecha_inicio: date
+    fecha_fin: date
+    items: List[PlanSemanalItemConfirm]
+
+
+class PlanSemanalConfirmOut(BaseModel):
+    success: bool
+    registros_plan_linea: int
+    registros_produccion_planificada: int
+    mensaje: str
+
 
