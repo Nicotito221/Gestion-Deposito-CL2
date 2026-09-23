@@ -31,6 +31,18 @@ class RundownRepository:
                     ALTER TABLE dbo.proveedor ADD dias_alerta_amarillo FLOAT NULL;
                 END
             """)
+            cursor.execute("""
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='proveedor' AND COLUMN_NAME='deposito_en_planta')
+                BEGIN
+                    ALTER TABLE dbo.proveedor ADD deposito_en_planta BIT NOT NULL DEFAULT 0;
+                END
+            """)
+            cursor.execute("""
+                IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='proveedor' AND COLUMN_NAME='doh_sugerido_planta')
+                BEGIN
+                    ALTER TABLE dbo.proveedor ADD doh_sugerido_planta FLOAT NOT NULL DEFAULT 1.0;
+                END
+            """)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -46,7 +58,8 @@ class RundownRepository:
                 cursor.execute(
                     """
                     SELECT id_proveedor, codigo_proveedor, nombre, pais, activo,
-                           ISNULL(dias_alerta_rojo, 5.0), ISNULL(dias_alerta_amarillo, 15.0)
+                           ISNULL(dias_alerta_rojo, 5.0), ISNULL(dias_alerta_amarillo, 15.0),
+                           ISNULL(deposito_en_planta, 0), ISNULL(doh_sugerido_planta, 1.0)
                     FROM dbo.proveedor WHERE id_proveedor = ?
                     """,
                     (int(identifier),),
@@ -55,7 +68,8 @@ class RundownRepository:
                 cursor.execute(
                     """
                     SELECT id_proveedor, codigo_proveedor, nombre, pais, activo,
-                           ISNULL(dias_alerta_rojo, 5.0), ISNULL(dias_alerta_amarillo, 15.0)
+                           ISNULL(dias_alerta_rojo, 5.0), ISNULL(dias_alerta_amarillo, 15.0),
+                           ISNULL(deposito_en_planta, 0), ISNULL(doh_sugerido_planta, 1.0)
                     FROM dbo.proveedor WHERE UPPER(codigo_proveedor) = UPPER(?)
                     """,
                     (identifier.strip(),),
@@ -71,6 +85,8 @@ class RundownRepository:
                 "activo": bool(row[4]),
                 "dias_alerta_rojo": float(row[5]) if row[5] is not None else 5.0,
                 "dias_alerta_amarillo": float(row[6]) if row[6] is not None else 15.0,
+                "deposito_en_planta": bool(row[7]),
+                "doh_sugerido_planta": float(row[8]) if len(row) > 8 and row[8] is not None else 1.0,
             }
         finally:
             cursor.close()
@@ -86,9 +102,12 @@ class RundownRepository:
                        m.lote_mts, m.scrap_porcentaje, m.factor_conversion, m.categoria_cabina,
                        m.stock_inicial_referencia, m.fecha_stock_inicial,
                        m.stock_inicial_planta, m.stock_inicial_total,
-                       p.id_producto, p.factor_uso
+                       p.id_producto, p.factor_uso,
+                       CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT) AS stock_cl2,
+                       ISNULL(m.tipo_empaque, 'pallet') AS tipo_empaque
                 FROM dbo.rundown_parametro_material m
                 LEFT JOIN dbo.rundown_parametro_producto p ON m.id_parametro = p.id_parametro
+                LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
                 WHERE m.id_proveedor = ? AND m.activo = 1
                 ORDER BY m.id_parametro, p.id_producto
                 """,
@@ -113,6 +132,8 @@ class RundownRepository:
                         "fecha_stock_inicial": r[10],
                         "stock_inicial_planta": float(r[11]) if r[11] is not None else 0.0,
                         "stock_inicial_total": float(r[12]) if r[12] is not None else float(r[9]),
+                        "stock_cl2": float(r[15]) if len(r) > 15 and r[15] is not None else 0.0,
+                        "tipo_empaque": str(r[16]) if len(r) > 16 and r[16] else "pallet",
                         "productos": [],
                     }
                 if r[13]:
@@ -271,7 +292,24 @@ class RundownRepository:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
-            if tipo_stock == "planta":
+            cursor.execute(
+                """
+                SELECT ISNULL(p.deposito_en_planta, 0)
+                FROM dbo.rundown_parametro_material m
+                JOIN dbo.proveedor p ON m.id_proveedor = p.id_proveedor
+                WHERE m.id_parametro = ?
+                """,
+                (id_parametro,),
+            )
+            row = cursor.fetchone()
+            dep_en_planta = bool(row[0]) if row else False
+
+            if dep_en_planta:
+                cursor.execute(
+                    "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
+                    (stock_inicial, stock_inicial, stock_inicial, id_parametro),
+                )
+            elif tipo_stock == "planta":
                 cursor.execute(
                     "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ? WHERE id_parametro = ?",
                     (stock_inicial, id_parametro),
@@ -335,17 +373,26 @@ class RundownRepository:
         try:
             cursor.execute(
                 """
-                SELECT fecha_stock_inicial
-                FROM dbo.rundown_parametro_material
-                WHERE id_parametro = ?
+                SELECT m.fecha_stock_inicial, ISNULL(p.deposito_en_planta, 0)
+                FROM dbo.rundown_parametro_material m
+                JOIN dbo.proveedor p ON m.id_proveedor = p.id_proveedor
+                WHERE m.id_parametro = ?
                 """,
                 (id_parametro,),
             )
             row = cursor.fetchone()
             fecha_init = row[0] if row else None
+            dep_en_planta = bool(row[1]) if row else False
+
+            tipos_a_guardar = ["planta", "total"] if dep_en_planta else [tipo_stock]
 
             if fecha_init and fecha <= fecha_init:
-                if tipo_stock == "planta":
+                if dep_en_planta:
+                    cursor.execute(
+                        "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
+                        (stock_ajustado, stock_ajustado, stock_ajustado, id_parametro),
+                    )
+                elif tipo_stock == "planta":
                     cursor.execute(
                         "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ? WHERE id_parametro = ?",
                         (stock_ajustado, id_parametro),
@@ -356,23 +403,25 @@ class RundownRepository:
                         (stock_ajustado, stock_ajustado, id_parametro),
                     )
 
-            cursor.execute(
-                """
-                MERGE dbo.rundown_stock_ajuste AS target
-                USING (SELECT ? AS id_parametro, ? AS fecha, ? AS tipo_stock) AS source
-                ON (target.id_parametro = source.id_parametro AND target.fecha = source.fecha AND target.tipo_stock = source.tipo_stock)
-                WHEN MATCHED THEN
-                    UPDATE SET stock_ajustado = ?, observacion = ?, fecha_creacion = SYSUTCDATETIME()
-                WHEN NOT MATCHED THEN
-                    INSERT (id_parametro, id_proveedor, id_material, fecha, tipo_stock, stock_ajustado, observacion)
-                    VALUES (?, ?, ?, ?, ?, ?, ?);
-                """,
-                (
-                    id_parametro, fecha, tipo_stock,
-                    stock_ajustado, observacion,
-                    id_parametro, id_proveedor, id_material, fecha, tipo_stock, stock_ajustado, observacion,
-                ),
-            )
+            for t_stock in tipos_a_guardar:
+                cursor.execute(
+                    """
+                    MERGE dbo.rundown_stock_ajuste AS target
+                    USING (SELECT ? AS id_parametro, ? AS fecha, ? AS tipo_stock) AS source
+                    ON (target.id_parametro = source.id_parametro AND target.fecha = source.fecha AND target.tipo_stock = source.tipo_stock)
+                    WHEN MATCHED THEN
+                        UPDATE SET stock_ajustado = ?, observacion = ?, fecha_creacion = SYSUTCDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_parametro, id_proveedor, id_material, fecha, tipo_stock, stock_ajustado, observacion)
+                        VALUES (?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (
+                        id_parametro, fecha, t_stock,
+                        stock_ajustado, observacion,
+                        id_parametro, id_proveedor, id_material, fecha, t_stock, stock_ajustado, observacion,
+                    ),
+                )
+
             conn.commit()
             return True
         finally:
@@ -387,12 +436,34 @@ class RundownRepository:
         try:
             cursor.execute(
                 """
-                DELETE FROM dbo.rundown_stock_ajuste
-                WHERE id_parametro = ? AND fecha = ? AND tipo_stock = ?
+                SELECT ISNULL(p.deposito_en_planta, 0)
+                FROM dbo.rundown_parametro_material m
+                JOIN dbo.proveedor p ON m.id_proveedor = p.id_proveedor
+                WHERE m.id_parametro = ?
                 """,
-                (id_parametro, fecha, tipo_stock),
+                (id_parametro,),
             )
+            row = cursor.fetchone()
+            dep_en_planta = bool(row[0]) if row else False
+
+            if dep_en_planta:
+                cursor.execute(
+                    """
+                    DELETE FROM dbo.rundown_stock_ajuste
+                    WHERE id_parametro = ? AND fecha = ?
+                    """,
+                    (id_parametro, fecha),
+                )
+            else:
+                cursor.execute(
+                    """
+                    DELETE FROM dbo.rundown_stock_ajuste
+                    WHERE id_parametro = ? AND fecha = ? AND tipo_stock = ?
+                    """,
+                    (id_parametro, fecha, tipo_stock),
+                )
             affected = cursor.rowcount
+
             conn.commit()
             return affected > 0
         finally:
@@ -508,7 +579,9 @@ class RundownRepository:
                        p.id_proveedor, p.codigo_proveedor, p.nombre AS prov_nombre, p.activo AS prov_activo,
                        CASE WHEN m.cant_params > 0 THEN 1 ELSE 0 END AS tiene_parametros,
                        ISNULL(p.dias_alerta_rojo, 5.0) AS dias_alerta_rojo,
-                       ISNULL(p.dias_alerta_amarillo, 15.0) AS dias_alerta_amarillo
+                       ISNULL(p.dias_alerta_amarillo, 15.0) AS dias_alerta_amarillo,
+                       ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta,
+                       ISNULL(p.doh_sugerido_planta, 1.0) AS doh_sugerido_planta
                 FROM dbo.rundown_seccion s
                 LEFT JOIN dbo.proveedor p ON s.id_seccion = p.id_seccion
                 LEFT JOIN (
@@ -545,6 +618,8 @@ class RundownRepository:
                         "tiene_parametros": bool(r[10]),
                         "dias_alerta_rojo": float(r[11]) if r[11] is not None else 5.0,
                         "dias_alerta_amarillo": float(r[12]) if r[12] is not None else 15.0,
+                        "deposito_en_planta": bool(r[13]),
+                        "doh_sugerido_planta": float(r[14]) if len(r) > 14 and r[14] is not None else 1.0,
                     })
             return list(secciones_map.values())
         finally:
@@ -570,17 +645,25 @@ class RundownRepository:
             cursor.close()
             conn.close()
 
-    def create_proveedor(self, codigo_proveedor: str, nombre: str, id_seccion: Optional[int], pais: Optional[str]) -> int:
+    def create_proveedor(
+        self,
+        codigo_proveedor: str,
+        nombre: str,
+        id_seccion: Optional[int],
+        pais: Optional[str],
+        deposito_en_planta: bool = False,
+        doh_sugerido_planta: float = 1.0,
+    ) -> int:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
                 """
-                INSERT INTO dbo.proveedor (codigo_proveedor, nombre, pais, activo, id_seccion)
+                INSERT INTO dbo.proveedor (codigo_proveedor, nombre, pais, activo, id_seccion, deposito_en_planta, doh_sugerido_planta)
                 OUTPUT INSERTED.id_proveedor
-                VALUES (?, ?, ?, 1, ?)
+                VALUES (?, ?, ?, 1, ?, ?, ?)
                 """,
-                (codigo_proveedor.strip().upper(), nombre.strip(), pais, id_seccion),
+                (codigo_proveedor.strip().upper(), nombre.strip(), pais, id_seccion, 1 if deposito_en_planta else 0, doh_sugerido_planta),
             )
             new_id = int(cursor.fetchone()[0])
             conn.commit()
@@ -597,6 +680,8 @@ class RundownRepository:
         activo: Optional[bool],
         dias_alerta_rojo: Optional[float] = None,
         dias_alerta_amarillo: Optional[float] = None,
+        deposito_en_planta: Optional[bool] = None,
+        doh_sugerido_planta: Optional[float] = None,
     ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -618,6 +703,12 @@ class RundownRepository:
             if dias_alerta_amarillo is not None:
                 updates.append("dias_alerta_amarillo = ?")
                 params.append(float(dias_alerta_amarillo))
+            if deposito_en_planta is not None:
+                updates.append("deposito_en_planta = ?")
+                params.append(1 if deposito_en_planta else 0)
+            if doh_sugerido_planta is not None:
+                updates.append("doh_sugerido_planta = ?")
+                params.append(float(doh_sugerido_planta))
 
             if not updates:
                 return False
@@ -626,6 +717,42 @@ class RundownRepository:
             sql = f"UPDATE dbo.proveedor SET {', '.join(updates)} WHERE id_proveedor = ?"
             cursor.execute(sql, params)
             affected = cursor.rowcount
+
+            if deposito_en_planta:
+                cursor.execute(
+                    """
+                    UPDATE dbo.rundown_parametro_material
+                    SET stock_inicial_total = stock_inicial_planta, stock_inicial_referencia = stock_inicial_planta
+                    WHERE id_proveedor = ?
+                    """,
+                    (id_proveedor,),
+                )
+                cursor.execute(
+                    """
+                    MERGE dbo.stock_deposito AS target
+                    USING (
+                        SELECT DISTINCT id_material
+                        FROM dbo.rundown_parametro_material
+                        WHERE id_proveedor = ?
+                        UNION
+                        SELECT DISTINCT id_material
+                        FROM dbo.proveedor_material
+                        WHERE id_proveedor = ?
+                        UNION
+                        SELECT DISTINCT id_material
+                        FROM dbo.material
+                        WHERE id_proveedor_principal = ?
+                    ) AS source
+                    ON (target.id_material = source.id_material)
+                    WHEN MATCHED THEN
+                        UPDATE SET stock_actual = 0.0, fecha_actualizacion = SYSUTCDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_material, stock_actual, fecha_actualizacion)
+                        VALUES (source.id_material, 0.0, SYSUTCDATETIME());
+                    """,
+                    (id_proveedor, id_proveedor, id_proveedor),
+                )
+
             conn.commit()
             return affected > 0
         finally:
@@ -878,13 +1005,16 @@ class RundownRepository:
                 SELECT m.id_parametro, m.id_proveedor, m.id_material, m.descripcion, m.unidad,
                        m.lote_mts, m.scrap_porcentaje, m.factor_conversion, m.categoria_cabina,
                        m.stock_inicial_planta, m.stock_inicial_total, m.activo,
-                       COUNT(p.id_producto) AS cant_productos
+                       COUNT(p.id_producto) AS cant_productos,
+                       m.doh_sugerido_planta,
+                       ISNULL(m.tipo_empaque, 'pallet') AS tipo_empaque
                 FROM dbo.rundown_parametro_material m
                 LEFT JOIN dbo.rundown_parametro_producto p ON m.id_parametro = p.id_parametro
                 WHERE m.id_proveedor = ? AND m.activo = 1
                 GROUP BY m.id_parametro, m.id_proveedor, m.id_material, m.descripcion, m.unidad,
                          m.lote_mts, m.scrap_porcentaje, m.factor_conversion, m.categoria_cabina,
-                         m.stock_inicial_planta, m.stock_inicial_total, m.activo
+                         m.stock_inicial_planta, m.stock_inicial_total, m.activo, m.doh_sugerido_planta,
+                         m.tipo_empaque
                 ORDER BY m.id_parametro
                 """,
                 (id_proveedor,),
@@ -904,6 +1034,8 @@ class RundownRepository:
                     "stock_inicial_total": float(r[10] or 0.0),
                     "activo": bool(r[11]),
                     "cant_productos": int(r[12]),
+                    "doh_sugerido_planta": float(r[13]) if len(r) > 13 and r[13] is not None else None,
+                    "tipo_empaque": str(r[14]) if len(r) > 14 and r[14] else "pallet",
                 }
                 for r in cursor.fetchall()
             ]
@@ -922,6 +1054,7 @@ class RundownRepository:
                 (id_proveedor, data["id_material"]),
             )
             existing = cursor.fetchone()
+            tipo_empaque = data.get("tipo_empaque") or ("pallet" if data.get("lote_mts", 0) and float(data.get("lote_mts", 0)) > 1 else "unidad")
             if existing:
                 param_id = int(existing[0])
                 cursor.execute(
@@ -930,6 +1063,7 @@ class RundownRepository:
                     SET descripcion = ?, unidad = ?, lote_mts = ?, scrap_porcentaje = ?,
                         factor_conversion = ?, categoria_cabina = ?,
                         stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ?,
+                        doh_sugerido_planta = ?, tipo_empaque = ?,
                         activo = 1
                     WHERE id_parametro = ?
                     """,
@@ -943,6 +1077,8 @@ class RundownRepository:
                         data.get("stock_inicial_planta", 0.0),
                         data.get("stock_inicial_total", 0.0),
                         data.get("stock_inicial_total", 0.0),
+                        data.get("doh_sugerido_planta"),
+                        tipo_empaque,
                         param_id,
                     ),
                 )
@@ -953,10 +1089,10 @@ class RundownRepository:
                         id_proveedor, id_material, descripcion, unidad, lote_mts,
                         scrap_porcentaje, factor_conversion, categoria_cabina,
                         stock_inicial_planta, stock_inicial_total, stock_inicial_referencia,
-                        fecha_stock_inicial, activo
+                        fecha_stock_inicial, doh_sugerido_planta, tipo_empaque, activo
                     )
                     OUTPUT INSERTED.id_parametro
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-09-01', 1)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-09-01', ?, ?, 1)
                     """,
                     (
                         id_proveedor,
@@ -970,11 +1106,64 @@ class RundownRepository:
                         data.get("stock_inicial_planta", 0.0),
                         data.get("stock_inicial_total", 0.0),
                         data.get("stock_inicial_total", 0.0),
+                        data.get("doh_sugerido_planta"),
+                        tipo_empaque,
                     ),
                 )
                 param_id = int(cursor.fetchone()[0])
             conn.commit()
             return param_id
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_lote_material(
+        self,
+        id_parametro: Optional[int],
+        lote_mts: Optional[float],
+        tipo_empaque: str,
+        id_material: Optional[str] = None,
+    ) -> None:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            if id_parametro is not None and id_parametro > 0:
+                cursor.execute(
+                    """
+                    UPDATE dbo.rundown_parametro_material
+                    SET lote_mts = ?, tipo_empaque = ?
+                    WHERE id_parametro = ?
+                    """,
+                    (lote_mts, tipo_empaque, id_parametro),
+                )
+                cursor.execute(
+                    """
+                    UPDATE m
+                    SET m.lote_minimo = ?, m.tipo_empaque = ?
+                    FROM dbo.material m
+                    INNER JOIN dbo.rundown_parametro_material rpm ON m.id_material = rpm.id_material
+                    WHERE rpm.id_parametro = ?
+                    """,
+                    (lote_mts, tipo_empaque, id_parametro),
+                )
+            elif id_material:
+                cursor.execute(
+                    """
+                    UPDATE dbo.material
+                    SET lote_minimo = ?, tipo_empaque = ?
+                    WHERE id_material = ?
+                    """,
+                    (lote_mts, tipo_empaque, id_material),
+                )
+                cursor.execute(
+                    """
+                    UPDATE dbo.rundown_parametro_material
+                    SET lote_mts = ?, tipo_empaque = ?
+                    WHERE id_material = ?
+                    """,
+                    (lote_mts, tipo_empaque, id_material),
+                )
+            conn.commit()
         finally:
             cursor.close()
             conn.close()

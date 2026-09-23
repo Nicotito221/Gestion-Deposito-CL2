@@ -29,3 +29,28 @@ export function formatDateLong(): string {
     year: "numeric",
   });
 }
+
+export function formatSoloFechaAR(dateStr?: string | null): string {
+  if (!dateStr) return "—";
+  const clean = dateStr.split("T")[0];
+  const parts = clean.split("-");
+  if (parts.length === 3) {
+    const [y, m, d] = parts;
+    const monthIdx = parseInt(m, 10) - 1;
+    const month = MONTHS[monthIdx] ?? m;
+    return `${parseInt(d, 10)} ${month} ${y}`;
+  }
+  return dateStr;
+}
+
+export function formatFechaHoraAR(dateStr?: string | null): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const day = d.getDate();
+  const month = MONTHS[d.getMonth()] ?? "";
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${day} ${month} · ${h}:${m}`;
+}
+

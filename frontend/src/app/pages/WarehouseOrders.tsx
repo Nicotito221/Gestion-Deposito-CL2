@@ -35,11 +35,11 @@ interface Order {
 }
 
 const mockOrders: Order[] = [
-  { id: "1", number: "000154", date: "10/06/2026", sector: "Producción", itemCount: 5, priority: "urgente", status: "pendiente" },
-  { id: "2", number: "000153", date: "10/06/2026", sector: "Mantenimiento", itemCount: 3, priority: "normal", status: "en-preparacion" },
-  { id: "3", number: "000152", date: "09/06/2026", sector: "Administración", itemCount: 8, priority: "normal", status: "parcial" },
-  { id: "4", number: "000151", date: "09/06/2026", sector: "Logística", itemCount: 4, priority: "normal", status: "completo" },
-  { id: "5", number: "000150", date: "09/06/2026", sector: "Producción", itemCount: 6, priority: "urgente", status: "en-preparacion" },
+  { id: "1", number: "000154", date: "10/06/2026", sector: "PC", itemCount: 5, priority: "urgente", status: "pendiente" },
+  { id: "2", number: "000153", date: "10/06/2026", sector: "Despacho", itemCount: 3, priority: "normal", status: "en-preparacion" },
+  { id: "3", number: "000152", date: "09/06/2026", sector: "Administracion", itemCount: 8, priority: "normal", status: "parcial" },
+  { id: "4", number: "000151", date: "09/06/2026", sector: "Recepcion", itemCount: 4, priority: "normal", status: "completo" },
+  { id: "5", number: "000150", date: "09/06/2026", sector: "CL2", itemCount: 6, priority: "urgente", status: "en-preparacion" },
 ];
 
 const statusConfig: Record<OrderStatus, { label: string; color: string }> = {

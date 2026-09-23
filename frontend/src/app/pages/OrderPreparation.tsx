@@ -19,6 +19,7 @@ import { Progress } from "../components/ui/progress";
 import { ArrowLeft, Calendar, User, AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDate } from "../components/ui/format";
+import { useAuth } from "../context/AuthContext";
 
 interface MaterialItem {
   id: string;
@@ -34,6 +35,7 @@ interface MaterialItem {
 export function OrderPreparation() {
   const navigate = useNavigate();
   const { id } = useParams();
+  const { canModifyPedidoDeposito } = useAuth();
   const [observations, setObservations] = useState("");
   const [materials, setMaterials] = useState<MaterialItem[]>([
     {
@@ -270,6 +272,7 @@ export function OrderPreparation() {
                             min="0"
                             max={material.quantityRequested}
                             value={material.quantityPrepared}
+                            disabled={!canModifyPedidoDeposito}
                             onChange={(e) =>
                               handleQuantityChange(
                                 material.id,
@@ -284,6 +287,7 @@ export function OrderPreparation() {
                         <TableCell className="text-center">
                           <Checkbox
                             checked={material.isPrepared}
+                            disabled={!canModifyPedidoDeposito}
                             onCheckedChange={(checked) =>
                               handleCheckboxChange(material.id, checked as boolean)
                             }
@@ -308,6 +312,7 @@ export function OrderPreparation() {
               <Textarea
                 placeholder="Ingrese observaciones sobre la preparación del pedido (opcional)"
                 value={observations}
+                disabled={!canModifyPedidoDeposito}
                 onChange={(e) => setObservations(e.target.value)}
                 rows={4}
               />
@@ -315,16 +320,25 @@ export function OrderPreparation() {
           </Card>
 
           {/* Botones de acción */}
-          <div className="flex gap-3 justify-end">
-            <Button variant="outline" onClick={handleSaveProgress}>
-              Guardar avance
-            </Button>
-            <Button variant="outline" onClick={handleConfirmPartial}>
-              Confirmar pedido parcial
-            </Button>
-            <Button onClick={handleConfirmComplete}>
-              Confirmar pedido completo
-            </Button>
+          <div className="flex gap-3 justify-end items-center">
+            {canModifyPedidoDeposito ? (
+              <>
+                <Button variant="outline" onClick={handleSaveProgress}>
+                  Guardar avance
+                </Button>
+                <Button variant="outline" onClick={handleConfirmPartial}>
+                  Confirmar pedido parcial
+                </Button>
+                <Button onClick={handleConfirmComplete}>
+                  Confirmar pedido completo
+                </Button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 px-4 py-2 rounded-lg font-medium">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Modo de visualización: No posee permisos para modificar pedidos en depósito.</span>
+              </div>
+            )}
           </div>
         </div>
 

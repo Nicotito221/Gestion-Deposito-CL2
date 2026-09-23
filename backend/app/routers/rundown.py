@@ -18,6 +18,7 @@ from app.schemas.rundown import (
     MaterialCatalogoItem,
     RundownParametroMaterialCreate,
     RundownParametroMaterialItem,
+    RundownLoteMaterialUpdate,
     RundownPeriodoProyeccionItem,
     RundownPeriodoProyeccionCreate,
     PlanSemanalPreviewOut,
@@ -104,6 +105,16 @@ def delete_material_proveedor(
 ):
     service.delete_material_proveedor(id_parametro)
     return {"mensaje": "Material removido del Rundown"}
+
+
+@router.put("/materiales/lote")
+def update_lote_material(
+    data: RundownLoteMaterialUpdate,
+    service: RundownService = Depends(get_rundown_service),
+):
+    service.update_lote_material(data)
+    return {"mensaje": "Lote y empaque actualizados correctamente"}
+
 
 
 @router.get("/proveedor/{identifier}", response_model=RundownSupplierReport)

@@ -1,35 +1,34 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { ShieldCheck, Eye, EyeOff, AlertCircle, LogIn } from "lucide-react";
-
-const MOCK_USERS: Record<string, { password: string; nombre: string; rol: string }> = {
-  admin: { password: "admin", nombre: "Nicolás", rol: "Administrador" },
-  pc: { password: "pc", nombre: "Diego", rol: "Operario de Depósito" },
-  supervisor: { password: "super", nombre: "Mariana", rol: "Supervisor" },
-};
+import { useAuth } from "../context/AuthContext";
 
 export function Login() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
 
-    setTimeout(() => {
-      const match = MOCK_USERS[usuario.toLowerCase().trim()];
-      if (match && match.password === password) {
-        navigate("/inicio");
+    try {
+      await login(usuario.trim(), password);
+      navigate("/inicio");
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
       } else {
-        setError("Usuario o contraseña incorrectos.");
-        setLoading(false);
+        setError("Error al iniciar sesión. Verifique sus credenciales.");
       }
-    }, 600);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (

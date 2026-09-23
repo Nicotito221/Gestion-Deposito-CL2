@@ -1,0 +1,401 @@
+from datetime import date, timedelta
+import math
+from typing import Any, Dict, List, Optional
+from fastapi import HTTPException, status
+
+from app.core.time import get_argentina_today
+from app.repositories.conteo_repository import ConteoRepository
+from app.repositories.pedido_repository import PedidoRepository
+from app.schemas.pedido import (
+    CalcularSugerenciaRequest,
+    CalcularSugerenciaResponse,
+    PedidoCreate,
+    PedidoExistenteItem,
+    PedidoItemOut,
+    PedidoOut,
+    PedidosListResponse,
+    SugerenciaMaterialDetalle,
+)
+
+
+class PedidoService:
+    def __init__(self) -> None:
+        self._repo = PedidoRepository()
+        self._conteo_repo = ConteoRepository()
+
+    def calcular_sugerencia(self, request: CalcularSugerenciaRequest) -> CalcularSugerenciaResponse:
+        today = get_argentina_today()
+        yesterday = today - timedelta(days=1)
+        fecha_req = request.fecha_requerida or today
+        fecha_sig = fecha_req + timedelta(days=1)
+
+        counts_map: Dict[str, float] = {}
+        fecha_conteo: date = request.fecha_conteo or yesterday
+        if request.id_conteo:
+            conteo = self._conteo_repo.get_conteo_detalle(request.id_conteo)
+            if conteo:
+                if conteo.get("fecha_impacto"):
+                    try:
+                        raw_f = conteo["fecha_impacto"]
+                        if isinstance(raw_f, date):
+                            fecha_conteo = raw_f
+                        else:
+                            fecha_conteo = datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
+                    except Exception:
+                        pass
+                for it in conteo.get("items", []):
+                    counts_map[it["id_material"]] = float(it["stock_contado"])
+
+        if request.materiales:
+            for m in request.materiales:
+                counts_map[m.id_material] = float(m.stock_contado)
+
+        ids_to_query = list(counts_map.keys()) if counts_map else None
+        materiales = self._repo.get_materiales_para_sugerencia(ids_to_query)
+
+        all_products: List[str] = list({
+            p["id_producto"]
+            for m in materiales
+            for p in m["productos"]
+        })
+
+        prod_map_hoy = self._repo.get_produccion_planificada_dia(today, all_products)
+        if sum(prod_map_hoy.values()) == 0:
+            prod_map_hoy = self._repo.get_promedio_diario_produccion(
+                today.year, today.month, all_products
+            )
+
+        if fecha_req == today:
+            prod_map_req = prod_map_hoy
+        else:
+            prod_map_req = self._repo.get_produccion_planificada_dia(fecha_req, all_products)
+            if sum(prod_map_req.values()) == 0:
+                prod_map_req = self._repo.get_promedio_diario_produccion(
+                    fecha_req.year, fecha_req.month, all_products
+                )
+
+        prod_map_sig = self._repo.get_produccion_planificada_dia(fecha_sig, all_products)
+        if sum(prod_map_sig.values()) == 0:
+            prod_map_sig = self._repo.get_promedio_diario_produccion(
+                fecha_sig.year, fecha_sig.month, all_products
+            )
+
+        mat_ids = [m["id_material"] for m in materiales]
+        pedidos_raw_req = self._repo.get_pedidos_existentes_fecha(fecha_req, mat_ids)
+        pedidos_por_mat: Dict[str, List[Dict[str, Any]]] = {}
+        for p in pedidos_raw_req:
+            pedidos_por_mat.setdefault(p["id_material"], []).append(p)
+
+        pedidos_hoy_map: Dict[str, float] = {}
+        if fecha_req > today:
+            pedidos_hoy_raw = self._repo.get_pedidos_existentes_fecha(today, mat_ids)
+            for p in pedidos_hoy_raw:
+                pedidos_hoy_map[p["id_material"]] = round(
+                    pedidos_hoy_map.get(p["id_material"], 0.0) + p["cantidad_pedida"], 2
+                )
+
+        modalidad = request.modalidad_turnos.lower()
+        if modalidad == "2_turnos":
+            turnos_list = ["Turno Mañana", "Turno Tarde"]
+        elif modalidad == "3_turnos":
+            turnos_list = ["Turno Mañana", "Turno Tarde", "Turno Noche"]
+        else:
+            modalidad = "completo"
+            turnos_list = ["Completo"]
+
+        items_response: List[SugerenciaMaterialDetalle] = []
+        materiales_a_pedir_count = 0
+
+        for m in materiales:
+            mat_id = m["id_material"]
+            stock_contado = counts_map.get(mat_id, 0.0)
+
+            veh_prod_hoy = sum(
+                prod_map_hoy.get(p["id_producto"], 0.0) * p["factor_uso"]
+                for p in m["productos"]
+            )
+            consumo_hoy = round(
+                veh_prod_hoy * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                2,
+            )
+
+            veh_prod_req = sum(
+                prod_map_req.get(p["id_producto"], 0.0) * p["factor_uso"]
+                for p in m["productos"]
+            )
+            consumo_diario = round(
+                veh_prod_req * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                2,
+            )
+            if consumo_diario == 0 and consumo_hoy > 0:
+                consumo_diario = consumo_hoy
+
+            veh_prod_sig = sum(
+                prod_map_sig.get(p["id_producto"], 0.0) * p["factor_uso"]
+                for p in m["productos"]
+            )
+            consumo_sig = round(
+                veh_prod_sig * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                2,
+            )
+            if consumo_sig == 0 and consumo_diario > 0:
+                consumo_sig = consumo_diario
+
+            if fecha_req <= today:
+                stock_proyectado_inicio = stock_contado
+            else:
+                dias_avance = (fecha_req - today).days
+                consumo_intermedio = consumo_hoy * dias_avance
+                pedidos_intermedios = pedidos_hoy_map.get(mat_id, 0.0)
+                stock_proyectado_inicio = max(0.0, round(stock_contado + pedidos_intermedios - consumo_intermedio, 2))
+
+            doh = m["doh_sugerido_planta"]
+            target_doh_req = round(consumo_diario * doh, 2)
+            target_buffer_manana = round(consumo_diario + (0.40 * doh * consumo_sig), 2)
+            stock_objetivo = max(target_doh_req, target_buffer_manana)
+
+            min_buffer_manana = round(consumo_diario + (0.30 * doh * consumo_sig), 2)
+            stock_minimo_inicio = max(round(consumo_diario * (doh * 0.5), 2), min_buffer_manana)
+
+            tipo_empaque = m.get("tipo_empaque") or "pallet"
+            lote_mts = m.get("lote_mts")
+            es_pallet = (tipo_empaque in ("pallet", "rollo")) and (lote_mts is not None) and (float(lote_mts) > 1.0)
+            lot_size = float(lote_mts) if (lote_mts and float(lote_mts) > 0) else 1.0
+
+            mat_pedidos = pedidos_por_mat.get(mat_id, [])
+            pedidos_items = [
+                PedidoExistenteItem(
+                    id_pedido=p["id_pedido"],
+                    turno=p["turno"],
+                    cantidad_pedida=p["cantidad_pedida"],
+                    estado=p["estado"],
+                )
+                for p in mat_pedidos
+            ]
+
+            pedidos_por_turno: Dict[str, float] = {}
+            total_ya_pedido = 0.0
+            for p in mat_pedidos:
+                t = p["turno"] or "Completo"
+                if t in ("T1", "Turno 1"):
+                    t = "Turno Mañana"
+                elif t in ("T2", "Turno 2"):
+                    t = "Turno Tarde"
+                elif t in ("T3", "Turno 3"):
+                    t = "Turno Noche"
+                pedidos_por_turno[t] = round(pedidos_por_turno.get(t, 0.0) + p["cantidad_pedida"], 2)
+                total_ya_pedido = round(total_ya_pedido + p["cantidad_pedida"], 2)
+
+            stock_con_pedidos = round(stock_proyectado_inicio + total_ya_pedido, 2)
+            deficit_minimo = max(0.0, round(stock_minimo_inicio - stock_con_pedidos, 2))
+            deficit_objetivo = max(0.0, round(stock_objetivo - stock_con_pedidos, 2))
+
+            if es_pallet:
+                pallets_min = math.ceil(deficit_minimo / lot_size) if deficit_minimo > 0 else 0
+                pallets_obj = math.ceil(deficit_objetivo / lot_size) if deficit_objetivo > 0 else 0
+                cant_pallets = max(pallets_min, pallets_obj)
+                cantidad_neta = float(cant_pallets * lot_size)
+
+                bruto_min = math.ceil(max(0.0, stock_minimo_inicio - stock_proyectado_inicio) / lot_size) if stock_minimo_inicio > stock_proyectado_inicio else 0
+                bruto_obj = math.ceil(max(0.0, stock_objetivo - stock_proyectado_inicio) / lot_size) if stock_objetivo > stock_proyectado_inicio else 0
+                sugerido_bruto = float(max(bruto_min, bruto_obj) * lot_size)
+            else:
+                cant_pallets = int(math.ceil(max(deficit_minimo, deficit_objetivo)))
+                cantidad_neta = float(cant_pallets)
+                sugerido_bruto = float(int(math.ceil(max(0.0, stock_objetivo - stock_proyectado_inicio))))
+
+            desglose_turnos: Dict[str, float] = {}
+            sugerido_por_turno: Dict[str, float] = {}
+            pallets_por_turno: Dict[str, int] = {}
+
+            if modalidad == "completo":
+                desglose_turnos = {"Completo": sugerido_bruto}
+                sugerido_por_turno = {"Completo": cantidad_neta}
+                pallets_por_turno = {"Completo": cant_pallets}
+            elif modalidad == "2_turnos":
+                if es_pallet:
+                    p1 = math.ceil(cant_pallets / 2.0)
+                    p2 = cant_pallets - p1
+                    pallets_por_turno = {"Turno Mañana": p1, "Turno Tarde": p2}
+                    sugerido_por_turno = {"Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size)}
+                    bruto_p1 = math.ceil((sugerido_bruto / lot_size) / 2.0)
+                    bruto_p2 = int(round(sugerido_bruto / lot_size)) - bruto_p1
+                    desglose_turnos = {"Turno Mañana": float(bruto_p1 * lot_size), "Turno Tarde": float(bruto_p2 * lot_size)}
+                else:
+                    u1 = math.ceil(cantidad_neta / 2.0)
+                    u2 = int(cantidad_neta - u1)
+                    pallets_por_turno = {"Turno Mañana": u1, "Turno Tarde": u2}
+                    sugerido_por_turno = {"Turno Mañana": float(u1), "Turno Tarde": float(u2)}
+                    b1 = math.ceil(sugerido_bruto / 2.0)
+                    b2 = int(sugerido_bruto - b1)
+                    desglose_turnos = {"Turno Mañana": float(b1), "Turno Tarde": float(b2)}
+            else:
+                if es_pallet:
+                    p1 = math.ceil(cant_pallets / 3.0)
+                    rem = cant_pallets - p1
+                    p2 = math.ceil(rem / 2.0)
+                    p3 = rem - p2
+                    pallets_por_turno = {"Turno Mañana": p1, "Turno Tarde": p2, "Turno Noche": p3}
+                    sugerido_por_turno = {
+                        "Turno Mañana": float(p1 * lot_size),
+                        "Turno Tarde": float(p2 * lot_size),
+                        "Turno Noche": float(p3 * lot_size),
+                    }
+                    total_p_bruto = int(round(sugerido_bruto / lot_size))
+                    bp1 = math.ceil(total_p_bruto / 3.0)
+                    brem = total_p_bruto - bp1
+                    bp2 = math.ceil(brem / 2.0)
+                    bp3 = brem - bp2
+                    desglose_turnos = {
+                        "Turno Mañana": float(bp1 * lot_size),
+                        "Turno Tarde": float(bp2 * lot_size),
+                        "Turno Noche": float(bp3 * lot_size),
+                    }
+                else:
+                    u1 = math.ceil(cantidad_neta / 3.0)
+                    rem = int(cantidad_neta - u1)
+                    u2 = math.ceil(rem / 2.0)
+                    u3 = rem - u2
+                    pallets_por_turno = {"Turno Mañana": u1, "Turno Tarde": u2, "Turno Noche": u3}
+                    sugerido_por_turno = {"Turno Mañana": float(u1), "Turno Tarde": float(u2), "Turno Noche": float(u3)}
+                    bu1 = math.ceil(sugerido_bruto / 3.0)
+                    brem_u = int(sugerido_bruto - bu1)
+                    bu2 = math.ceil(brem_u / 2.0)
+                    bu3 = brem_u - bu2
+                    desglose_turnos = {"Turno Mañana": float(bu1), "Turno Tarde": float(bu2), "Turno Noche": float(bu3)}
+
+            if cantidad_neta > 0:
+                materiales_a_pedir_count += 1
+
+            items_response.append(
+                SugerenciaMaterialDetalle(
+                    id_parametro=m.get("id_parametro"),
+                    id_material=mat_id,
+                    nombre=m["descripcion"],
+                    unidad=m["unidad"],
+                    id_proveedor=m["id_proveedor"],
+                    nombre_proveedor=m["nombre_proveedor"],
+                    stock_contado=stock_contado,
+                    consumo_diario=consumo_diario,
+                    consumo_sig=consumo_sig,
+                    doh_sugerido_planta=doh,
+                    stock_objetivo=stock_objetivo,
+                    stock_proyectado_inicio=stock_proyectado_inicio,
+                    stock_minimo_inicio=stock_minimo_inicio,
+                    lote_minimo=m["lote_mts"],
+                    tipo_empaque=tipo_empaque,
+                    tamanio_lote=lot_size if es_pallet else None,
+                    cantidad_pallets_sugerida=cant_pallets if es_pallet else 0,
+                    pallets_por_turno=pallets_por_turno if es_pallet else {},
+                    pedidos_existentes=pedidos_items,
+                    cantidad_ya_pedida_total=total_ya_pedido,
+                    cantidad_sugerida_bruta=sugerido_bruto,
+                    cantidad_sugerida_neta=cantidad_neta,
+                    desglose_turnos=desglose_turnos,
+                    pedidos_por_turno=pedidos_por_turno,
+                    sugerido_por_turno=sugerido_por_turno,
+                )
+            )
+
+        return CalcularSugerenciaResponse(
+            fecha_requerida=fecha_req.strftime("%Y-%m-%d"),
+            modalidad_turnos=modalidad,
+            turnos=turnos_list,
+            total_materiales=len(items_response),
+            materiales_a_pedir=materiales_a_pedir_count,
+            items=items_response,
+        )
+
+    def crear_pedido(self, data: PedidoCreate) -> PedidoOut:
+        if not data.items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El pedido debe contener al menos un material",
+            )
+
+        items_dict = [it.model_dump() for it in data.items]
+        id_pedido = self._repo.create_pedido(
+            sector=data.sector,
+            prioridad=data.prioridad,
+            origen=data.origen,
+            fecha_requerida=data.fecha_requerida,
+            turno=data.turno,
+            id_conteo=data.id_conteo,
+            comentario=data.comentario,
+            items=items_dict,
+            id_usuario_solicitante=data.id_usuario_solicitante,
+        )
+
+        res = self._repo.get_pedido_by_id(id_pedido)
+        if not res:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error al recuperar pedido creado",
+            )
+        return self._to_pedido_out(res)
+
+    def crear_pedidos_multiples(self, pedidos: List[PedidoCreate]) -> List[PedidoOut]:
+        results: List[PedidoOut] = []
+        for p in pedidos:
+            results.append(self.crear_pedido(p))
+        return results
+
+    def get_pedidos(
+        self,
+        fecha_requerida: Optional[date] = None,
+        estado: Optional[str] = None,
+        turno: Optional[str] = None,
+        limit: int = 50,
+    ) -> PedidosListResponse:
+        raw_list = self._repo.get_pedidos(
+            fecha_requerida=fecha_requerida,
+            estado=estado,
+            turno=turno,
+            limit=limit,
+        )
+        return PedidosListResponse(
+            items=[self._to_pedido_out(p) for p in raw_list],
+            total=len(raw_list),
+        )
+
+    def get_pedido_by_id(self, id_pedido: int) -> PedidoOut:
+        p = self._repo.get_pedido_by_id(id_pedido)
+        if not p:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Pedido #{id_pedido} no encontrado",
+            )
+        return self._to_pedido_out(p)
+
+    def _to_pedido_out(self, p: Dict[str, Any]) -> PedidoOut:
+        items_out = [
+            PedidoItemOut(
+                id_material=it["id_material"],
+                nombre_material=it.get("nombre_material") or it["id_material"],
+                unidad=it.get("unidad", "MTS"),
+                cantidad_pedida=float(it["cantidad_pedida"]),
+                cantidad_preparada=float(it.get("cantidad_preparada", 0.0)),
+                cantidad_entregada=float(it.get("cantidad_entregada", 0.0)),
+                estado=it.get("estado", "pendiente"),
+                comentario=it.get("comentario"),
+            )
+            for it in p.get("items", [])
+        ]
+        return PedidoOut(
+            id_pedido=p["id_pedido"],
+            sector=p["sector"],
+            prioridad=p["prioridad"],
+            origen=p["origen"],
+            estado=p["estado"],
+            fecha_creacion=p["fecha_creacion"],
+            fecha_despacho=p.get("fecha_despacho"),
+            fecha_entrega=p.get("fecha_entrega"),
+            fecha_requerida=p.get("fecha_requerida"),
+            turno=p.get("turno"),
+            id_conteo=p.get("id_conteo"),
+            comentario=p.get("comentario"),
+            id_usuario_solicitante=p.get("id_usuario_solicitante"),
+            usuario_solicitante=p.get("usuario_solicitante"),
+            total_items=p.get("total_items", len(items_out)),
+            items=items_out,
+        )

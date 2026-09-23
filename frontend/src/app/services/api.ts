@@ -263,6 +263,7 @@ export interface RundownMaterialGrid {
   categoria_cabina: string | null;
   unidad: string;
   lote_mts: number | null;
+  tipo_empaque?: string;
   scrap_porcentaje: number;
   stock_inicial: number;
   stock_inicial_planta: number;
@@ -300,6 +301,8 @@ export interface RundownSupplierReport {
   materiales: RundownMaterialGrid[];
   dias_alerta_rojo?: number;
   dias_alerta_amarillo?: number;
+  deposito_en_planta?: boolean;
+  doh_sugerido_planta?: number;
 }
 
 export interface RundownTransitoInput {
@@ -538,6 +541,8 @@ export interface RundownProveedorItem {
   tiene_parametros: boolean;
   dias_alerta_rojo?: number;
   dias_alerta_amarillo?: number;
+  deposito_en_planta?: boolean;
+  doh_sugerido_planta?: number;
 }
 
 export interface RundownSeccionItem {
@@ -564,6 +569,8 @@ export interface RundownProveedorInput {
   pais?: string;
   dias_alerta_rojo?: number;
   dias_alerta_amarillo?: number;
+  deposito_en_planta?: boolean;
+  doh_sugerido_planta?: number;
 }
 
 export async function getRundownSecciones(): Promise<RundownSeccionItem[]> {
@@ -613,6 +620,8 @@ export async function updateRundownProveedor(
     activo?: boolean;
     dias_alerta_rojo?: number;
     dias_alerta_amarillo?: number;
+    deposito_en_planta?: boolean;
+    doh_sugerido_planta?: number;
   }
 ): Promise<{ mensaje: string }> {
   const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}`, {
@@ -641,6 +650,7 @@ export interface RundownParametroMaterialItem {
   descripcion: string;
   unidad: string;
   lote_mts?: number | null;
+  tipo_empaque?: string;
   scrap_porcentaje: number;
   factor_conversion: number;
   categoria_cabina?: string | null;
@@ -655,12 +665,31 @@ export interface RundownParametroMaterialCreate {
   descripcion?: string;
   unidad?: string;
   lote_mts?: number;
+  tipo_empaque?: string;
   scrap_porcentaje?: number;
   factor_conversion?: number;
   categoria_cabina?: string;
   stock_inicial_planta?: number;
   stock_inicial_total?: number;
 }
+
+export interface RundownLoteMaterialUpdate {
+  id_parametro?: number | null;
+  id_material?: string | null;
+  lote_mts: number | null;
+  tipo_empaque: string;
+}
+
+export async function updateLoteMaterial(data: RundownLoteMaterialUpdate): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/materiales/lote`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Error al actualizar lote del material");
+  return res.json();
+}
+
 
 export async function searchMaterialesCatalogo(q: string = ""): Promise<MaterialCatalogoItem[]> {
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
@@ -839,6 +868,678 @@ export async function confirmPlanSemanal(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al confirmar el plan semanal");
+  }
+  return res.json();
+}
+
+export interface StockMaterialItem {
+  id_material: string;
+  nombre: string;
+  unidad: string;
+  categoria?: string | null;
+  stock_actual: number;
+  stock_planta: number;
+  stock_cl2: number;
+  stock_total: number;
+  id_proveedor?: number | null;
+  nombre_proveedor?: string | null;
+  deposito_en_planta: boolean;
+  fecha_actualizacion?: string | null;
+  id_parametro?: number | null;
+  lote_mts?: number | null;
+  unidad_por_bulto?: number | null;
+  bultos_por_pallet?: number | null;
+  tipo_empaque?: string | null;
+}
+
+export interface StockListResponse {
+  items: StockMaterialItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface StockAjusteInput {
+  nuevo_stock?: number;
+  nuevo_stock_planta?: number;
+  nuevo_stock_cl2?: number;
+  observacion?: string;
+  id_usuario?: number;
+}
+
+export interface StockAjusteResponse {
+  id_material: string;
+  stock_anterior: number;
+  stock_nuevo: number;
+  stock_planta?: number;
+  stock_cl2?: number;
+  stock_total?: number;
+  mensaje: string;
+}
+
+export async function getStockDeposito(params?: {
+  search?: string;
+  id_proveedor?: number;
+  solo_con_stock?: boolean;
+  tipo_almacen?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<StockListResponse> {
+  const query = new URLSearchParams();
+  if (params?.search) query.append("search", params.search);
+  if (params?.id_proveedor) query.append("id_proveedor", String(params.id_proveedor));
+  if (params?.solo_con_stock) query.append("solo_con_stock", "true");
+  if (params?.tipo_almacen) query.append("tipo_almacen", params.tipo_almacen);
+  if (params?.page) query.append("page", String(params.page));
+  if (params?.page_size) query.append("page_size", String(params.page_size));
+
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/api/stock/deposito${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener stock");
+  }
+  return res.json();
+}
+
+export async function updateStockDeposito(
+  idMaterial: string,
+  payload: StockAjusteInput
+): Promise<StockAjusteResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/stock/deposito/${encodeURIComponent(idMaterial)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar stock");
+  }
+  return res.json();
+}
+
+export interface StockMovimientoItem {
+  id_movimiento: number;
+  id_material: string;
+  nombre_material?: string | null;
+  unidad?: string | null;
+  tipo: string;
+  cantidad: number;
+  stock_anterior: number;
+  stock_posterior: number;
+  id_usuario: number;
+  nombre_usuario?: string | null;
+  fecha: string;
+  observacion?: string | null;
+  id_pedido?: number | null;
+  id_remito?: string | null;
+}
+
+export interface StockMovimientosResponse {
+  items: StockMovimientoItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export async function getStockMovimientos(params?: {
+  search?: string;
+  tipo?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<StockMovimientosResponse> {
+  const query = new URLSearchParams();
+  if (params?.search) query.append("search", params.search);
+  if (params?.tipo) query.append("tipo", params.tipo);
+  if (params?.page) query.append("page", String(params.page));
+  if (params?.page_size) query.append("page_size", String(params.page_size));
+
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/api/stock/movimientos${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener movimientos de stock");
+  }
+  return res.json();
+}
+
+export interface ConteoMaterialSearchItem {
+  id_material: string;
+  nombre: string;
+  unidad: string;
+  id_proveedor?: number | null;
+  nombre_proveedor?: string | null;
+  deposito_en_planta: boolean;
+  stock_teorico: number;
+}
+
+export interface MaterialConteoItemInput {
+  id_material: string;
+  stock_contado: number;
+  observacion?: string;
+}
+
+export interface ConteoCreateRequest {
+  fecha_impacto?: string;
+  observacion?: string;
+  items: MaterialConteoItemInput[];
+}
+
+export interface MaterialConteoItemResponse {
+  id_conteo: number;
+  id_material: string;
+  nombre_material?: string | null;
+  unidad?: string | null;
+  nombre_proveedor?: string | null;
+  stock_teorico: number;
+  stock_contado: number;
+  desvio: number;
+  observacion?: string | null;
+}
+
+export interface ConteoResponse {
+  id_conteo: number;
+  tipo: string;
+  id_usuario: number;
+  nombre_usuario?: string | null;
+  estado: string;
+  fecha_impacto: string;
+  fecha_inicio?: string | null;
+  fecha_finalizacion?: string | null;
+  observacion?: string | null;
+  total_items: number;
+  items: MaterialConteoItemResponse[];
+}
+
+export interface ConteoHistoricoItem {
+  id_conteo: number;
+  tipo: string;
+  id_usuario: number;
+  nombre_usuario?: string | null;
+  estado: string;
+  fecha_impacto?: string | null;
+  fecha_inicio?: string | null;
+  fecha_finalizacion?: string | null;
+  observacion?: string | null;
+  total_items: number;
+  total_desvio: number;
+}
+
+export interface ConteoHistoricoResponse {
+  items: ConteoHistoricoItem[];
+  total: number;
+}
+
+export async function searchMaterialesConteo(params?: {
+  search?: string;
+  id_proveedor?: number;
+  target_date?: string;
+  limit?: number;
+}): Promise<ConteoMaterialSearchItem[]> {
+  const query = new URLSearchParams();
+  if (params?.search) query.append("search", params.search);
+  if (params?.id_proveedor) query.append("id_proveedor", String(params.id_proveedor));
+  if (params?.target_date) query.append("target_date", params.target_date);
+  if (params?.limit) query.append("limit", String(params.limit));
+
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/api/conteo/materiales${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al buscar materiales para conteo");
+  }
+  return res.json();
+}
+
+export async function createConteo(data: ConteoCreateRequest): Promise<ConteoResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/conteo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al registrar conteo");
+  }
+  return res.json();
+}
+
+export async function getHistoricoConteos(params?: {
+  page?: number;
+  page_size?: number;
+}): Promise<ConteoHistoricoResponse> {
+  const query = new URLSearchParams();
+  if (params?.page) query.append("page", String(params.page));
+  if (params?.page_size) query.append("page_size", String(params.page_size));
+
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/api/conteo/historico${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cargar histórico de conteos");
+  }
+  return res.json();
+}
+
+export async function getDetalleConteo(id_conteo: number): Promise<ConteoResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/conteo/${id_conteo}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener detalle del conteo");
+  }
+  return res.json();
+}
+
+export interface PedidoExistenteItem {
+  id_pedido: number;
+  turno?: string;
+  cantidad_pedida: number;
+  estado: string;
+}
+
+export interface SugerenciaMaterialInput {
+  id_material: string;
+  stock_contado: number;
+}
+
+export interface CalcularSugerenciaRequest {
+  id_conteo?: number;
+  materiales?: SugerenciaMaterialInput[];
+  fecha_conteo?: string;
+  fecha_requerida?: string;
+  modalidad_turnos?: "completo" | "2_turnos" | "3_turnos";
+  turnos?: string[];
+}
+
+export interface SugerenciaMaterialDetalle {
+  id_parametro?: number;
+  id_material: string;
+  nombre: string;
+  unidad: string;
+  id_proveedor: number;
+  nombre_proveedor: string;
+  stock_contado: number;
+  consumo_diario: number;
+  consumo_sig?: number;
+  doh_sugerido_planta: number;
+  stock_objetivo: number;
+  stock_proyectado_inicio: number;
+  stock_minimo_inicio: number;
+  lote_minimo?: number | null;
+  tipo_empaque: string;
+  tamanio_lote?: number | null;
+  cantidad_pallets_sugerida: number;
+  pallets_por_turno: Record<string, number>;
+  pedidos_existentes: PedidoExistenteItem[];
+  cantidad_ya_pedida_total: number;
+  cantidad_sugerida_bruta: number;
+  cantidad_sugerida_neta: number;
+  desglose_turnos: Record<string, number>;
+  pedidos_por_turno: Record<string, number>;
+  sugerido_por_turno: Record<string, number>;
+}
+
+export interface CalcularSugerenciaResponse {
+  fecha_requerida: string;
+  modalidad_turnos: string;
+  turnos: string[];
+  total_materiales: number;
+  materiales_a_pedir: number;
+  items: SugerenciaMaterialDetalle[];
+}
+
+export interface PedidoItemInput {
+  id_material: string;
+  cantidad: number;
+  comentario?: string;
+}
+
+export interface PedidoCreate {
+  sector?: string;
+  prioridad?: "normal" | "urgente" | "alta" | "media" | "baja";
+  origen?: "conteo_planta" | "rundown" | "manual";
+  fecha_requerida?: string;
+  turno?: string;
+  id_conteo?: number;
+  comentario?: string;
+  id_usuario_solicitante?: number;
+  items: PedidoItemInput[];
+}
+
+export interface PedidoItemOut {
+  id_material: string;
+  nombre_material?: string;
+  unidad?: string;
+  cantidad_pedida: number;
+  cantidad_preparada: number;
+  cantidad_entregada: number;
+  estado: string;
+  comentario?: string;
+}
+
+export interface PedidoOut {
+  id_pedido: number;
+  sector: string;
+  prioridad: string;
+  origen: string;
+  estado: string;
+  fecha_creacion: string;
+  fecha_despacho?: string | null;
+  fecha_entrega?: string | null;
+  fecha_requerida?: string | null;
+  turno?: string | null;
+  id_conteo?: number | null;
+  comentario?: string | null;
+  id_usuario_solicitante?: number | null;
+  usuario_solicitante?: string | null;
+  total_items: number;
+  items: PedidoItemOut[];
+}
+
+export interface PedidosListResponse {
+  items: PedidoOut[];
+  total: number;
+}
+
+export async function calcularSugerenciaPedido(
+  req: CalcularSugerenciaRequest
+): Promise<CalcularSugerenciaResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/calcular-sugerencia`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al calcular sugerencia de pedido");
+  }
+  return res.json();
+}
+
+export async function createPedido(data: PedidoCreate): Promise<PedidoOut> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al crear pedido");
+  }
+  return res.json();
+}
+
+export async function createPedidosMultiples(pedidos: PedidoCreate[]): Promise<PedidoOut[]> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/multiples`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(pedidos),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al crear pedidos");
+  }
+  return res.json();
+}
+
+export async function getPedidos(params?: {
+  fecha_requerida?: string;
+  estado?: string;
+  turno?: string;
+  limit?: number;
+}): Promise<PedidosListResponse> {
+  const query = new URLSearchParams();
+  if (params?.fecha_requerida) query.append("fecha_requerida", params.fecha_requerida);
+  if (params?.estado) query.append("estado", params.estado);
+  if (params?.turno) query.append("turno", params.turno);
+  if (params?.limit) query.append("limit", String(params.limit));
+
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/api/pedidos${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cargar pedidos");
+  }
+  return res.json();
+}
+
+export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener detalle del pedido");
+  }
+  return res.json();
+}
+
+export interface MaterialConfigItem {
+  id_material: string;
+  nombre: string;
+  unidad: string;
+  categoria?: string | null;
+  id_proveedor?: number | null;
+  nombre_proveedor?: string | null;
+  deposito_en_planta: boolean;
+  tipo_empaque: "pallet" | "rollo" | "unidad";
+  lote_mts?: number | null;
+  unidad_por_bulto?: number | null;
+  bultos_por_pallet?: number | null;
+  doh_sugerido_planta: number;
+  id_parametro?: number | null;
+  activo: boolean;
+}
+
+export interface MaterialConfigListResponse {
+  items: MaterialConfigItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+export interface MaterialConfigUpdate {
+  id_material: string;
+  id_proveedor?: number | null;
+  deposito_en_planta: boolean;
+  tipo_empaque: "pallet" | "rollo" | "unidad";
+  lote_mts?: number | null;
+  unidad_por_bulto?: number | null;
+  bultos_por_pallet?: number | null;
+  doh_sugerido_planta: number;
+}
+
+export async function getMaterialesConfiguracion(params?: {
+  search?: string;
+  id_proveedor?: number;
+  tipo_empaque?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<MaterialConfigListResponse> {
+  const query = new URLSearchParams();
+  if (params?.search) query.append("search", params.search);
+  if (params?.id_proveedor) query.append("id_proveedor", String(params.id_proveedor));
+  if (params?.tipo_empaque && params.tipo_empaque !== "all") query.append("tipo_empaque", params.tipo_empaque);
+  if (params?.page) query.append("page", String(params.page));
+  if (params?.page_size) query.append("page_size", String(params.page_size));
+
+  const res = await fetch(`${API_BASE_URL}/api/stock/configuracion-materiales?${query.toString()}`);
+  if (!res.ok) throw new Error("Error al obtener la configuración de materiales");
+  return res.json();
+}
+
+export async function updateMaterialConfiguracion(data: MaterialConfigUpdate): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/stock/configuracion-materiales`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar la configuración del material");
+  }
+  return res.json();
+}
+
+export type RolUsuario =
+  | "administrador"
+  | "gerente"
+  | "jefe"
+  | "analista"
+  | "deposito"
+  | "contador_ciclico"
+  | "operario_deposito"
+  | "operario_planta"
+  | "supervisor"
+  | "solicitante";
+
+export interface UsuarioItem {
+  id_usuario: number;
+  username: string;
+  nombre: string;
+  apellido: string;
+  rol: RolUsuario;
+  sector: string;
+  email?: string | null;
+  activo: boolean;
+  eliminado?: boolean;
+  fecha_creacion?: string | null;
+  ultimo_acceso?: string | null;
+}
+
+export interface LoginResponse {
+  token: string;
+  usuario: UsuarioItem;
+}
+
+export interface UsuarioCreateInput {
+  username: string;
+  password: string;
+  nombre: string;
+  apellido: string;
+  rol: RolUsuario;
+  sector: string;
+  email?: string;
+  activo?: boolean;
+}
+
+export interface UsuarioUpdateInput {
+  nombre?: string;
+  apellido?: string;
+  rol?: RolUsuario;
+  sector?: string;
+  email?: string;
+  activo?: boolean;
+}
+
+export function getAuthHeaders(): HeadersInit {
+  const token = localStorage.getItem("auth_token");
+  return {
+    "Content-Type": "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+export async function loginUser(username: string, password: string): Promise<LoginResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Usuario o contraseña incorrectos.");
+  }
+  return res.json();
+}
+
+export async function getMe(): Promise<UsuarioItem> {
+  const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    throw new Error("Sesión inválida o expirada.");
+  }
+  return res.json();
+}
+
+export async function getUsuarios(params?: {
+  rol?: string;
+  sector?: string;
+  solo_activos?: boolean;
+}): Promise<UsuarioItem[]> {
+  const query = new URLSearchParams();
+  if (params?.rol && params.rol !== "TODOS") query.append("rol", params.rol);
+  if (params?.sector && params.sector !== "TODOS") query.append("sector", params.sector);
+  if (params?.solo_activos) query.append("solo_activos", "true");
+
+  const res = await fetch(`${API_BASE_URL}/api/usuarios?${query.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener la lista de usuarios.");
+  }
+  return res.json();
+}
+
+export async function createUsuario(data: UsuarioCreateInput): Promise<UsuarioItem> {
+  const res = await fetch(`${API_BASE_URL}/api/usuarios`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al crear el usuario.");
+  }
+  return res.json();
+}
+
+export async function updateUsuario(id_usuario: number, data: UsuarioUpdateInput): Promise<UsuarioItem> {
+  const res = await fetch(`${API_BASE_URL}/api/usuarios/${id_usuario}`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar el usuario.");
+  }
+  return res.json();
+}
+
+export async function changeUsuarioPassword(id_usuario: number, password_nuevo: string): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/usuarios/${id_usuario}/password`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ password_nuevo }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cambiar la contraseña.");
+  }
+  return res.json();
+}
+
+export async function deleteUsuario(id_usuario: number): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/usuarios/${id_usuario}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al desactivar el usuario.");
   }
   return res.json();
 }

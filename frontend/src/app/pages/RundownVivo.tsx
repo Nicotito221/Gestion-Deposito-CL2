@@ -39,6 +39,7 @@ import {
   Ship,
   Plane,
   PackageCheck,
+  Package,
   Building2,
   TrendingDown,
   Settings,
@@ -77,6 +78,7 @@ import {
   getProveedorMateriales,
   addProveedorMaterial,
   deleteProveedorMaterial,
+  updateLoteMaterial,
   getPeriodosProyeccion,
   createPeriodoProyeccion,
   deletePeriodoProyeccion,
@@ -147,8 +149,41 @@ export function RundownVivo() {
   });
   const [isAddingMaterial, setIsAddingMaterial] = useState<boolean>(false);
   const [newSeccionForm, setNewSeccionForm] = useState({ codigo: "", nombre: "", descripcion: "" });
-  const [newProvForm, setNewProvForm] = useState({ codigo_proveedor: "", nombre: "", id_seccion: 0 });
+  const [newProvForm, setNewProvForm] = useState({ codigo_proveedor: "", nombre: "", id_seccion: 0, deposito_en_planta: false });
   const [isSavingAdmin, setIsSavingAdmin] = useState<boolean>(false);
+  const [editProvModalOpen, setEditProvModalOpen] = useState<boolean>(false);
+  const [isSavingEditProv, setIsSavingEditProv] = useState<boolean>(false);
+  const [editProvForm, setEditProvForm] = useState<{
+    id_proveedor: number;
+    codigo_proveedor: string;
+    nombre: string;
+    id_seccion: number;
+    deposito_en_planta: boolean;
+    dias_alerta_rojo: number;
+    dias_alerta_amarillo: number;
+    doh_sugerido_planta: number;
+    activo: boolean;
+  }>({
+    id_proveedor: 0,
+    codigo_proveedor: "",
+    nombre: "",
+    id_seccion: 0,
+    deposito_en_planta: false,
+    dias_alerta_rojo: 5,
+    dias_alerta_amarillo: 15,
+    doh_sugerido_planta: 1.0,
+    activo: true,
+  });
+
+  const [loteMaterialModalOpen, setLoteMaterialModalOpen] = useState<boolean>(false);
+  const [editingLoteMaterial, setEditingLoteMaterial] = useState<{
+    id_parametro: number;
+    id_material: string;
+    descripcion: string;
+    tipo_empaque: string;
+    lote_mts: number;
+  } | null>(null);
+  const [isSavingLoteMaterial, setIsSavingLoteMaterial] = useState<boolean>(false);
 
   const [transitoModalOpen, setTransitoModalOpen] = useState<boolean>(false);
   const [isSavingTransito, setIsSavingTransito] = useState<boolean>(false);
@@ -744,6 +779,7 @@ export function RundownVivo() {
           });
 
           let runningStock = alcance === "planta" ? m.stock_inicial_planta : m.stock_inicial_total;
+          let lastDiasCob = 0;
           const recalculatedDias = newDias.map((d) => {
             if (d.tiene_ajuste) {
               runningStock = d.stock_final;
@@ -752,7 +788,13 @@ export function RundownVivo() {
                 runningStock - d.uso + (d.plan_maritimo + d.pedidos_aereos + d.entregas_locales) - d.ajuste_scrap
               );
             }
-            const diasCob = d.uso > 0 ? Math.round((runningStock / d.uso) * 100) / 100 : runningStock > 0 ? 999 : 0;
+            let diasCob = 0;
+            if (d.uso > 0) {
+              diasCob = Math.round((runningStock / d.uso) * 100) / 100;
+              lastDiasCob = diasCob;
+            } else if (runningStock > 0) {
+              diasCob = lastDiasCob;
+            }
             return {
               ...d,
               stock_final: runningStock,
@@ -939,14 +981,33 @@ export function RundownVivo() {
         codigo_proveedor: cod,
         nombre: newProvForm.nombre.trim().toUpperCase(),
         id_seccion: newProvForm.id_seccion > 0 ? newProvForm.id_seccion : (selectedSeccionId || undefined),
+        deposito_en_planta: newProvForm.deposito_en_planta,
       });
       toast.success("Proveedor registrado correctamente");
-      setNewProvForm({ codigo_proveedor: "", nombre: "", id_seccion: selectedSeccionId });
+      setNewProvForm({ codigo_proveedor: "", nombre: "", id_seccion: selectedSeccionId, deposito_en_planta: false });
       await fetchSecciones();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al registrar proveedor");
     } finally {
       setIsSavingAdmin(false);
+    }
+  };
+
+  const handleToggleDepositoEnPlanta = async (prov: RundownProveedorItem) => {
+    const nextVal = !prov.deposito_en_planta;
+    try {
+      await updateRundownProveedor(prov.id_proveedor, { deposito_en_planta: nextVal });
+      toast.success(
+        nextVal
+          ? `Depósito unificado en Planta para ${prov.nombre}`
+          : `Depósito CL2 habilitado para ${prov.nombre}`
+      );
+      await fetchSecciones();
+      if (selectedSupplierCode === prov.codigo_proveedor) {
+        await fetchRundown(true);
+      }
+    } catch {
+      toast.error("Error al actualizar configuración de depósito");
     }
   };
 
@@ -957,6 +1018,55 @@ export function RundownVivo() {
       await fetchSecciones();
     } catch {
       toast.error("Error al reasignar proveedor");
+    }
+  };
+
+  const handleOpenEditProveedor = (prov: RundownProveedorItem) => {
+    setEditProvForm({
+      id_proveedor: prov.id_proveedor,
+      codigo_proveedor: prov.codigo_proveedor,
+      nombre: prov.nombre,
+      id_seccion: prov.id_seccion,
+      deposito_en_planta: Boolean(prov.deposito_en_planta),
+      dias_alerta_rojo: prov.dias_alerta_rojo ?? 5,
+      dias_alerta_amarillo: prov.dias_alerta_amarillo ?? 15,
+      doh_sugerido_planta: prov.doh_sugerido_planta ?? 1.0,
+      activo: prov.activo,
+    });
+    setEditProvModalOpen(true);
+  };
+
+  const handleSubmitEditProveedor = async () => {
+    if (!editProvForm.id_proveedor) return;
+    if (!editProvForm.nombre.trim()) {
+      toast.error("El nombre del proveedor no puede estar vacío");
+      return;
+    }
+    if (editProvForm.dias_alerta_amarillo <= editProvForm.dias_alerta_rojo) {
+      toast.error("El umbral amarillo debe ser mayor que el umbral rojo");
+      return;
+    }
+    setIsSavingEditProv(true);
+    try {
+      await updateRundownProveedor(editProvForm.id_proveedor, {
+        nombre: editProvForm.nombre.trim(),
+        id_seccion: editProvForm.id_seccion,
+        deposito_en_planta: editProvForm.deposito_en_planta,
+        dias_alerta_rojo: Number(editProvForm.dias_alerta_rojo),
+        dias_alerta_amarillo: Number(editProvForm.dias_alerta_amarillo),
+        doh_sugerido_planta: Number(editProvForm.doh_sugerido_planta),
+        activo: editProvForm.activo,
+      });
+      toast.success("Proveedor actualizado correctamente");
+      setEditProvModalOpen(false);
+      await fetchSecciones();
+      if (selectedSupplierCode === editProvForm.codigo_proveedor) {
+        await fetchRundown(true);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al actualizar proveedor");
+    } finally {
+      setIsSavingEditProv(false);
     }
   };
 
@@ -1057,6 +1167,30 @@ export function RundownVivo() {
       }
     } catch {
       toast.error("Error al eliminar material");
+    }
+  };
+
+  const handleSaveLoteMaterial = async () => {
+    if (!editingLoteMaterial) return;
+    setIsSavingLoteMaterial(true);
+    try {
+      await updateLoteMaterial({
+        id_parametro: editingLoteMaterial.id_parametro,
+        lote_mts: editingLoteMaterial.lote_mts,
+        tipo_empaque: editingLoteMaterial.tipo_empaque,
+      });
+      toast.success(`Lote de ${editingLoteMaterial.id_material} actualizado correctamente`);
+      setLoteMaterialModalOpen(false);
+      if (adminMaterialProvId) {
+        await fetchProvMateriales(adminMaterialProvId);
+      }
+      if (activeSupplier) {
+        await fetchRundown();
+      }
+    } catch {
+      toast.error("Error al actualizar lote del material");
+    } finally {
+      setIsSavingLoteMaterial(false);
     }
   };
 
@@ -1324,7 +1458,7 @@ export function RundownVivo() {
                 }`}
               >
                 <Warehouse className="w-3.5 h-3.5 text-blue-600" />
-                <span>Pedido a CL2 (Stock en Planta)</span>
+                <span>Rundown Planta</span>
               </button>
               <button
                 type="button"
@@ -1336,14 +1470,21 @@ export function RundownVivo() {
                 }`}
               >
                 <Globe2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Pedido a Proveedor (Stock Total)</span>
+                <span>Rundown TBAR</span>
               </button>
             </div>
+            {activeSupplier?.deposito_en_planta && (
+              <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[11px] font-medium py-0.5">
+                Depósito en Planta (Stock Unificado)
+              </Badge>
+            )}
           </div>
           <p className="text-xs text-slate-500">
-            {alcance === "planta"
-              ? "Planificación para abastecimiento de Planta desde Depósito CL2 (contempla inventario en planta)."
-              : "Planificación para compras y pedidos directos al Proveedor (contempla stock total consolidado)."}
+            {activeSupplier?.deposito_en_planta
+              ? "Depósito unificado en Planta: el inventario y consumos aplican directamente en planta sin stock intermedio CL2."
+              : alcance === "planta"
+              ? "Rundown Planta: Planificación para abastecimiento y seguimiento de inventario en planta."
+              : "Rundown TBAR: Planificación de suministro y compras al Proveedor (contempla stock total consolidado)."}
           </p>
         </div>
 
@@ -1547,7 +1688,7 @@ export function RundownVivo() {
       </div>
 
       {report && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <Card className="border shadow-sm">
             <CardContent className="p-4 flex items-center gap-3">
               <div className="p-2.5 bg-blue-50 text-blue-600 rounded-lg">
@@ -1575,23 +1716,6 @@ export function RundownVivo() {
                 </h3>
                 <p className="text-[11px] text-slate-400">
                   {report.fecha_desde} al {report.fecha_hasta}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border shadow-sm">
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-lg">
-                <Layers className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Espumas en Rundown</p>
-                <h3 className="text-base font-bold text-slate-900">
-                  {report.materiales.length} espumas
-                </h3>
-                <p className="text-[11px] text-slate-400 truncate">
-                  {report.materiales.map((m) => m.id_material).join(", ")}
                 </p>
               </div>
             </CardContent>
@@ -2190,7 +2314,7 @@ export function RundownVivo() {
                               }`}
                             >
                               <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono border ${badgeClass}`}>
-                                {d.dias_cobertura >= 900 ? "∞" : `${d.dias_cobertura.toFixed(1)}d`}
+                                {d.dias_cobertura >= 900 ? "—" : `${d.dias_cobertura.toFixed(1)}d`}
                               </span>
                             </td>
                           );
@@ -2536,6 +2660,18 @@ export function RundownVivo() {
                       {isSavingAdmin ? "Guardando..." : "Agregar Proveedor"}
                     </Button>
                   </div>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <input
+                      type="checkbox"
+                      id="new-prov-dep-planta"
+                      checked={newProvForm.deposito_en_planta}
+                      onChange={(e) => setNewProvForm({ ...newProvForm, deposito_en_planta: e.target.checked })}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                    />
+                    <Label htmlFor="new-prov-dep-planta" className="text-xs text-slate-700 font-medium cursor-pointer select-none">
+                      Depósito en Planta (Stock único sin transferencia intermedia desde CL2)
+                    </Label>
+                  </div>
                 </div>
 
                 <div className="border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
@@ -2544,6 +2680,7 @@ export function RundownVivo() {
                       <tr>
                         <th className="p-2 text-left">Proveedor</th>
                         <th className="p-2 text-left">Línea Asignada</th>
+                        <th className="p-2 text-center">Tipo Depósito</th>
                         <th className="p-2 text-center">Estado</th>
                         <th className="p-2 text-center">Acción</th>
                       </tr>
@@ -2570,6 +2707,24 @@ export function RundownVivo() {
                             </Select>
                           </td>
                           <td className="p-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleDepositoEnPlanta(p)}
+                              title="Haga clic para alternar: Depósito unificado en Planta o con Depósito intermedio CL2"
+                              className="focus:outline-none transition-transform active:scale-95"
+                            >
+                              {p.deposito_en_planta ? (
+                                <Badge className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] cursor-pointer shadow-xs">
+                                  En Planta (Unificado)
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-slate-600 border-slate-300 text-[10px] hover:bg-slate-100 cursor-pointer">
+                                  Con Depósito CL2
+                                </Badge>
+                              )}
+                            </button>
+                          </td>
+                          <td className="p-2 text-center">
                             {p.tiene_parametros ? (
                               <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px]">
                                 Configurado
@@ -2581,18 +2736,30 @@ export function RundownVivo() {
                             )}
                           </td>
                           <td className="p-2 text-center">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setAdminMaterialProvId(p.id_proveedor);
-                                fetchProvMateriales(p.id_proveedor);
-                                setAdminTab("materiales");
-                              }}
-                              className="h-6 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                            >
-                              Materiales →
-                            </Button>
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleOpenEditProveedor(p)}
+                                className="h-6 px-2 text-[11px] border-slate-300 text-slate-700 hover:bg-slate-100 flex items-center gap-1"
+                                title="Configurar proveedor"
+                              >
+                                <Settings className="w-3 h-3 text-slate-500" />
+                                Configurar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setAdminMaterialProvId(p.id_proveedor);
+                                  fetchProvMateriales(p.id_proveedor);
+                                  setAdminTab("materiales");
+                                }}
+                                className="h-6 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                              >
+                                Materiales →
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -2815,7 +2982,15 @@ export function RundownVivo() {
                                 {m.descripcion}
                               </td>
                               <td className="p-2 text-center font-mono">{m.unidad}</td>
-                              <td className="p-2 text-center font-mono">{m.lote_mts ? m.lote_mts.toLocaleString() : "—"}</td>
+                              <td className="p-2 text-center font-mono">
+                                {m.tipo_empaque === "pallet" && m.lote_mts ? (
+                                  <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold">
+                                    {m.lote_mts.toLocaleString()} pal
+                                  </Badge>
+                                ) : (
+                                  <span className="text-slate-500 text-xs">{m.lote_mts ? `${m.lote_mts.toLocaleString()} un` : "1 un"}</span>
+                                )}
+                              </td>
                               <td className="p-2 text-center font-mono">{(m.scrap_porcentaje * 100).toFixed(1)}%</td>
                               <td className="p-2 text-center">
                                 <Badge
@@ -2832,7 +3007,25 @@ export function RundownVivo() {
                               <td className="p-2 text-right font-mono font-semibold text-slate-800">
                                 {Math.round(m.stock_inicial_total).toLocaleString()}
                               </td>
-                              <td className="p-2 text-center">
+                              <td className="p-2 text-center whitespace-nowrap">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setEditingLoteMaterial({
+                                      id_parametro: m.id_parametro,
+                                      id_material: m.id_material,
+                                      descripcion: m.descripcion,
+                                      tipo_empaque: m.tipo_empaque || "pallet",
+                                      lote_mts: m.lote_mts || 1,
+                                    });
+                                    setLoteMaterialModalOpen(true);
+                                  }}
+                                  className="h-7 w-7 p-0 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 mr-1"
+                                  title="Editar lote y presentación (pallet/unidades)"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </Button>
                                 <Button
                                   size="sm"
                                   variant="ghost"
@@ -2857,6 +3050,91 @@ export function RundownVivo() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAdminModalOpen(false)}>
               Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE EDICIÓN DE LOTE Y PRESENTACIÓN DEL MATERIAL */}
+      <Dialog open={loteMaterialModalOpen} onOpenChange={setLoteMaterialModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] rounded-2xl p-5">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900">
+              <Package className="w-5 h-5 text-indigo-600" />
+              Configurar Lote y Empaque del Material
+            </DialogTitle>
+          </DialogHeader>
+
+          {editingLoteMaterial && (
+            <div className="space-y-4 py-2">
+              <div>
+                <span className="text-xs text-slate-400 block">Material</span>
+                <span className="font-mono font-bold text-sm text-slate-800">
+                  {editingLoteMaterial.id_material} - {editingLoteMaterial.descripcion}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold text-slate-700">Tipo de Empaque</Label>
+                <Select
+                  value={editingLoteMaterial.tipo_empaque}
+                  onValueChange={(val) =>
+                    setEditingLoteMaterial({ ...editingLoteMaterial, tipo_empaque: val })
+                  }
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Seleccionar empaque" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pallet">Pallet (piezas por pallet)</SelectItem>
+                    <SelectItem value="unidad">Unidades (sueltas)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {editingLoteMaterial.tipo_empaque === "pallet" && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">
+                    Tamaño de Lote (Piezas por Pallet)
+                  </Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={editingLoteMaterial.lote_mts}
+                    onChange={(e) =>
+                      setEditingLoteMaterial({
+                        ...editingLoteMaterial,
+                        lote_mts: Math.max(1, parseFloat(e.target.value) || 1),
+                      })
+                    }
+                    className="h-9 text-xs font-mono font-bold"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Ej: Para espumas, 182 piezas forman un pallet completo. La sugerencia de pedidos se calculará en múltiplos enteros de este lote.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setLoteMaterialModalOpen(false)}
+              disabled={isSavingLoteMaterial}
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveLoteMaterial}
+              disabled={isSavingLoteMaterial}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+            >
+              {isSavingLoteMaterial && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              Guardar Lote
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3889,6 +4167,186 @@ export function RundownVivo() {
                 <>
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Guardar Umbrales</span>
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editProvModalOpen} onOpenChange={setEditProvModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-800">
+              <Settings className="w-4 h-4 text-blue-600" />
+              Configurar Proveedor
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Nombre del Proveedor</Label>
+              <Input
+                value={editProvForm.nombre}
+                onChange={(e) => setEditProvForm({ ...editProvForm, nombre: e.target.value })}
+                placeholder="Nombre del proveedor"
+                className="h-8 text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Línea Asignada</Label>
+              <Select
+                value={editProvForm.id_seccion ? String(editProvForm.id_seccion) : ""}
+                onValueChange={(val) => setEditProvForm({ ...editProvForm, id_seccion: parseInt(val, 10) })}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Seleccionar línea" />
+                </SelectTrigger>
+                <SelectContent>
+                  {secciones.map((s) => (
+                    <SelectItem key={s.id_seccion} value={String(s.id_seccion)}>
+                      {s.nombre}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="p-3 bg-slate-50 border rounded-lg space-y-2">
+              <Label className="text-xs font-semibold text-slate-700">Modalidad de Depósito</Label>
+              <div className="flex items-start gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="edit-prov-dep-planta"
+                  checked={editProvForm.deposito_en_planta}
+                  onChange={(e) => setEditProvForm({ ...editProvForm, deposito_en_planta: e.target.checked })}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 mt-0.5 cursor-pointer"
+                />
+                <Label htmlFor="edit-prov-dep-planta" className="text-xs text-slate-700 font-normal cursor-pointer leading-relaxed">
+                  <span className="font-semibold text-slate-900 block">Depósito unificado en Planta</span>
+                  Stock único sin transferencias intermedias. Los cambios en el stock de planta y total se sincronizan en ambos rundowns.
+                </Label>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-xs font-semibold text-slate-700">Umbrales de Semáforo de Riesgo</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1 p-2.5 rounded-md border border-red-200 bg-red-50/40">
+                  <Label className="text-[11px] font-bold text-red-900 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-red-600 inline-block" />
+                    Crítico / Rojo (&lt;)
+                  </Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={editProvForm.dias_alerta_rojo}
+                      onChange={(e) =>
+                        setEditProvForm({
+                          ...editProvForm,
+                          dias_alerta_rojo: Math.max(0, parseFloat(e.target.value) || 0),
+                        })
+                      }
+                      className="h-7 font-mono text-xs bg-white"
+                    />
+                    <span className="text-[11px] text-slate-500">días</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1 p-2.5 rounded-md border border-amber-200 bg-amber-50/40">
+                  <Label className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+                    Atención / Amarillo (&lt;)
+                  </Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.5"
+                      value={editProvForm.dias_alerta_amarillo}
+                      onChange={(e) =>
+                        setEditProvForm({
+                          ...editProvForm,
+                          dias_alerta_amarillo: Math.max(0, parseFloat(e.target.value) || 0),
+                        })
+                      }
+                      className="h-7 font-mono text-xs bg-white"
+                    />
+                    <span className="text-[11px] text-slate-500">días</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1 p-2.5 rounded-md border border-blue-200 bg-blue-50/50 mt-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-[11px] font-bold text-blue-900 flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" />
+                    DOH Sugerido Planta (Objetivo)
+                  </Label>
+                  <span className="text-[10px] text-blue-600 font-medium">Cobertura piso de planta</span>
+                </div>
+                <div className="flex items-center gap-1.5 pt-1">
+                  <Input
+                    type="number"
+                    min="0.1"
+                    step="0.1"
+                    value={editProvForm.doh_sugerido_planta}
+                    onChange={(e) =>
+                      setEditProvForm({
+                        ...editProvForm,
+                        doh_sugerido_planta: Math.max(0.1, parseFloat(e.target.value) || 1.0),
+                      })
+                    }
+                    className="h-7 font-mono text-xs bg-white w-28"
+                  />
+                  <span className="text-[11px] text-slate-600">días de producción</span>
+                </div>
+                <p className="text-[10px] text-slate-500 pt-0.5">
+                  Días de stock a mantener en planta para la sugerencia de pedidos diaria (independiente del DOH de TBAR).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="edit-prov-activo"
+                checked={editProvForm.activo}
+                onChange={(e) => setEditProvForm({ ...editProvForm, activo: e.target.checked })}
+                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
+              />
+              <Label htmlFor="edit-prov-activo" className="text-xs text-slate-700 font-medium cursor-pointer">
+                Proveedor activo en el sistema
+              </Label>
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setEditProvModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSubmitEditProveedor}
+              disabled={
+                isSavingEditProv ||
+                !editProvForm.nombre.trim() ||
+                editProvForm.dias_alerta_amarillo <= editProvForm.dias_alerta_rojo
+              }
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            >
+              {isSavingEditProv ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Guardando...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Guardar Cambios</span>
                 </>
               )}
             </Button>
