@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_db_connection
-from app.routers import bom, supply, rundown
+from app.routers import auth, bom, supply, rundown, stock, conteo, pedidos, usuarios
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,14 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
+app.include_router(auth.router)
+app.include_router(usuarios.router)
 app.include_router(bom.router)
 app.include_router(supply.router)
 app.include_router(rundown.router)
+app.include_router(stock.router)
+app.include_router(conteo.router)
+app.include_router(pedidos.router)
 
 
 @app.get("/api/health", tags=["Health"])

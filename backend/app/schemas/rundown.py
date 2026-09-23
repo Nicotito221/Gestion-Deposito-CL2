@@ -84,6 +84,7 @@ class RundownMaterialGrid(BaseModel):
     categoria_cabina: Optional[str] = None
     unidad: str
     lote_mts: Optional[float] = None
+    tipo_empaque: Optional[str] = "pallet"
     scrap_porcentaje: float
     stock_inicial: float
     stock_inicial_planta: float = 0.0
@@ -121,6 +122,8 @@ class RundownSupplierReport(BaseModel):
     materiales: List[RundownMaterialGrid]
     dias_alerta_rojo: float = 5.0
     dias_alerta_amarillo: float = 15.0
+    deposito_en_planta: bool = False
+    doh_sugerido_planta: float = 1.0
 
 
 class RundownProveedorItem(BaseModel):
@@ -132,6 +135,8 @@ class RundownProveedorItem(BaseModel):
     tiene_parametros: bool = False
     dias_alerta_rojo: float = 5.0
     dias_alerta_amarillo: float = 15.0
+    deposito_en_planta: bool = False
+    doh_sugerido_planta: float = 1.0
 
 
 class RundownSeccionItem(BaseModel):
@@ -158,6 +163,8 @@ class RundownProveedorCreate(BaseModel):
     pais: Optional[str] = Field(default=None, max_length=30)
     dias_alerta_rojo: Optional[float] = Field(default=5.0, ge=0)
     dias_alerta_amarillo: Optional[float] = Field(default=15.0, ge=0)
+    deposito_en_planta: bool = False
+    doh_sugerido_planta: Optional[float] = Field(default=1.0, ge=0)
 
 
 class RundownProveedorUpdate(BaseModel):
@@ -166,6 +173,8 @@ class RundownProveedorUpdate(BaseModel):
     activo: Optional[bool] = None
     dias_alerta_rojo: Optional[float] = Field(default=None, ge=0)
     dias_alerta_amarillo: Optional[float] = Field(default=None, ge=0)
+    deposito_en_planta: Optional[bool] = None
+    doh_sugerido_planta: Optional[float] = Field(default=None, ge=0)
 
 
 class RundownCalendarioDia(BaseModel):
@@ -212,11 +221,13 @@ class RundownParametroMaterialCreate(BaseModel):
     descripcion: Optional[str] = Field(default=None, max_length=150)
     unidad: str = Field(default="MTS", max_length=10)
     lote_mts: Optional[float] = Field(default=None, ge=0)
+    tipo_empaque: str = Field(default="pallet", max_length=20)
     scrap_porcentaje: float = Field(default=0.0, ge=0, le=1.0)
     factor_conversion: float = Field(default=1.0, gt=0)
     categoria_cabina: Optional[str] = Field(default=None, max_length=30)
     stock_inicial_planta: float = Field(default=0.0, ge=0)
     stock_inicial_total: float = Field(default=0.0, ge=0)
+    doh_sugerido_planta: Optional[float] = Field(default=None, ge=0)
 
 
 class RundownParametroMaterialItem(BaseModel):
@@ -226,13 +237,25 @@ class RundownParametroMaterialItem(BaseModel):
     descripcion: str
     unidad: str
     lote_mts: Optional[float] = None
+    tipo_empaque: str = "pallet"
     scrap_porcentaje: float
     factor_conversion: float
     categoria_cabina: Optional[str] = None
     stock_inicial_planta: float
     stock_inicial_total: float
+    doh_sugerido_planta: Optional[float] = None
     cant_productos: int
     activo: bool
+
+
+class RundownLoteMaterialUpdate(BaseModel):
+    id_parametro: Optional[int] = None
+    id_material: Optional[str] = None
+    lote_mts: Optional[float] = Field(default=None, ge=0)
+    unidad_por_bulto: Optional[float] = Field(default=None, ge=0)
+    bultos_por_pallet: Optional[int] = Field(default=None, ge=1)
+    tipo_empaque: str = Field(default="pallet", pattern="^(pallet|rollo|unidad)$")
+
 
 
 class RundownPeriodoProyeccionCreate(BaseModel):

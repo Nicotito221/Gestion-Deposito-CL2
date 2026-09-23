@@ -24,6 +24,7 @@ from app.schemas.rundown import (
     MaterialCatalogoItem,
     RundownParametroMaterialCreate,
     RundownParametroMaterialItem,
+    RundownLoteMaterialUpdate,
     RundownPeriodoProyeccionItem,
     RundownPeriodoProyeccionCreate,
     PlanSemanalPreviewOut,
@@ -50,7 +51,7 @@ class RundownService:
         periodo: Optional[str] = None,
         id_seccion: Optional[int] = None,
     ) -> RundownSupplierReport:
-        is_multi_prov = identifier.upper() in ["TODOS", "ALL"]
+        is_multi_prov = str(identifier).upper() in ["TODOS", "ALL"]
         if is_multi_prov:
             secciones_raw = self._repo.get_secciones_con_proveedores()
             if id_seccion:
@@ -122,10 +123,14 @@ class RundownService:
             target_periodo = periodo
         elif fecha_desde:
             target_periodo = f"{fecha_desde.year:04d}-{fecha_desde.month:02d}"
-        elif meses_raw:
-            target_periodo = meses_raw[0]["periodo"]
         else:
-            target_periodo = "2026-09"
+            from app.core.time import get_argentina_today
+            now_period = get_argentina_today().strftime("%Y-%m")
+            if any(m["periodo"] == now_period for m in meses_raw):
+                target_periodo = now_period
+            else:
+                firme_p = next((m["periodo"] for m in meses_raw if m.get("es_firme")), None)
+                target_periodo = firme_p or (meses_raw[0]["periodo"] if meses_raw else "2026-09")
 
         anio, mes = [int(x) for x in target_periodo.split("-")]
         mes_info = next((m for m in meses_raw if m["periodo"] == target_periodo), None)
@@ -174,17 +179,47 @@ class RundownService:
             p_info = prov_map.get(param["id_proveedor"], {})
             dias_rojo = float(p_info.get("dias_alerta_rojo", default_rojo))
             dias_amarillo = float(p_info.get("dias_alerta_amarillo", default_amarillo))
+            es_dep_en_planta = bool(p_info.get("deposito_en_planta", False))
+            stock_cl2 = 0.0 if es_dep_en_planta else float(param.get("stock_cl2", 0.0))
 
             s_planta = float(round(self._compute_carryover_stock(param, all_products, d_start, "planta", meses_raw)))
             s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw)))
-            stock_corriente = s_planta if alcance == "planta" else s_total
+            if es_dep_en_planta:
+                s_unificado = s_planta if s_planta > 0 else s_total
+                s_planta = s_unificado
+                s_total = s_unificado
+                stock_corriente = s_unificado
+            else:
+                s_total = s_planta + stock_cl2
+                stock_corriente = s_planta if alcance == "planta" else s_total
             cells: List[RundownDayCell] = []
             total_uso = 0.0
             total_ingresos = 0.0
 
             for d in dates_timeline:
-                ajuste_key = (param["id_parametro"], d, alcance)
-                tiene_ajuste = ajuste_key in ajustes_map
+                planta_key = (param["id_parametro"], d, "planta")
+                total_key = (param["id_parametro"], d, "total")
+
+                tiene_ajuste = False
+                stock_real = 0.0
+
+                if alcance == "planta":
+                    if planta_key in ajustes_map:
+                        tiene_ajuste = True
+                        stock_real = float(round(ajustes_map[planta_key]))
+                    elif es_dep_en_planta and total_key in ajustes_map:
+                        tiene_ajuste = True
+                        stock_real = float(round(ajustes_map[total_key]))
+                else:
+                    if total_key in ajustes_map:
+                        tiene_ajuste = True
+                        stock_real = float(round(ajustes_map[total_key]))
+                    elif es_dep_en_planta and planta_key in ajustes_map:
+                        tiene_ajuste = True
+                        stock_real = float(round(ajustes_map[planta_key]))
+                    elif not es_dep_en_planta and planta_key in ajustes_map:
+                        tiene_ajuste = True
+                        stock_real = float(round(ajustes_map[planta_key] + stock_cl2))
 
                 veh_prod = sum(
                     prod_map.get(p["id_producto"], {}).get(d, 0.0) * p["factor_uso"]
@@ -208,7 +243,6 @@ class RundownService:
 
                 desvio = 0.0
                 if tiene_ajuste:
-                    stock_real = float(round(ajustes_map[ajuste_key]))
                     desvio = float(round(stock_real - stock_teorico))
                     stock_corriente = stock_real
                 else:
@@ -217,7 +251,23 @@ class RundownService:
                 if uso > 0:
                     dias_cobertura = round(stock_corriente / uso, 2)
                 elif stock_corriente > 0:
-                    dias_cobertura = 999.0
+                    if cells:
+                        dias_cobertura = cells[-1].dias_cobertura
+                    else:
+                        primer_uso = next(
+                            (
+                                round(
+                                    sum(prod_map.get(p["id_producto"], {}).get(dt, 0.0) * p["factor_uso"] for p in param["productos"])
+                                    * param["factor_conversion"]
+                                    * (1.0 + param["scrap_porcentaje"]),
+                                    2,
+                                )
+                                for dt in dates_timeline
+                                if sum(prod_map.get(p["id_producto"], {}).get(dt, 0.0) * p["factor_uso"] for p in param["productos"]) > 0
+                            ),
+                            0.0,
+                        )
+                        dias_cobertura = round(stock_corriente / primer_uso, 2) if primer_uso > 0 else 0.0
                 else:
                     dias_cobertura = 0.0
 
@@ -252,6 +302,7 @@ class RundownService:
                     categoria_cabina=param["categoria_cabina"],
                     unidad=param["unidad"],
                     lote_mts=param["lote_mts"],
+                    tipo_empaque=param.get("tipo_empaque", "pallet"),
                     scrap_porcentaje=param["scrap_porcentaje"],
                     stock_inicial=stock_corriente,
                     stock_inicial_planta=s_planta,
@@ -279,6 +330,8 @@ class RundownService:
             materiales=material_grids,
             dias_alerta_rojo=default_rojo,
             dias_alerta_amarillo=default_amarillo,
+            deposito_en_planta=bool(proveedor.get("deposito_en_planta", False)) if not is_multi_prov else False,
+            doh_sugerido_planta=float(proveedor.get("doh_sugerido_planta", 1.0)) if not is_multi_prov else 1.0,
         )
 
     def add_transito(self, data: RundownTransitoCreate) -> int:
@@ -357,6 +410,8 @@ class RundownService:
                     tiene_parametros=p["tiene_parametros"],
                     dias_alerta_rojo=float(p.get("dias_alerta_rojo") or 5.0),
                     dias_alerta_amarillo=float(p.get("dias_alerta_amarillo") or 15.0),
+                    deposito_en_planta=bool(p.get("deposito_en_planta", False)),
+                    doh_sugerido_planta=float(p.get("doh_sugerido_planta", 1.0)),
                 )
                 for p in s["proveedores"]
             ]
@@ -387,6 +442,8 @@ class RundownService:
             nombre=data.nombre,
             id_seccion=data.id_seccion,
             pais=data.pais,
+            deposito_en_planta=data.deposito_en_planta,
+            doh_sugerido_planta=data.doh_sugerido_planta or 1.0,
         )
 
     def update_proveedor(self, id_proveedor: int, data: RundownProveedorUpdate) -> bool:
@@ -397,6 +454,8 @@ class RundownService:
             activo=data.activo,
             dias_alerta_rojo=data.dias_alerta_rojo,
             dias_alerta_amarillo=data.dias_alerta_amarillo,
+            deposito_en_planta=data.deposito_en_planta,
+            doh_sugerido_planta=data.doh_sugerido_planta,
         )
         if not updated:
             raise HTTPException(
@@ -429,16 +488,26 @@ class RundownService:
                 descripcion=r["descripcion"],
                 unidad=r["unidad"],
                 lote_mts=r["lote_mts"],
+                tipo_empaque=r.get("tipo_empaque", "pallet"),
                 scrap_porcentaje=r["scrap_porcentaje"],
                 factor_conversion=r["factor_conversion"],
                 categoria_cabina=r["categoria_cabina"],
                 stock_inicial_planta=r["stock_inicial_planta"],
                 stock_inicial_total=r["stock_inicial_total"],
+                doh_sugerido_planta=r.get("doh_sugerido_planta"),
                 cant_productos=r["cant_productos"],
                 activo=r["activo"],
             )
             for r in rows
         ]
+
+    def update_lote_material(self, data: RundownLoteMaterialUpdate) -> None:
+        self._repo.update_lote_material(
+            id_parametro=data.id_parametro,
+            lote_mts=data.lote_mts,
+            tipo_empaque=data.tipo_empaque,
+            id_material=data.id_material,
+        )
 
     def add_material_proveedor(
         self, id_proveedor: int, data: RundownParametroMaterialCreate
@@ -578,6 +647,9 @@ class RundownService:
         init_date = param.get("fecha_stock_inicial") or date(2026, 9, 1)
         init_stock_field = "stock_inicial_planta" if alcance == "planta" else "stock_inicial_total"
         s_val = float(param.get(init_stock_field, 0.0) or param.get("stock_inicial_referencia", 0.0) or 0.0)
+        if alcance == "total" and not param.get("deposito_en_planta", False):
+            stock_cl2 = float(param.get("stock_cl2", 0.0))
+            s_val = float(param.get("stock_inicial_planta", 0.0) or 0.0) + stock_cl2
 
         if target_start <= init_date:
             return s_val
@@ -633,11 +705,25 @@ class RundownService:
             scrap = transito_map.get((param["id_material"], curr, "AjusteScrap"), 0.0)
             stock_teorico = float(round(s_val - uso + (maritimo + aereo + local) - scrap))
 
-            aj_key = (param["id_parametro"], curr, alcance)
-            if aj_key in prev_ajustes:
-                s_val = float(round(prev_ajustes[aj_key]))
+            pl_key = (param["id_parametro"], curr, "planta")
+            tot_key = (param["id_parametro"], curr, "total")
+            if alcance == "planta":
+                if pl_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[pl_key]))
+                elif param.get("deposito_en_planta") and tot_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[tot_key]))
+                else:
+                    s_val = stock_teorico
             else:
-                s_val = stock_teorico
+                if tot_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[tot_key]))
+                elif param.get("deposito_en_planta") and pl_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[pl_key]))
+                elif not param.get("deposito_en_planta") and pl_key in prev_ajustes:
+                    stock_cl2_val = float(param.get("stock_cl2", 0.0))
+                    s_val = float(round(prev_ajustes[pl_key] + stock_cl2_val))
+                else:
+                    s_val = stock_teorico
 
             curr += timedelta(days=1)
 
@@ -731,5 +817,25 @@ class RundownService:
             registros_produccion_planificada=reg_plan,
             mensaje=f"Plan semanal para {seccion['nombre']} guardado exitosamente. Se sincronizaron {reg_plan} registros de producción.",
         )
+
+    def get_planta_stocks_map(self, target_date: Optional[date] = None) -> Dict[str, float]:
+        from app.core.time import get_argentina_today
+        t_date = target_date or get_argentina_today()
+        periodo_str = f"{t_date.year:04d}-{t_date.month:02d}"
+        report = self.get_supplier_rundown(identifier="TODOS", alcance="planta", periodo=periodo_str)
+        t_str = t_date.strftime("%Y-%m-%d")
+        result: Dict[str, float] = {}
+        for m in report.materiales:
+            matched_cell = next((c for c in m.dias if c.fecha == t_str), None)
+            if matched_cell:
+                result[m.id_material] = round(matched_cell.stock_final, 2)
+            elif m.dias:
+                if t_str < m.dias[0].fecha:
+                    result[m.id_material] = round(m.stock_inicial, 2)
+                else:
+                    result[m.id_material] = round(m.dias[-1].stock_final, 2)
+            else:
+                result[m.id_material] = round(m.stock_inicial, 2)
+        return result
 
 

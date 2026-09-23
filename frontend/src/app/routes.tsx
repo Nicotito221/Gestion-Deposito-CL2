@@ -17,6 +17,8 @@ import { Remitos } from "./pages/Remitos";
 import { OrderDetail } from "./pages/OrderDetail";
 import { CyclicCount } from "./pages/CyclicCount";
 import { SupplyOrderBom } from "./pages/SupplyOrderBom";
+import { MaterialConfig } from "./pages/MaterialConfig";
+import { UserManagement } from "./pages/UserManagement";
 
 export const router = createBrowserRouter([
   {
@@ -45,6 +47,8 @@ export const router = createBrowserRouter([
       { path: "conteo", Component: StockCount },
       { path: "rundown", Component: RundownVivo },
       { path: "suministro-bom", Component: SupplyOrderBom },
+      { path: "configuracion-materiales", Component: MaterialConfig },
+      { path: "usuarios", Component: UserManagement },
       { path: "stock", Component: Stock },
       { path: "trazabilidad", Component: Audit },
       { path: "conteo-ciclico", Component: CyclicCount },

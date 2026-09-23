@@ -53,7 +53,7 @@ const traceOrders: TraceOrder[] = [
   {
     id: "1",
     number: "000154",
-    sector: "Producción",
+    sector: "PC",
     status: "en-preparacion",
     events: [
       { timestamp: "10/06/2026 09:15", action: "Pedido creado", user: "Nicolás", role: "Solicitante", detail: "Pedido de 3 materiales — prioridad urgente", type: "solicitud" },
@@ -64,7 +64,7 @@ const traceOrders: TraceOrder[] = [
   {
     id: "2",
     number: "000153",
-    sector: "Mantenimiento",
+    sector: "Despacho",
     status: "completo",
     events: [
       { timestamp: "10/06/2026 07:30", action: "Pedido creado", user: "Laura", role: "Solicitante", detail: "Pedido de 2 materiales — prioridad normal", type: "solicitud" },
@@ -77,7 +77,7 @@ const traceOrders: TraceOrder[] = [
   {
     id: "3",
     number: "000152",
-    sector: "Administración",
+    sector: "Administracion",
     status: "parcial",
     events: [
       { timestamp: "09/06/2026 14:00", action: "Pedido creado", user: "Marcos", role: "Solicitante", detail: "Pedido de 4 materiales — prioridad normal", type: "solicitud" },
@@ -90,7 +90,7 @@ const traceOrders: TraceOrder[] = [
   {
     id: "4",
     number: "000151",
-    sector: "Logística",
+    sector: "Recepcion",
     status: "completo",
     events: [
       { timestamp: "09/06/2026 09:00", action: "Pedido creado", user: "Pablo", role: "Solicitante", detail: "Pedido de 2 materiales — prioridad normal", type: "solicitud" },

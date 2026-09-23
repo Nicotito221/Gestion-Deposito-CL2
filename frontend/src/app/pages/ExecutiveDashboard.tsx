@@ -120,9 +120,9 @@ const criticalStock = [
 ];
 
 const topDelayed = [
-  { number: "000148", sector: "Producción", hours: 5.2 },
-  { number: "000145", sector: "Mantenimiento", hours: 3.8 },
-  { number: "000143", sector: "Logística", hours: 2.9 },
+  { number: "000148", sector: "PC", hours: 5.2 },
+  { number: "000145", sector: "Despacho", hours: 3.8 },
+  { number: "000143", sector: "CL2", hours: 2.9 },
 ];
 
 export function ExecutiveDashboard() {

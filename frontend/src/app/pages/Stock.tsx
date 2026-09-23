@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { formatDate } from "../components/ui/format";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -18,10 +18,10 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "../components/ui/dialog";
 import { Label } from "../components/ui/label";
-import { Textarea } from "../components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -31,461 +31,880 @@ import {
 } from "../components/ui/select";
 import {
   Search,
-  AlertCircle,
-  TrendingDown,
+  RefreshCw,
   Plus,
   ArrowUpCircle,
   ArrowDownCircle,
   Minus,
-  RefreshCw,
-  Upload,
   CheckCircle2,
-  Info,
+  Boxes,
+  History,
+  Edit3,
+  ChevronLeft,
+  ChevronRight,
+  Package,
+  SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
-
-interface StockItem {
-  id: string;
-  code: string;
-  name: string;
-  unit: string;
-  category: string;
-  stockInicial: number;
-  ingresos: number;
-  consumos: number;
-  stockTeorico: number;
-  stockReal: number;
-}
-
-interface Movement {
-  id: string;
-  date: string;
-  material: string;
-  type: "ingreso" | "egreso" | "ajuste";
-  quantity: number;
-  unit: string;
-  user: string;
-  reason: string;
-}
-
-const stockItems: StockItem[] = [
-  { id: "1", code: "Código 001", name: "Material 1", unit: "UN", category: "Insumos", stockInicial: 180, ingresos: 50, consumos: 78, stockTeorico: 152, stockReal: 152 },
-  { id: "2", code: "Código 002", name: "Material 2", unit: "KG", category: "Materia Prima", stockInicial: 100, ingresos: 20, consumos: 45, stockTeorico: 75, stockReal: 75 },
-  { id: "3", code: "Código 003", name: "Material 3", unit: "MT", category: "Insumos", stockInicial: 250, ingresos: 0, consumos: 55, stockTeorico: 195, stockReal: 190 },
-  { id: "4", code: "Código 004", name: "Material 4", unit: "LT", category: "Químicos", stockInicial: 60, ingresos: 0, consumos: 52, stockTeorico: 8, stockReal: 8 },
-  { id: "5", code: "Código 005", name: "Material 5", unit: "UN", category: "Herramientas", stockInicial: 320, ingresos: 10, consumos: 32, stockTeorico: 298, stockReal: 296 },
-  { id: "6", code: "Código 006", name: "Material 6", unit: "KG", category: "Materia Prima", stockInicial: 140, ingresos: 30, consumos: 52, stockTeorico: 118, stockReal: 118 },
-];
-
-const movements: Movement[] = [
-  { id: "1", date: "29/06/2026 10:45", material: "Material 1", type: "ingreso", quantity: 50, unit: "UN", user: "Carlos", reason: "Ingreso proveedor RI-2341" },
-  { id: "2", date: "29/06/2026 09:15", material: "Material 3", type: "egreso", quantity: 25, unit: "MT", user: "Nicolás", reason: "Pedido #000153" },
-  { id: "3", date: "28/06/2026 16:30", material: "Material 1", type: "egreso", quantity: 30, unit: "UN", user: "Nicolás", reason: "Pedido #000152" },
-  { id: "4", date: "28/06/2026 14:00", material: "Material 2", type: "ingreso", quantity: 20, unit: "KG", user: "Carlos", reason: "Ingreso proveedor RI-2340" },
-  { id: "5", date: "28/06/2026 11:20", material: "Material 5", type: "ajuste", quantity: -2, unit: "UN", user: "Supervisor", reason: "Diferencia de conteo" },
-  { id: "6", date: "27/06/2026 15:00", material: "Material 3", type: "egreso", quantity: 30, unit: "MT", user: "Juan", reason: "Pedido #000149" },
-  { id: "7", date: "27/06/2026 09:00", material: "Material 6", type: "ingreso", quantity: 30, unit: "KG", user: "Carlos", reason: "Ingreso proveedor RI-2339" },
-];
-
-type DesvioStatus = "ok" | "minor" | "critical";
-
-function getDesvioStatus(teorico: number, real: number): DesvioStatus {
-  const abs = Math.abs(real - teorico);
-  if (abs === 0) return "ok";
-  if (abs <= 5) return "minor";
-  return "critical";
-}
-
-const desvioConfig: Record<DesvioStatus, { label: string; color: string }> = {
-  ok: { label: "Correcto", color: "bg-green-100 text-green-700" },
-  minor: { label: "Dif. menor", color: "bg-amber-100 text-amber-700" },
-  critical: { label: "Dif. crítica", color: "bg-red-100 text-red-700" },
-};
+import {
+  getStockDeposito,
+  updateStockDeposito,
+  getStockMovimientos,
+  getRundownSecciones,
+  type StockMaterialItem,
+  type StockListResponse,
+  type StockMovimientoItem,
+  type StockMovimientosResponse,
+  type RundownSeccionItem,
+} from "../services/api";
 
 export function Stock() {
-  const [search, setSearch] = useState("");
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustForm, setAdjustForm] = useState({ material: "", quantity: "", reason: "", type: "ajuste" });
-  const [syncing, setSyncing] = useState(false);
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<string>("stock");
 
-  const filtered = stockItems.filter(
-    (i) =>
-      i.name.toLowerCase().includes(search.toLowerCase()) ||
-      i.code.toLowerCase().includes(search.toLowerCase())
-  );
+  const [loadingStock, setLoadingStock] = useState<boolean>(true);
+  const [stockData, setStockData] = useState<StockListResponse>({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 50,
+    total_pages: 1,
+  });
+  const [searchStockInput, setSearchStockInput] = useState<string>("");
+  const [activeSearchStock, setActiveSearchStock] = useState<string>("");
+  const [selectedProvId, setSelectedProvId] = useState<string>("all");
+  const [soloConStock, setSoloConStock] = useState<boolean>(false);
+  const [pageStock, setPageStock] = useState<number>(1);
+  const [pageSizeStock, setPageSizeStock] = useState<number>(50);
 
-  const criticalItems = stockItems.filter((i) => i.stockReal < 20);
-  const itemsWithDiff = stockItems.filter((i) => i.stockTeorico !== i.stockReal);
+  const [loadingMovs, setLoadingMovs] = useState<boolean>(false);
+  const [movsData, setMovsData] = useState<StockMovimientosResponse>({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 50,
+    total_pages: 1,
+  });
+  const [searchMovInput, setSearchMovInput] = useState<string>("");
+  const [activeSearchMov, setActiveSearchMov] = useState<string>("");
+  const [tipoMovFilter, setTipoMovFilter] = useState<string>("all");
+  const [pageMov, setPageMov] = useState<number>(1);
+  const [pageSizeMov, setPageSizeMov] = useState<number>(50);
 
-  const getMovementIcon = (type: Movement["type"]) => {
-    if (type === "ingreso") return <ArrowUpCircle className="w-4 h-4 text-green-500" />;
-    if (type === "egreso") return <ArrowDownCircle className="w-4 h-4 text-red-500" />;
-    return <Minus className="w-4 h-4 text-blue-500" />;
+  const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
+
+  const [adjustOpen, setAdjustOpen] = useState<boolean>(false);
+  const [isSavingAdjust, setIsSavingAdjust] = useState<boolean>(false);
+  const [selectedMaterial, setSelectedMaterial] = useState<StockMaterialItem | null>(null);
+  const [adjustForm, setAdjustForm] = useState<{
+    nuevo_stock_planta: string;
+    nuevo_stock_cl2: string;
+    observacion: string;
+  }>({
+    nuevo_stock_planta: "",
+    nuevo_stock_cl2: "",
+    observacion: "",
+  });
+
+  const proveedoresList = useMemo(() => {
+    const list: { id_proveedor: number; nombre: string }[] = [];
+    secciones.forEach((sec) => {
+      sec.proveedores.forEach((p) => {
+        if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
+          list.push({ id_proveedor: p.id_proveedor, nombre: p.nombre });
+        }
+      });
+    });
+    return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }, [secciones]);
+
+  const fetchSeccionesList = useCallback(async () => {
+    try {
+      const data = await getRundownSecciones();
+      setSecciones(data);
+    } catch {
+      toast.error("Error al cargar proveedores");
+    }
+  }, []);
+
+  const fetchStock = useCallback(async () => {
+    setLoadingStock(true);
+    try {
+      const provIdNum = selectedProvId !== "all" ? parseInt(selectedProvId, 10) : undefined;
+      const res = await getStockDeposito({
+        search: activeSearchStock.trim() || undefined,
+        id_proveedor: provIdNum,
+        solo_con_stock: soloConStock,
+        page: pageStock,
+        page_size: pageSizeStock,
+      });
+      setStockData(res);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al cargar stock");
+    } finally {
+      setLoadingStock(false);
+    }
+  }, [activeSearchStock, selectedProvId, soloConStock, pageStock, pageSizeStock]);
+
+  const fetchMovimientos = useCallback(async () => {
+    setLoadingMovs(true);
+    try {
+      const res = await getStockMovimientos({
+        search: activeSearchMov.trim() || undefined,
+        tipo: tipoMovFilter !== "all" ? tipoMovFilter : undefined,
+        page: pageMov,
+        page_size: pageSizeMov,
+      });
+      setMovsData(res);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al cargar movimientos");
+    } finally {
+      setLoadingMovs(false);
+    }
+  }, [activeSearchMov, tipoMovFilter, pageMov, pageSizeMov]);
+
+  useEffect(() => {
+    fetchSeccionesList();
+  }, [fetchSeccionesList]);
+
+  useEffect(() => {
+    fetchStock();
+  }, [fetchStock]);
+
+  useEffect(() => {
+    if (activeTab === "movimientos") {
+      fetchMovimientos();
+    }
+  }, [activeTab, fetchMovimientos]);
+
+  const handleSearchStockSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPageStock(1);
+    setActiveSearchStock(searchStockInput);
   };
 
-  const getMovementBadge = (type: Movement["type"]) => {
-    if (type === "ingreso") return <Badge className="bg-green-100 text-green-700" variant="outline">Ingreso</Badge>;
-    if (type === "egreso") return <Badge className="bg-red-100 text-red-700" variant="outline">Egreso</Badge>;
-    return <Badge className="bg-blue-100 text-blue-700" variant="outline">Ajuste</Badge>;
+  const handleSearchMovSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPageMov(1);
+    setActiveSearchMov(searchMovInput);
   };
 
-  const handleSync = () => {
-    setSyncing(true);
-    setTimeout(() => { setSyncing(false); toast.success("Datos actualizados"); }, 1500);
+  const handleOpenAdjust = (mat: StockMaterialItem) => {
+    setSelectedMaterial(mat);
+    setAdjustForm({
+      nuevo_stock_planta: String(mat.stock_planta),
+      nuevo_stock_cl2: String(mat.stock_cl2),
+      observacion: "",
+    });
+    setAdjustOpen(true);
   };
+
+  const handleSaveAdjust = async () => {
+    if (!selectedMaterial) return;
+    const valPlanta = parseFloat(adjustForm.nuevo_stock_planta);
+    const valCl2 = selectedMaterial.deposito_en_planta ? 0 : parseFloat(adjustForm.nuevo_stock_cl2);
+
+    if (isNaN(valPlanta) || valPlanta < 0) {
+      toast.error("Ingrese una cantidad válida para Stock en Planta (>= 0)");
+      return;
+    }
+    if (!selectedMaterial.deposito_en_planta && (isNaN(valCl2) || valCl2 < 0)) {
+      toast.error("Ingrese una cantidad válida para Stock en CL2 (>= 0)");
+      return;
+    }
+
+    setIsSavingAdjust(true);
+    try {
+      await updateStockDeposito(selectedMaterial.id_material, {
+        nuevo_stock_planta: valPlanta,
+        nuevo_stock_cl2: selectedMaterial.deposito_en_planta ? 0 : valCl2,
+        observacion: adjustForm.observacion.trim() || undefined,
+      });
+      const tot = valPlanta + (selectedMaterial.deposito_en_planta ? 0 : valCl2);
+      toast.success(`Stock de ${selectedMaterial.id_material} actualizado (Total: ${tot.toLocaleString("es-AR")})`);
+      setAdjustOpen(false);
+      await fetchStock();
+      if (activeTab === "movimientos") {
+        await fetchMovimientos();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al actualizar stock");
+    } finally {
+      setIsSavingAdjust(false);
+    }
+  };
+
+  const formatFechaMov = (fechaStr: string) => {
+    try {
+      const dt = new Date(fechaStr);
+      return dt.toLocaleString("es-AR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return fechaStr;
+    }
+  };
+
+  const getTipoMovBadge = (tipo: string) => {
+    switch (tipo) {
+      case "ingreso":
+        return (
+          <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] gap-1">
+            <ArrowUpCircle className="w-3 h-3 text-emerald-600" />
+            Ingreso
+          </Badge>
+        );
+      case "egreso":
+        return (
+          <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px] gap-1">
+            <ArrowDownCircle className="w-3 h-3 text-red-600" />
+            Egreso
+          </Badge>
+        );
+      case "ajuste_manual":
+      case "ajuste":
+      default:
+        return (
+          <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-[10px] gap-1">
+            <Minus className="w-3 h-3 text-blue-600" />
+            Ajuste
+          </Badge>
+        );
+    }
+  };
+
+  const startStockRecord = stockData.total > 0 ? (stockData.page - 1) * stockData.page_size + 1 : 0;
+  const endStockRecord = Math.min(stockData.page * stockData.page_size, stockData.total);
+
+  const startMovRecord = movsData.total > 0 ? (movsData.page - 1) * movsData.page_size + 1 : 0;
+  const endMovRecord = Math.min(movsData.page * movsData.page_size, movsData.total);
 
   return (
-    <div className="p-4 sm:p-8">
-      <div className="flex items-start justify-between mb-6">
+    <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold text-slate-900 mb-2">Gestión de stock</h1>
-          <p className="text-slate-600">Control de movimientos, fórmulas y sincronización</p>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Control Stock TBAR</h1>
+          <p className="text-xs sm:text-sm text-slate-500">
+            Control integral de existencias en planta TBAR, movimientos y sincronización con el Rundown
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing}>
-            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-            Actualizar
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              fetchStock();
+              if (activeTab === "movimientos") fetchMovimientos();
+            }}
+            disabled={loadingStock || loadingMovs}
+            className="text-xs h-9 gap-1.5 border-slate-300"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingStock || loadingMovs ? "animate-spin" : ""}`} />
+            <span>Actualizar</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => toast.success("Seleccione el archivo Excel")}>
-            <Upload className="w-4 h-4 mr-2" />
-            Importar Excel
-          </Button>
-          <Button size="sm" onClick={() => setAdjustOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Registrar ajuste
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate("/configuracion-materiales")}
+            className="text-xs h-9 gap-1.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Configuración de Materiales</span>
           </Button>
         </div>
       </div>
 
-      {/* Estado de sincronización */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card className="border-2 border-slate-900 bg-slate-900 text-white">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-white/10 rounded-lg flex items-center justify-center flex-shrink-0">
-                <CheckCircle2 className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <p className="text-white/60 text-xs">Producción vigente</p>
-                <p className="font-bold text-white">Semana 28 · 2026</p>
-              </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="shadow-xs border-slate-200">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2.5 bg-slate-100 rounded-lg text-slate-600">
+              <Package className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Materiales en Catálogo</p>
+              <p className="text-xl font-bold text-slate-900">{stockData.total.toLocaleString("es-AR")}</p>
             </div>
           </CardContent>
         </Card>
-        <Card>
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                <RefreshCw className="w-5 h-5 text-green-600" />
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Última importación</p>
-                <p className="font-semibold text-slate-900">29/06/2026 · 08:30</p>
-                <Badge className="bg-green-100 text-green-700 mt-1 text-xs" variant="outline">Sincronizado</Badge>
-              </div>
+
+        <Card className="shadow-xs border-slate-200">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2.5 bg-emerald-100 rounded-lg text-emerald-700">
+              <Boxes className="w-5 h-5" />
             </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-blue-50 border-blue-200">
-          <CardContent className="pt-4 pb-4">
-            <div className="flex items-start gap-2">
-              <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-blue-800">
-                <strong>Excel es la fuente oficial.</strong> El sistema importa materiales, estructura
-                de producción y fórmulas periódicamente.
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Con Stock en Depósito</p>
+              <p className="text-xl font-bold text-emerald-700">
+                {stockData.items.filter((it) => it.stock_actual > 0).length}{" "}
+                <span className="text-xs font-normal text-slate-500">(en página activa)</span>
               </p>
             </div>
           </CardContent>
         </Card>
-      </div>
 
-      {/* Resumen */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-600">Total en sistema</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-slate-900">{stockItems.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-600">Con diferencias</CardTitle>
-            <AlertCircle className="h-4 w-4 text-amber-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-amber-600">{itemsWithDiff.length}</div>
-            <p className="text-xs text-slate-500 mt-1">Teórico ≠ real</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-slate-600">Stock crítico</CardTitle>
-            <TrendingDown className="h-4 w-4 text-red-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{criticalItems.length}</div>
-            <p className="text-xs text-slate-500 mt-1">Requieren reposición</p>
+        <Card className="shadow-xs border-slate-200">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="p-2.5 bg-blue-100 rounded-lg text-blue-700">
+              <History className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 font-medium">Movimientos Auditados</p>
+              <p className="text-xl font-bold text-blue-700">{movsData.total.toLocaleString("es-AR")}</p>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      <Tabs defaultValue="stock">
-        <TabsList className="mb-6">
-          <TabsTrigger value="stock">Stock teórico vs real</TabsTrigger>
-          <TabsTrigger value="movimientos">Historial de movimientos</TabsTrigger>
-          <TabsTrigger value="arrastre">Arrastre diario</TabsTrigger>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="bg-slate-100 p-1 border border-slate-200">
+          <TabsTrigger value="stock" className="text-xs gap-1.5">
+            <Boxes className="w-3.5 h-3.5" />
+            <span>Inventario de Materiales</span>
+          </TabsTrigger>
+          <TabsTrigger value="movimientos" className="text-xs gap-1.5">
+            <History className="w-3.5 h-3.5" />
+            <span>Historial de Movimientos</span>
+          </TabsTrigger>
         </TabsList>
 
-        {/* Stock teórico vs real */}
-        <TabsContent value="stock">
-          <Card className="mb-4">
-            <CardContent className="pt-6">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input placeholder="Buscar material..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
-              </div>
-            </CardContent>
-          </Card>
+        <TabsContent value="stock" className="space-y-4">
+          <Card className="shadow-xs border-slate-200">
+            <CardContent className="p-4 space-y-4">
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                <form onSubmit={handleSearchStockSubmit} className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Buscar por código SAP o descripción..."
+                    className="pl-9 h-9 text-xs"
+                    value={searchStockInput}
+                    onChange={(e) => setSearchStockInput(e.target.value)}
+                  />
+                </form>
 
-          {/* Fórmula visual */}
-          <Card className="mb-4 bg-slate-50 border-slate-200">
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-start gap-6 flex-wrap">
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Cálculo del stock teórico</p>
-                  <div className="flex items-center gap-2 text-sm font-mono flex-wrap">
-                    <span className="font-bold text-slate-900">Stock Inicial</span>
-                    <span className="text-green-600 font-bold">+ Ingresos</span>
-                    <span className="text-red-600 font-bold">− Consumos</span>
-                    <span className="text-slate-400">=</span>
-                    <span className="font-bold text-slate-900 bg-slate-200 px-2 py-0.5 rounded">Stock Teórico</span>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="w-48">
+                    <Select
+                      value={selectedProvId}
+                      onValueChange={(val) => {
+                        setSelectedProvId(val);
+                        setPageStock(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue placeholder="Proveedor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos los proveedores</SelectItem>
+                        {proveedoresList.map((p) => (
+                          <SelectItem key={p.id_proveedor} value={String(p.id_proveedor)}>
+                            {p.nombre}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Comparación</p>
-                  <div className="flex items-center gap-2 text-sm font-mono flex-wrap">
-                    <span className="font-bold text-slate-900">Stock Teórico</span>
-                    <span className="text-slate-400">vs</span>
-                    <span className="font-bold text-slate-900">Conteo Físico</span>
-                    <span className="text-slate-400">=</span>
-                    <span className="font-bold text-slate-900 bg-slate-200 px-2 py-0.5 rounded">Desvío</span>
+
+                  <div className="flex items-center gap-2 px-3 py-1.5 border rounded-lg bg-slate-50/50">
+                    <input
+                      type="checkbox"
+                      id="stock-filter-solo-stock"
+                      checked={soloConStock}
+                      onChange={(e) => {
+                        setSoloConStock(e.target.checked);
+                        setPageStock(1);
+                      }}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
+                    />
+                    <Label htmlFor="stock-filter-solo-stock" className="text-xs text-slate-700 cursor-pointer font-medium select-none">
+                      Solo con stock (&gt; 0)
+                    </Label>
                   </div>
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Estado</p>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge className="bg-green-100 text-green-700" variant="outline">Correcto · = 0</Badge>
-                    <Badge className="bg-amber-100 text-amber-700" variant="outline">Dif. menor · 1-5</Badge>
-                    <Badge className="bg-red-100 text-red-700" variant="outline">Dif. crítica · &gt;5</Badge>
+
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <span>Filas:</span>
+                    <Select
+                      value={String(pageSizeStock)}
+                      onValueChange={(val) => {
+                        setPageSizeStock(parseInt(val, 10));
+                        setPageStock(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-18 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-slate-900">Comparativo de stock ({filtered.length})</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="border rounded-lg overflow-hidden">
+              <div className="border rounded-lg overflow-hidden border-slate-200">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-slate-50">
                     <TableRow>
-                      <TableHead>Material</TableHead>
-                      <TableHead>Categoría</TableHead>
-                      <TableHead className="text-center">Stock teórico</TableHead>
-                      <TableHead className="text-center">Conteo físico</TableHead>
-                      <TableHead className="text-center">Desvío</TableHead>
-                      <TableHead>Estado</TableHead>
+                      <TableHead className="w-32 text-xs font-semibold text-slate-700">Código SAP</TableHead>
+                      <TableHead className="text-xs font-semibold text-slate-700">Descripción</TableHead>
+                      <TableHead className="w-36 text-xs font-semibold text-slate-700">Proveedor</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-blue-700 text-right">Stock Planta</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-amber-700 text-right">Stock CL2</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-slate-900 text-right">Stock Total</TableHead>
+                      <TableHead className="w-20 text-xs font-semibold text-slate-700 text-center">Unidad</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-slate-700 text-center">Empaque / Lote</TableHead>
+                      <TableHead className="w-36 text-xs font-semibold text-slate-700 text-center">Acciones</TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
-                    {filtered.map((item) => {
-                      const diff = item.stockReal - item.stockTeorico;
-                      const status = getDesvioStatus(item.stockTeorico, item.stockReal);
-                      const cfg = desvioConfig[status];
-                      return (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium text-slate-900">{item.name}</p>
-                              <p className="text-xs text-slate-400 font-mono">{item.code}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell><Badge variant="outline">{item.category}</Badge></TableCell>
-                          <TableCell className="text-center font-semibold text-slate-600">
-                            {item.stockTeorico} {item.unit}
-                          </TableCell>
-                          <TableCell className="text-center font-bold text-slate-900">
-                            {item.stockReal} {item.unit}
-                          </TableCell>
-                          <TableCell className="text-center">
-                            <span className={`font-bold ${diff === 0 ? "text-green-600" : Math.abs(diff) <= 5 ? "text-amber-600" : "text-red-600"}`}>
-                              {diff > 0 ? "+" : ""}{diff} {item.unit}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={cfg.color} variant="outline">{cfg.label}</Badge>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Movimientos */}
-        <TabsContent value="movimientos">
-          <Card>
-            <CardHeader><CardTitle className="text-slate-900">Historial de movimientos</CardTitle></CardHeader>
-            <CardContent>
-              <div className="border rounded-lg overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Fecha y hora</TableHead>
-                      <TableHead>Tipo</TableHead>
-                      <TableHead>Material</TableHead>
-                      <TableHead className="text-center">Cantidad</TableHead>
-                      <TableHead>Usuario</TableHead>
-                      <TableHead>Motivo</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {movements.map((mov) => (
-                      <TableRow key={mov.id}>
-                        <TableCell className="text-sm font-mono text-slate-600">{mov.date}</TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {getMovementIcon(mov.type)}
-                            {getMovementBadge(mov.type)}
+                  <TableBody className="divide-y divide-slate-100">
+                    {loadingStock ? (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-center py-12 text-slate-400">
+                          <div className="flex items-center justify-center gap-2">
+                            <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                            <span>Cargando inventario...</span>
                           </div>
                         </TableCell>
-                        <TableCell className="font-medium">{mov.material}</TableCell>
-                        <TableCell className="text-center">
-                          <span className={`font-semibold ${mov.type === "ingreso" ? "text-green-700" : mov.type === "egreso" ? "text-red-700" : "text-blue-700"}`}>
-                            {mov.type === "ingreso" ? "+" : ""}{mov.quantity} {mov.unit}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-slate-700">{mov.user}</TableCell>
-                        <TableCell className="text-slate-600 text-sm">{mov.reason}</TableCell>
                       </TableRow>
-                    ))}
+                    ) : stockData.items.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={9} className="text-center py-12 text-slate-400">
+                          No se encontraron materiales con los filtros aplicados.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      stockData.items.map((mat) => {
+                        const isPlantaOnly = mat.deposito_en_planta;
+                        return (
+                          <TableRow key={mat.id_material} className="hover:bg-slate-50/80 transition-colors">
+                            <TableCell className="font-mono text-xs font-bold text-slate-800">
+                              {mat.id_material}
+                            </TableCell>
+                            <TableCell className="text-xs font-medium text-slate-700">
+                              {mat.nombre}
+                              {mat.categoria && (
+                                <span className="ml-2 text-[10px] text-slate-400 font-normal">({mat.categoria})</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs text-slate-600">
+                              {mat.nombre_proveedor ? (
+                                <span className="font-medium text-slate-800">{mat.nombre_proveedor}</span>
+                              ) : (
+                                <span className="text-slate-400 italic">Sin asignar</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {mat.stock_planta > 0 ? (
+                                <span className="font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                                  {mat.stock_planta.toLocaleString("es-AR")}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">0</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {isPlantaOnly ? (
+                                <span className="text-slate-400 italic" title="Depósito exclusivo en planta">—</span>
+                              ) : mat.stock_cl2 > 0 ? (
+                                <span className="font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                  {mat.stock_cl2.toLocaleString("es-AR")}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">0</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs">
+                              {mat.stock_total > 0 ? (
+                                <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  {mat.stock_total.toLocaleString("es-AR")}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">0</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center text-xs font-mono text-slate-500">
+                              {mat.unidad}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              {mat.tipo_empaque === "rollo" ? (
+                                <Badge variant="outline" className="bg-purple-50 text-purple-800 border-purple-200 font-mono text-[10px]">
+                                  {mat.unidad_por_bulto && mat.bultos_por_pallet
+                                    ? `${mat.unidad_por_bulto} × ${mat.bultos_por_pallet} rol`
+                                    : "Rollo"}
+                                </Badge>
+                              ) : mat.tipo_empaque === "pallet" ? (
+                                <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-300 font-mono text-[10px] font-semibold">
+                                  {mat.lote_mts ? `${mat.lote_mts.toLocaleString("es-AR")} u/pal` : "Pallet"}
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-200 text-[10px]">
+                                  Unidades
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenAdjust(mat)}
+                                title="Ajustar stock (sincronizado con Rundown)"
+                                className="h-7 px-2.5 text-[11px] border-slate-300 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-1 mx-auto"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>Ajustar</span>
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
                   </TableBody>
                 </Table>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-slate-500">
+                <div>
+                  Mostrando <span className="font-semibold text-slate-700">{startStockRecord}</span> a{" "}
+                  <span className="font-semibold text-slate-700">{endStockRecord}</span> de{" "}
+                  <span className="font-semibold text-slate-700">{stockData.total.toLocaleString("es-AR")}</span> materiales
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPageStock((p) => Math.max(1, p - 1))}
+                    disabled={pageStock <= 1 || loadingStock}
+                    className="h-8 px-2.5 text-xs border-slate-300"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                    Anterior
+                  </Button>
+                  <span className="font-mono text-slate-700 px-2">
+                    Página {stockData.page} de {stockData.total_pages || 1}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPageStock((p) => Math.min(stockData.total_pages, p + 1))}
+                    disabled={pageStock >= stockData.total_pages || loadingStock}
+                    className="h-8 px-2.5 text-xs border-slate-300"
+                  >
+                    Siguiente
+                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
-        {/* Arrastre diario */}
-        <TabsContent value="arrastre">
-          <Card className="mb-4 bg-slate-50 border-slate-200">
-            <CardContent className="pt-4 pb-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-2 text-sm font-mono font-semibold">
-                  <span className="bg-white border border-slate-200 px-2 py-1 rounded text-slate-700">Stock Inicial</span>
-                  <span className="text-green-600">+ Ingresos</span>
-                  <span className="text-red-600">− Consumos</span>
-                  <span className="text-slate-400">=</span>
-                  <span className="bg-slate-900 text-white px-2 py-1 rounded">Stock Final</span>
+        <TabsContent value="movimientos" className="space-y-4">
+          <Card className="shadow-xs border-slate-200">
+            <CardContent className="p-4 space-y-4">
+              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+                <form onSubmit={handleSearchMovSubmit} className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Buscar por código, descripción u observación..."
+                    className="pl-9 h-9 text-xs"
+                    value={searchMovInput}
+                    onChange={(e) => setSearchMovInput(e.target.value)}
+                  />
+                </form>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="w-44">
+                    <Select
+                      value={tipoMovFilter}
+                      onValueChange={(val) => {
+                        setTipoMovFilter(val);
+                        setPageMov(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue placeholder="Tipo de movimiento" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos los tipos</SelectItem>
+                        <SelectItem value="ajuste_manual">Ajuste manual</SelectItem>
+                        <SelectItem value="ingreso">Ingreso</SelectItem>
+                        <SelectItem value="egreso">Egreso</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <span>Filas:</span>
+                    <Select
+                      value={String(pageSizeMov)}
+                      onValueChange={(val) => {
+                        setPageSizeMov(parseInt(val, 10));
+                        setPageMov(1);
+                      }}
+                    >
+                      <SelectTrigger className="h-9 w-18 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                        <SelectItem value="100">100</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-slate-900">
-                Arrastre de stock · {formatDate(new Date().toLocaleDateString("es-AR").split("/").map((p, i) => p.padStart(2,"0")).join("/"))}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="border rounded-lg overflow-hidden">
+
+              <div className="border rounded-lg overflow-hidden border-slate-200">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-slate-50">
                     <TableRow>
-                      <TableHead>Material</TableHead>
-                      <TableHead className="text-center bg-slate-50">Stock inicial</TableHead>
-                      <TableHead className="text-center bg-green-50">+ Ingresos</TableHead>
-                      <TableHead className="text-center bg-red-50">− Consumos</TableHead>
-                      <TableHead className="text-center font-semibold">= Stock final</TableHead>
+                      <TableHead className="w-36 text-xs font-semibold text-slate-700">Fecha y Hora</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-slate-700">Tipo</TableHead>
+                      <TableHead className="text-xs font-semibold text-slate-700">Material</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-slate-700 text-right">Cantidad</TableHead>
+                      <TableHead className="w-36 text-xs font-semibold text-slate-700 text-center">Saldo (Ant $\rightarrow$ Post)</TableHead>
+                      <TableHead className="w-36 text-xs font-semibold text-slate-700">Usuario</TableHead>
+                      <TableHead className="text-xs font-semibold text-slate-700">Motivo / Detalle</TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
-                    {stockItems.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>
-                          <p className="font-medium text-slate-900">{item.name}</p>
-                          <p className="text-xs text-slate-400">{item.unit}</p>
-                        </TableCell>
-                        <TableCell className="text-center bg-slate-50/50 text-slate-700 font-semibold">{item.stockInicial}</TableCell>
-                        <TableCell className="text-center bg-green-50/50">
-                          <span className="text-green-700 font-semibold">+{item.ingresos}</span>
-                        </TableCell>
-                        <TableCell className="text-center bg-red-50/50">
-                          <span className="text-red-700 font-semibold">−{item.consumos}</span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span className={`font-bold text-xl ${item.stockTeorico < 20 ? "text-red-600" : "text-slate-900"}`}>
-                            {item.stockTeorico}
-                          </span>
+                  <TableBody className="divide-y divide-slate-100">
+                    {loadingMovs ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-12 text-slate-400">
+                          <div className="flex items-center justify-center gap-2">
+                            <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+                            <span>Cargando movimientos...</span>
+                          </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : movsData.items.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-12 text-slate-400">
+                          No se registraron movimientos con los filtros aplicados.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      movsData.items.map((mov) => (
+                        <TableRow key={mov.id_movimiento} className="hover:bg-slate-50/80 transition-colors">
+                          <TableCell className="text-xs font-mono text-slate-600">
+                            {formatFechaMov(mov.fecha)}
+                          </TableCell>
+                          <TableCell>{getTipoMovBadge(mov.tipo)}</TableCell>
+                          <TableCell className="text-xs">
+                            <span className="font-mono font-bold text-slate-800">{mov.id_material}</span>
+                            {mov.nombre_material && (
+                              <span className="block text-[11px] text-slate-500 truncate max-w-xs">{mov.nombre_material}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-xs font-semibold text-slate-800">
+                            {mov.cantidad.toLocaleString("es-AR")} {mov.unidad}
+                          </TableCell>
+                          <TableCell className="text-center font-mono text-[11px] text-slate-600">
+                            <span>{mov.stock_anterior.toLocaleString("es-AR")}</span>
+                            <span className="mx-1 text-slate-400">→</span>
+                            <span className="font-bold text-slate-900">{mov.stock_posterior.toLocaleString("es-AR")}</span>
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-700 font-medium">
+                            {mov.nombre_usuario || "Sistema"}
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-600">
+                            {mov.observacion || "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-slate-500">
+                <div>
+                  Mostrando <span className="font-semibold text-slate-700">{startMovRecord}</span> a{" "}
+                  <span className="font-semibold text-slate-700">{endMovRecord}</span> de{" "}
+                  <span className="font-semibold text-slate-700">{movsData.total.toLocaleString("es-AR")}</span> movimientos
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPageMov((p) => Math.max(1, p - 1))}
+                    disabled={pageMov <= 1 || loadingMovs}
+                    className="h-8 px-2.5 text-xs border-slate-300"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                    Anterior
+                  </Button>
+                  <span className="font-mono text-slate-700 px-2">
+                    Página {movsData.page} de {movsData.total_pages || 1}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPageMov((p) => Math.min(movsData.total_pages, p + 1))}
+                    disabled={pageMov >= movsData.total_pages || loadingMovs}
+                    className="h-8 px-2.5 text-xs border-slate-300"
+                  >
+                    Siguiente
+                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      {/* Dialog ajuste */}
-      <Dialog open={adjustOpen} onOpenChange={(v) => { if (!v) setAdjustOpen(false); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Registrar ajuste de stock</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1">
-              <Label>Material</Label>
-              <Select value={adjustForm.material} onValueChange={(v) => setAdjustForm((f) => ({ ...f, material: v }))}>
-                <SelectTrigger><SelectValue placeholder="Seleccionar material" /></SelectTrigger>
-                <SelectContent>
-                  {stockItems.map((i) => (<SelectItem key={i.id} value={i.name}>{i.name}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <Label>Tipo</Label>
-                <Select value={adjustForm.type} onValueChange={(v) => setAdjustForm((f) => ({ ...f, type: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="ingreso">Ingreso</SelectItem>
-                    <SelectItem value="egreso">Egreso</SelectItem>
-                    <SelectItem value="ajuste">Ajuste</SelectItem>
-                  </SelectContent>
-                </Select>
+      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-800">
+              <Boxes className="w-4 h-4 text-blue-600" />
+              Ajustar Stock de Material
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Ingrese los nuevos valores de stock físico para Planta y Depósito CL2.
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedMaterial && (
+            <div className="space-y-4 py-2">
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Código SAP:</span>
+                  <span className="font-mono font-bold text-slate-800">{selectedMaterial.id_material}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Descripción:</span>
+                  <span className="font-medium text-slate-800 text-right max-w-[240px] truncate">
+                    {selectedMaterial.nombre}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Proveedor:</span>
+                  <span className="font-semibold text-blue-700">{selectedMaterial.nombre_proveedor || "N/A"}</span>
+                </div>
+                <div className="flex justify-between pt-1 border-t border-slate-200">
+                  <span className="text-slate-500">Stock Actual Planta:</span>
+                  <span className="font-mono font-semibold text-blue-700">
+                    {selectedMaterial.stock_planta.toLocaleString("es-AR")} {selectedMaterial.unidad}
+                  </span>
+                </div>
+                {!selectedMaterial.deposito_en_planta && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Stock Actual CL2:</span>
+                    <span className="font-mono font-semibold text-amber-700">
+                      {selectedMaterial.stock_cl2.toLocaleString("es-AR")} {selectedMaterial.unidad}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between pt-1 border-t border-slate-200">
+                  <span className="text-slate-700 font-medium">Stock Total Actual:</span>
+                  <span className="font-mono font-bold text-emerald-700">
+                    {selectedMaterial.stock_total.toLocaleString("es-AR")} {selectedMaterial.unidad}
+                  </span>
+                </div>
               </div>
-              <div className="space-y-1">
-                <Label>Cantidad</Label>
-                <Input type="number" placeholder="0" value={adjustForm.quantity} onChange={(e) => setAdjustForm((f) => ({ ...f, quantity: e.target.value }))} />
+
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="stock-planta-val" className="text-xs font-semibold text-slate-700 flex justify-between">
+                    <span>Nuevo Stock en Planta ({selectedMaterial.unidad})</span>
+                    <span className="text-[10px] text-blue-600 font-normal">Sincroniza con Rundown Planta</span>
+                  </Label>
+                  <Input
+                    id="stock-planta-val"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={adjustForm.nuevo_stock_planta}
+                    onChange={(e) => setAdjustForm({ ...adjustForm, nuevo_stock_planta: e.target.value })}
+                    placeholder="0"
+                    className="font-mono text-sm h-9"
+                    autoFocus
+                  />
+                </div>
+
+                {!selectedMaterial.deposito_en_planta ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="stock-cl2-val" className="text-xs font-semibold text-slate-700 flex justify-between">
+                      <span>Nuevo Stock en CL2 ({selectedMaterial.unidad})</span>
+                      <span className="text-[10px] text-amber-600 font-normal">Depósito CL2</span>
+                    </Label>
+                    <Input
+                      id="stock-cl2-val"
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={adjustForm.nuevo_stock_cl2}
+                      onChange={(e) => setAdjustForm({ ...adjustForm, nuevo_stock_cl2: e.target.value })}
+                      placeholder="0"
+                      className="font-mono text-sm h-9"
+                    />
+                  </div>
+                ) : (
+                  <div className="p-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-800">
+                    Proveedor configurado con depósito exclusivo en planta. Stock en CL2 = 0.
+                  </div>
+                )}
+
+                <div className="p-2.5 bg-slate-100/70 rounded-md border border-slate-200 flex justify-between items-center text-xs">
+                  <span className="font-semibold text-slate-700">Total Consolidado Resultante:</span>
+                  <span className="font-mono font-bold text-slate-900">
+                    {(
+                      (parseFloat(adjustForm.nuevo_stock_planta) || 0) +
+                      (selectedMaterial.deposito_en_planta ? 0 : (parseFloat(adjustForm.nuevo_stock_cl2) || 0))
+                    ).toLocaleString("es-AR")}{" "}
+                    {selectedMaterial.unidad}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="stock-obs-val" className="text-xs font-semibold text-slate-700">
+                  Motivo / Observación
+                </Label>
+                <Input
+                  id="stock-obs-val"
+                  value={adjustForm.observacion}
+                  onChange={(e) => setAdjustForm({ ...adjustForm, observacion: e.target.value })}
+                  placeholder="Ej: Conteo físico, Corrección de saldo, Carga inicial..."
+                  className="text-xs h-9"
+                />
               </div>
             </div>
-            <div className="space-y-1">
-              <Label>Motivo / Observación</Label>
-              <Textarea placeholder="Describa el motivo del ajuste..." value={adjustForm.reason} onChange={(e) => setAdjustForm((f) => ({ ...f, reason: e.target.value }))} rows={3} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAdjustOpen(false)}>Cancelar</Button>
-            <Button onClick={() => { setAdjustOpen(false); toast.success("Ajuste registrado correctamente"); }}>
-              Registrar ajuste
+          )}
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setAdjustOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleSaveAdjust}
+              disabled={
+                isSavingAdjust ||
+                adjustForm.nuevo_stock_planta.trim() === "" ||
+                (!selectedMaterial?.deposito_en_planta && adjustForm.nuevo_stock_cl2.trim() === "")
+              }
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            >
+              {isSavingAdjust ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Guardando...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Confirmar Ajuste</span>
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

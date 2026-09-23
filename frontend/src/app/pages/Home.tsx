@@ -17,10 +17,10 @@ import {
 } from "lucide-react";
 
 const recentOrders = [
-  { number: "000154", sector: "Producción", status: "pendiente", priority: "urgente", date: "10/06/2026" },
-  { number: "000153", sector: "Mantenimiento", status: "en-preparacion", priority: "normal", date: "10/06/2026" },
-  { number: "000152", sector: "Administración", status: "parcial", priority: "normal", date: "09/06/2026" },
-  { number: "000151", sector: "Logística", status: "completo", priority: "normal", date: "09/06/2026" },
+  { number: "000154", sector: "PC", status: "pendiente", priority: "urgente", date: "10/06/2026" },
+  { number: "000153", sector: "Despacho", status: "en-preparacion", priority: "normal", date: "10/06/2026" },
+  { number: "000152", sector: "Administracion", status: "parcial", priority: "normal", date: "09/06/2026" },
+  { number: "000151", sector: "Recepcion", status: "completo", priority: "normal", date: "09/06/2026" },
 ];
 
 const statusConfig = {
@@ -185,7 +185,7 @@ export function Home() {
               <Link to="/stock">
                 <Button variant="outline" className="w-full justify-start" size="lg">
                   <Layers className="w-5 h-5 mr-3" />
-                  Gestión de stock
+                  Control Stock TBAR
                 </Button>
               </Link>
               <Link to="/remitos">
