@@ -114,3 +114,4 @@ class MaterialConfigUpdate(BaseModel):
     unidad_por_bulto: Optional[float] = Field(default=None, ge=0)
     bultos_por_pallet: Optional[int] = Field(default=None, ge=1)
     doh_sugerido_planta: float = Field(default=1.0, ge=0)
+    unidad: Optional[str] = Field(default=None, max_length=20)

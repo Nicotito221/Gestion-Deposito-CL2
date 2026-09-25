@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { ShieldCheck, Eye, EyeOff, AlertCircle, LogIn } from "lucide-react";
+import { Eye, EyeOff, AlertCircle, LogIn } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import tbarLogo from "../../assets/tbar-logo.png";
 
 export function Login() {
   const navigate = useNavigate();
@@ -36,13 +37,8 @@ export function Login() {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-slate-900 flex items-center justify-center mb-4 shadow-sm">
-            <ShieldCheck size={22} className="text-white" />
-          </div>
-          <h1 className="text-xl font-semibold text-slate-900 tracking-tight">
-            Sistema de Pedidos
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">Gestión de Materiales · CL2</p>
+          <img src={tbarLogo} alt="TBAR" className="h-16 w-auto object-contain mb-2" />
+          <p className="text-sm text-slate-500 font-medium">Gestión de Materiales · CL2</p>
         </div>
 
         {/* Card */}

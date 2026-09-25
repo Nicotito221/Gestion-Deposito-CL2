@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from app.core.time import get_argentina_today
 
 
 class PedidoExistenteItem(BaseModel):
@@ -22,6 +23,8 @@ class CalcularSugerenciaRequest(BaseModel):
     fecha_requerida: Optional[date] = None
     modalidad_turnos: str = Field(default="completo")
     turnos: Optional[List[str]] = None
+    turno: Optional[str] = None
+    sector: Optional[str] = None
 
 
 class SugerenciaMaterialDetalle(BaseModel):
@@ -79,6 +82,13 @@ class PedidoCreate(BaseModel):
     id_usuario_solicitante: Optional[int] = None
     items: List[PedidoItemInput] = Field(min_length=1)
 
+    @field_validator("fecha_requerida")
+    @classmethod
+    def validar_fecha_no_pasada(cls, v: Optional[date]) -> Optional[date]:
+        if v is not None and v < get_argentina_today():
+            raise ValueError("La fecha requerida no puede ser anterior a la fecha actual")
+        return v
+
 
 class PedidoItemOut(BaseModel):
     id_material: str
@@ -87,8 +97,44 @@ class PedidoItemOut(BaseModel):
     cantidad_pedida: float
     cantidad_preparada: float = 0.0
     cantidad_entregada: float = 0.0
+    cantidad_pendiente: float = 0.0
     estado: str = "pendiente"
     comentario: Optional[str] = None
+    tipo_empaque: Optional[str] = "unidad"
+    tamanio_lote: Optional[float] = 1.0
+    cantidad_pallets: Optional[int] = None
+    cantidad_pallets_preparada: Optional[int] = None
+    cantidad_pallets_entregada: Optional[int] = None
+    cantidad_pallets_pendiente: Optional[int] = None
+
+
+class RemitoItemOut(BaseModel):
+    id_material: str
+    nombre_material: Optional[str] = None
+    unidad: Optional[str] = "UN"
+    cantidad: float
+    tipo_empaque: Optional[str] = "unidad"
+    tamanio_lote: Optional[float] = 1.0
+    cantidad_pallets: Optional[int] = None
+
+
+class RemitoDetalleOut(BaseModel):
+    id_remito: str
+    id_pedido: int
+    fecha_emision: datetime
+    fecha_entrega: Optional[datetime] = None
+    estado: str
+    id_usuario_emisor: Optional[int] = None
+    usuario_emisor: Optional[str] = None
+    observacion: Optional[str] = None
+    sector_destino: Optional[str] = None
+    usuario_solicitante: Optional[str] = None
+    fecha_requerida: Optional[date] = None
+    turno: Optional[str] = None
+    total_items: int = 0
+    total_pallets: int = 0
+    total_unidades: float = 0.0
+    items: List[RemitoItemOut] = []
 
 
 class PedidoOut(BaseModel):
@@ -106,10 +152,37 @@ class PedidoOut(BaseModel):
     comentario: Optional[str] = None
     id_usuario_solicitante: Optional[int] = None
     usuario_solicitante: Optional[str] = None
+    id_remito: Optional[str] = None
+    remitos: List[RemitoDetalleOut] = []
     total_items: int = 0
     items: List[PedidoItemOut] = []
+    es_demorado: bool = False
+
+
+class PedidoCancelarRequest(BaseModel):
+    motivo: str = Field(min_length=1, max_length=500, description="Motivo de la cancelación del pedido")
+    id_usuario: Optional[int] = None
 
 
 class PedidosListResponse(BaseModel):
     items: List[PedidoOut]
     total: int
+
+
+class PreparacionItemUpdate(BaseModel):
+    id_material: str
+    cantidad_preparada: float = Field(ge=0)
+    estado: Optional[str] = None
+    comentario: Optional[str] = None
+
+
+class PreparacionPedidoUpdate(BaseModel):
+    accion: str = Field(description="'guardar_avance' | 'confirmar_parcial' | 'confirmar_completo'")
+    comentario: Optional[str] = None
+    items: List[PreparacionItemUpdate]
+
+
+class PreparacionPedidoResponse(BaseModel):
+    pedido: PedidoOut
+    id_remito: Optional[str] = None
+    mensaje: str

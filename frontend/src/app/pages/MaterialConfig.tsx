@@ -40,6 +40,7 @@ import {
   ScrollText,
   Building2,
   Calendar,
+  Scale,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -81,6 +82,7 @@ export function MaterialConfig() {
     unidad_por_bulto: string;
     bultos_por_pallet: string;
     doh_sugerido_planta: string;
+    unidad: string;
   }>({
     id_proveedor: "",
     deposito_en_planta: false,
@@ -89,6 +91,7 @@ export function MaterialConfig() {
     unidad_por_bulto: "1",
     bultos_por_pallet: "1",
     doh_sugerido_planta: "1.0",
+    unidad: "UN",
   });
 
   const proveedoresList = useMemo(() => {
@@ -158,6 +161,7 @@ export function MaterialConfig() {
       unidad_por_bulto: mat.unidad_por_bulto && mat.unidad_por_bulto > 0 ? String(mat.unidad_por_bulto) : "50",
       bultos_por_pallet: mat.bultos_por_pallet && mat.bultos_por_pallet > 0 ? String(mat.bultos_por_pallet) : "6",
       doh_sugerido_planta: String(mat.doh_sugerido_planta || 1.0),
+      unidad: mat.unidad || "UN",
     });
     setEditModalOpen(true);
   };
@@ -199,6 +203,7 @@ export function MaterialConfig() {
     }
 
     const provIdFinal = formState.id_proveedor !== "none" ? parseInt(formState.id_proveedor, 10) : null;
+    const unidadFinal = formState.unidad.trim().toUpperCase() || "UN";
 
     setIsSaving(true);
     try {
@@ -211,6 +216,7 @@ export function MaterialConfig() {
         unidad_por_bulto: bultoVal,
         bultos_por_pallet: bultosPorPalletVal,
         doh_sugerido_planta: dohVal,
+        unidad: unidadFinal,
       });
 
       toast.success(`Configuración de ${selectedMaterial.id_material} guardada con éxito`);
@@ -409,6 +415,7 @@ export function MaterialConfig() {
                 <TableRow>
                   <TableHead className="w-32 text-xs font-semibold text-slate-700">Código SAP</TableHead>
                   <TableHead className="text-xs font-semibold text-slate-700">Descripción del Material</TableHead>
+                  <TableHead className="w-20 text-xs font-semibold text-slate-700 text-center">Unidad</TableHead>
                   <TableHead className="w-40 text-xs font-semibold text-slate-700">Proveedor</TableHead>
                   <TableHead className="w-32 text-xs font-semibold text-slate-700 text-center">Modalidad Empaque</TableHead>
                   <TableHead className="w-48 text-xs font-semibold text-slate-700 text-center">Detalle de Presentación</TableHead>
@@ -419,7 +426,7 @@ export function MaterialConfig() {
               <TableBody className="divide-y divide-slate-100">
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-12 text-slate-400">
+                    <TableCell colSpan={8} className="text-center py-12 text-slate-400">
                       <div className="flex items-center justify-center gap-2">
                         <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
                         <span>Cargando configuración de materiales...</span>
@@ -428,7 +435,7 @@ export function MaterialConfig() {
                   </TableRow>
                 ) : data.items.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-12 text-slate-400">
+                    <TableCell colSpan={8} className="text-center py-12 text-slate-400">
                       No se encontraron materiales con los filtros aplicados.
                     </TableCell>
                   </TableRow>
@@ -444,6 +451,11 @@ export function MaterialConfig() {
                           {mat.categoria && (
                             <span className="ml-2 text-[10px] text-slate-400 font-normal">({mat.categoria})</span>
                           )}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                            {mat.unidad}
+                          </span>
                         </TableCell>
                         <TableCell className="text-xs text-slate-600">
                           {mat.nombre_proveedor ? (
@@ -564,12 +576,48 @@ export function MaterialConfig() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Unidad de Medida:</span>
-                  <span className="font-mono font-bold text-indigo-700">{selectedMaterial.unidad}</span>
+                  <span className="text-slate-500">Unidad Configurada:</span>
+                  <span className="font-mono font-bold text-indigo-700">{formState.unidad || selectedMaterial.unidad}</span>
                 </div>
               </div>
 
               <div className="space-y-3.5">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+                      <Scale className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Unidad de Medida</span>
+                    </Label>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      Original: <strong className="text-slate-600">{selectedMaterial.unidad}</strong>
+                    </span>
+                  </div>
+                  <Input
+                    type="text"
+                    value={formState.unidad}
+                    onChange={(e) => setFormState({ ...formState, unidad: e.target.value.toUpperCase() })}
+                    placeholder="Ej: MTS, CM, M2, CM2, UN, KG, L"
+                    className="h-9 text-xs font-mono font-bold uppercase bg-white"
+                    maxLength={20}
+                  />
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {["MTS", "CM", "MM", "M2", "CM2", "UN", "C/U", "KG", "G", "L", "ML"].map((u) => (
+                      <button
+                        key={u}
+                        type="button"
+                        onClick={() => setFormState({ ...formState, unidad: u })}
+                        className={`text-[10px] px-2 py-0.5 rounded font-mono font-semibold transition-colors ${
+                          formState.unidad === u
+                            ? "bg-indigo-600 text-white shadow-xs"
+                            : "bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200"
+                        }`}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="space-y-1.5">
                   <Label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-slate-500" />
@@ -649,7 +697,7 @@ export function MaterialConfig() {
                 {formState.tipo_empaque === "pallet" && (
                   <div className="space-y-1.5 p-3 bg-amber-50/50 rounded-lg border border-amber-200">
                     <Label className="text-xs font-semibold text-amber-900">
-                      Tamaño de Pallet ({selectedMaterial.unidad} por pallet)
+                      Tamaño de Pallet ({formState.unidad || selectedMaterial.unidad} por pallet)
                     </Label>
                     <Input
                       type="number"
@@ -661,7 +709,7 @@ export function MaterialConfig() {
                       placeholder="Ej: 182"
                     />
                     <p className="text-[11px] text-slate-600">
-                      Los pedidos sugeridos se redondearán siempre a múltiplos enteros de pallets de {selectedMaterial.unidad}.
+                      Los pedidos sugeridos se redondearán siempre a múltiplos enteros de pallets de {formState.unidad || selectedMaterial.unidad}.
                     </p>
                   </div>
                 )}
@@ -671,7 +719,7 @@ export function MaterialConfig() {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs font-semibold text-purple-900">
-                          Medida por Rollo ({selectedMaterial.unidad})
+                          Medida por Rollo ({formState.unidad || selectedMaterial.unidad})
                         </Label>
                         <Input
                           type="number"
@@ -702,9 +750,9 @@ export function MaterialConfig() {
                     <div className="p-2.5 bg-white rounded border border-purple-100 flex items-center justify-between text-xs">
                       <span className="text-slate-600 font-medium">Equivalencia 1 Pallet Completo:</span>
                       <span className="font-mono font-bold text-purple-900">
-                        {calculatedPalletMts.toLocaleString("es-AR")} {selectedMaterial.unidad}
+                        {calculatedPalletMts.toLocaleString("es-AR")} {formState.unidad || selectedMaterial.unidad}
                         <span className="text-[11px] text-slate-400 font-normal ml-1">
-                          ({formState.bultos_por_pallet} rollos de {formState.unidad_por_bulto} {selectedMaterial.unidad})
+                          ({formState.bultos_por_pallet} rollos de {formState.unidad_por_bulto} {formState.unidad || selectedMaterial.unidad})
                         </span>
                       </span>
                     </div>

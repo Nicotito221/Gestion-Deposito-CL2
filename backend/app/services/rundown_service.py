@@ -165,12 +165,31 @@ class RundownService:
 
         transitos = self._repo.get_transitos(prov_ids, d_start, d_end)
         ajustes_map = self._repo.get_stock_ajustes(prov_ids, d_start, d_end)
+        pedidos_planta_map = (
+            self._repo.get_entregas_pedidos_planta(prov_ids, d_start, d_end)
+            if alcance == "planta"
+            else {}
+        )
 
         transito_map: Dict[Tuple[str, date, str], float] = {}
+        transito_meta_map: Dict[Tuple[str, date, str], Dict[str, Any]] = {}
         for t in transitos:
             t_date = date.fromisoformat(t.fecha_eta)
             key = (t.id_material, t_date, t.tipo_via)
             transito_map[key] = transito_map.get(key, 0.0) + t.cantidad
+            if key not in transito_meta_map:
+                transito_meta_map[key] = {
+                    "po_numero": t.po_numero,
+                    "factura_numero": t.factura_numero,
+                    "observacion": t.observacion,
+                }
+            else:
+                if t.po_numero and not transito_meta_map[key]["po_numero"]:
+                    transito_meta_map[key]["po_numero"] = t.po_numero
+                if t.factura_numero and not transito_meta_map[key]["factura_numero"]:
+                    transito_meta_map[key]["factura_numero"] = t.factura_numero
+                if t.observacion and not transito_meta_map[key]["observacion"]:
+                    transito_meta_map[key]["observacion"] = t.observacion
 
         columnas_fechas = [d.strftime("%Y-%m-%d") for d in dates_timeline]
         material_grids: List[RundownMaterialGrid] = []
@@ -236,6 +255,8 @@ class RundownService:
                 maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
                 aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
                 local = transito_map.get((param["id_material"], d, "Local"), 0.0)
+                if alcance == "planta":
+                    local += pedidos_planta_map.get((param["id_material"], d), 0.0)
                 scrap = transito_map.get((param["id_material"], d, "AjusteScrap"), 0.0)
 
                 ingresos_dia = maritimo + aereo + local
@@ -273,6 +294,10 @@ class RundownService:
 
                 alerta_quiebre = dias_cobertura < dias_rojo or stock_corriente <= 0
 
+                m_meta = transito_meta_map.get((param["id_material"], d, "Maritimo"), {})
+                a_meta = transito_meta_map.get((param["id_material"], d, "Aereo"), {})
+                l_meta = transito_meta_map.get((param["id_material"], d, "Local"), {})
+
                 cells.append(
                     RundownDayCell(
                         fecha=d.strftime("%Y-%m-%d"),
@@ -280,8 +305,17 @@ class RundownService:
                         produccion_vehiculos=round(veh_prod, 1),
                         uso=uso,
                         plan_maritimo=maritimo,
+                        maritimo_po=m_meta.get("po_numero"),
+                        maritimo_factura=m_meta.get("factura_numero"),
+                        maritimo_obs=m_meta.get("observacion"),
                         pedidos_aereos=aereo,
+                        aereo_po=a_meta.get("po_numero"),
+                        aereo_factura=a_meta.get("factura_numero"),
+                        aereo_obs=a_meta.get("observacion"),
                         entregas_locales=local,
+                        local_po=l_meta.get("po_numero"),
+                        local_factura=l_meta.get("factura_numero"),
+                        local_obs=l_meta.get("observacion"),
                         ajuste_scrap=scrap,
                         stock_final=stock_corriente,
                         dias_cobertura=dias_cobertura,
@@ -472,6 +506,8 @@ class RundownService:
                 nombre=r["nombre"],
                 unidad=r["unidad"],
                 categoria=r["categoria"],
+                tipo_empaque=r.get("tipo_empaque", "unidad"),
+                tamanio_lote=r.get("tamanio_lote", 1.0),
             )
             for r in rows
         ]

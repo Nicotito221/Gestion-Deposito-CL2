@@ -246,8 +246,17 @@ export interface RundownDayCell {
   produccion_vehiculos: number;
   uso: number;
   plan_maritimo: number;
+  maritimo_po?: string | null;
+  maritimo_factura?: string | null;
+  maritimo_obs?: string | null;
   pedidos_aereos: number;
+  aereo_po?: string | null;
+  aereo_factura?: string | null;
+  aereo_obs?: string | null;
   entregas_locales: number;
+  local_po?: string | null;
+  local_factura?: string | null;
+  local_obs?: string | null;
   ajuste_scrap: number;
   stock_final: number;
   dias_cobertura: number;
@@ -641,6 +650,8 @@ export interface MaterialCatalogoItem {
   nombre: string;
   unidad?: string;
   categoria?: string | null;
+  tipo_empaque?: string;
+  tamanio_lote?: number;
 }
 
 export interface RundownParametroMaterialItem {
@@ -1155,6 +1166,8 @@ export interface CalcularSugerenciaRequest {
   fecha_requerida?: string;
   modalidad_turnos?: "completo" | "2_turnos" | "3_turnos";
   turnos?: string[];
+  turno?: string;
+  sector?: string;
 }
 
 export interface SugerenciaMaterialDetalle {
@@ -1219,8 +1232,44 @@ export interface PedidoItemOut {
   cantidad_pedida: number;
   cantidad_preparada: number;
   cantidad_entregada: number;
+  cantidad_pendiente?: number;
   estado: string;
   comentario?: string;
+  tipo_empaque?: string;
+  tamanio_lote?: number;
+  cantidad_pallets?: number | null;
+  cantidad_pallets_preparada?: number | null;
+  cantidad_pallets_entregada?: number | null;
+  cantidad_pallets_pendiente?: number | null;
+}
+
+export interface RemitoItemOut {
+  id_material: string;
+  nombre_material?: string | null;
+  unidad?: string;
+  cantidad: number;
+  tipo_empaque?: string;
+  tamanio_lote?: number;
+  cantidad_pallets?: number | null;
+}
+
+export interface RemitoDetalleOut {
+  id_remito: string;
+  id_pedido: number;
+  fecha_emision: string;
+  fecha_entrega?: string | null;
+  estado: string;
+  id_usuario_emisor?: number | null;
+  usuario_emisor?: string | null;
+  observacion?: string | null;
+  sector_destino?: string | null;
+  usuario_solicitante?: string | null;
+  fecha_requerida?: string | null;
+  turno?: string | null;
+  total_items: number;
+  total_pallets: number;
+  total_unidades: number;
+  items: RemitoItemOut[];
 }
 
 export interface PedidoOut {
@@ -1238,8 +1287,11 @@ export interface PedidoOut {
   comentario?: string | null;
   id_usuario_solicitante?: number | null;
   usuario_solicitante?: string | null;
+  id_remito?: string | null;
+  remitos?: RemitoDetalleOut[];
   total_items: number;
   items: PedidoItemOut[];
+  es_demorado?: boolean;
 }
 
 export interface PedidosListResponse {
@@ -1292,12 +1344,14 @@ export async function getPedidos(params?: {
   fecha_requerida?: string;
   estado?: string;
   turno?: string;
+  sector?: string;
   limit?: number;
 }): Promise<PedidosListResponse> {
   const query = new URLSearchParams();
   if (params?.fecha_requerida) query.append("fecha_requerida", params.fecha_requerida);
   if (params?.estado) query.append("estado", params.estado);
   if (params?.turno) query.append("turno", params.turno);
+  if (params?.sector) query.append("sector", params.sector);
   if (params?.limit) query.append("limit", String(params.limit));
 
   const qs = query.toString();
@@ -1319,6 +1373,76 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al obtener detalle del pedido");
+  }
+  return res.json();
+}
+
+export interface PreparacionItemUpdate {
+  id_material: string;
+  cantidad_preparada: number;
+  estado?: string;
+  comentario?: string;
+}
+
+export interface PreparacionPedidoUpdate {
+  accion: "guardar_avance" | "confirmar_parcial" | "confirmar_completo";
+  comentario?: string;
+  items: PreparacionItemUpdate[];
+}
+
+export async function updatePreparacionPedido(
+  idPedido: number,
+  data: PreparacionPedidoUpdate
+): Promise<{ pedido: PedidoOut; id_remito?: string; mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/preparacion`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al procesar preparación del pedido");
+  }
+  return res.json();
+}
+
+export async function cancelarPedido(idPedido: number, motivo: string): Promise<PedidoOut> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/cancelar`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ motivo }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cancelar el pedido");
+  }
+  return res.json();
+}
+
+export async function getRemitoDetalle(idRemito: string): Promise<RemitoDetalleOut> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/remitos/${idRemito}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener detalle del remito");
+  }
+  return res.json();
+}
+
+export async function getRemitosByPedido(idPedido: number): Promise<RemitoDetalleOut[]> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/remitos`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener remitos del pedido");
   }
   return res.json();
 }
@@ -1357,6 +1481,7 @@ export interface MaterialConfigUpdate {
   unidad_por_bulto?: number | null;
   bultos_por_pallet?: number | null;
   doh_sugerido_planta: number;
+  unidad?: string | null;
 }
 
 export async function getMaterialesConfiguracion(params?: {
@@ -1438,7 +1563,7 @@ export interface UsuarioUpdateInput {
   apellido?: string;
   rol?: RolUsuario;
   sector?: string;
-  email?: string;
+  email?: string | null;
   activo?: boolean;
 }
 
@@ -1540,6 +1665,180 @@ export async function deleteUsuario(id_usuario: number): Promise<{ message: stri
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al desactivar el usuario.");
+  }
+  return res.json();
+}
+
+export interface DashboardKpis {
+  pedidos_pendientes: number;
+  pedidos_en_preparacion: number;
+  pedidos_parciales: number;
+  pedidos_completados_hoy: number;
+  total_pedidos: number;
+  materiales_criticos_count: number;
+  remitos_hoy: number;
+  fill_rate_porcentaje: number;
+  turno_actual: string;
+}
+
+export interface DashboardPedidoItem {
+  id_pedido: number;
+  sector: string;
+  prioridad: string;
+  estado: string;
+  fecha_creacion?: string | null;
+  fecha_requerida?: string | null;
+  turno?: string | null;
+  usuario_solicitante?: string | null;
+  total_items: number;
+  id_remito?: string | null;
+  es_demorado?: boolean;
+}
+
+export interface DashboardMaterialCritico {
+  id_material: string;
+  nombre: string;
+  unidad: string;
+  stock_cl2: number;
+  stock_planta: number;
+  stock_total: number;
+  nombre_proveedor?: string | null;
+  alerta_tipo: string;
+  alerta_label: string;
+  prioridad: "critica" | "alta" | "media";
+}
+
+export interface DashboardResumenResponse {
+  kpis: DashboardKpis;
+  ultimos_pedidos: DashboardPedidoItem[];
+  materiales_criticos: DashboardMaterialCritico[];
+}
+
+export async function getDashboardResumen(): Promise<DashboardResumenResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/dashboard/resumen`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener resumen del dashboard");
+  }
+  return res.json();
+}
+
+export interface IngresoDetalleCreate {
+  id_material: string;
+  cantidad_facturada: number;
+  observacion?: string;
+}
+
+export interface IngresoCreate {
+  id_proveedor: number;
+  numero_factura: string;
+  orden_compra?: string;
+  fecha_emision?: string;
+  observacion?: string;
+  confirmar_inmediato?: boolean;
+  fecha_recepcion?: string;
+  items: IngresoDetalleCreate[];
+}
+
+export interface IngresoRecepcionItem {
+  id_material: string;
+  cantidad_recibida: number;
+  conforme?: boolean;
+  observacion?: string;
+}
+
+export interface IngresoConfirmarRecepcion {
+  fecha_recepcion?: string;
+  observacion?: string;
+  items: IngresoRecepcionItem[];
+}
+
+export interface IngresoDetalleOut {
+  id_ingreso_detalle: number;
+  id_material: string;
+  nombre_material?: string;
+  unidad: string;
+  cantidad_facturada: number;
+  cantidad_recibida?: number | null;
+  conforme: boolean;
+  observacion?: string;
+}
+
+export interface IngresoOut {
+  id_ingreso: number;
+  id_proveedor: number;
+  nombre_proveedor?: string;
+  codigo_proveedor?: string;
+  deposito_en_planta: boolean;
+  numero_factura: string;
+  orden_compra?: string;
+  estado: "pendiente" | "parcial" | "completo";
+  fecha_emision?: string;
+  fecha_recepcion?: string | null;
+  id_usuario_creacion?: number | null;
+  usuario_creacion?: string | null;
+  id_usuario_recepcion?: number | null;
+  usuario_recepcion?: string | null;
+  observacion?: string | null;
+  total_items: number;
+  items: IngresoDetalleOut[];
+}
+
+export async function getIngresos(params?: {
+  estado?: string;
+  id_proveedor?: number;
+  search?: string;
+}): Promise<IngresoOut[]> {
+  const q = new URLSearchParams();
+  if (params?.estado && params.estado !== "all") q.append("estado", params.estado);
+  if (params?.id_proveedor && params.id_proveedor > 0) q.append("id_proveedor", String(params.id_proveedor));
+  if (params?.search) q.append("search", params.search);
+  const qs = q.toString() ? `?${q.toString()}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/ingresos${qs}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error("Error al obtener comprobantes de ingreso");
+  return res.json();
+}
+
+export async function getIngresoById(idIngreso: number): Promise<IngresoOut> {
+  const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error(`Error al obtener comprobante #${idIngreso}`);
+  return res.json();
+}
+
+export async function createIngreso(data: IngresoCreate, idUsuario?: number): Promise<IngresoOut> {
+  const qs = idUsuario ? `?id_usuario=${idUsuario}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/ingresos${qs}`, {
+    method: "POST",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al registrar comprobante de ingreso");
+  }
+  return res.json();
+}
+
+export async function confirmarRecepcionIngreso(
+  idIngreso: number,
+  data: IngresoConfirmarRecepcion,
+  idUsuario?: number
+): Promise<IngresoOut> {
+  const qs = idUsuario ? `?id_usuario=${idUsuario}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}/recepcion${qs}`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al confirmar recepción en depósito");
   }
   return res.json();
 }

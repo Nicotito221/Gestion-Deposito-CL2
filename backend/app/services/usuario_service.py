@@ -82,15 +82,32 @@ class UsuarioService:
 
     def update_user(self, id_usuario: int, data: UsuarioUpdate) -> Dict[str, Any]:
         self.get_by_id(id_usuario)
-        updated = self.repository.update(
-            id_usuario=id_usuario,
-            nombre=data.nombre.strip() if data.nombre else None,
-            apellido=data.apellido.strip() if data.apellido else None,
-            rol=data.rol,
-            sector=data.sector.strip() if data.sector else None,
-            email=data.email.strip() if data.email else None,
-            activo=data.activo,
-        )
+
+        fields: Dict[str, Any] = {}
+        if "nombre" in data.model_fields_set:
+            if not data.nombre or not data.nombre.strip():
+                raise HTTPException(status_code=400, detail="El nombre no puede estar vacío.")
+            fields["nombre"] = data.nombre.strip()
+
+        if "apellido" in data.model_fields_set:
+            if not data.apellido or not data.apellido.strip():
+                raise HTTPException(status_code=400, detail="El apellido no puede estar vacío.")
+            fields["apellido"] = data.apellido.strip()
+
+        if "rol" in data.model_fields_set and data.rol is not None:
+            fields["rol"] = data.rol
+
+        if "sector" in data.model_fields_set:
+            fields["sector"] = data.sector.strip() if (data.sector and data.sector.strip()) else "TODOS"
+
+        if "email" in data.model_fields_set:
+            clean_email = data.email.strip() if (data.email and data.email.strip()) else None
+            fields["email"] = clean_email
+
+        if "activo" in data.model_fields_set and data.activo is not None:
+            fields["activo"] = 1 if data.activo else 0
+
+        updated = self.repository.update(id_usuario=id_usuario, fields=fields)
         if not updated:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -109,7 +126,12 @@ class UsuarioService:
             )
 
     def delete_user(self, id_usuario: int) -> None:
-        self.get_by_id(id_usuario)
+        user = self.get_by_id(id_usuario)
+        if user["username"].lower() == "admin":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se puede eliminar el usuario administrador principal.",
+            )
         success = self.repository.delete(id_usuario)
         if not success:
             raise HTTPException(

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
-import { RefreshCw, ShoppingCart, Calendar, Sun, Moon, Lock, Building, User } from "lucide-react";
+import { RefreshCw, ShoppingCart, Calendar, Sun, Moon, Lock, Building, User, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { getPedidos, type PedidoOut } from "../services/api";
 import { formatSoloFechaAR, formatFechaHoraAR } from "../components/ui/format";
@@ -25,7 +25,22 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   cancelado: { label: "Cancelado", color: "bg-slate-100 text-slate-600 border-slate-200" },
 };
 
+function getOrderStatus(order: PedidoOut) {
+  if (order.es_demorado && (order.estado === "pendiente" || order.estado === "en_preparacion")) {
+    return { label: "Pendiente (Tarde)", color: "bg-rose-100 text-rose-800 border-rose-300 font-bold", isLate: true };
+  }
+  if (order.es_demorado && order.estado === "parcial") {
+    return { label: "Parcial (Tarde)", color: "bg-rose-100 text-rose-800 border-rose-300 font-bold", isLate: true };
+  }
+  const cfg = statusConfig[order.estado] || {
+    label: order.estado,
+    color: "bg-slate-100 text-slate-700 border-slate-200",
+  };
+  return { ...cfg, isLate: false };
+}
+
 export function Orders() {
+  const navigate = useNavigate();
   const [orders, setOrders] = useState<PedidoOut[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -102,13 +117,15 @@ export function Orders() {
                   </TableRow>
                 ) : (
                   orders.map((order) => {
-                    const cfg = statusConfig[order.estado] || {
-                      label: order.estado,
-                      color: "bg-slate-100 text-slate-700 border-slate-200",
-                    };
+                    const cfg = getOrderStatus(order);
 
                     return (
-                      <TableRow key={order.id_pedido}>
+                      <TableRow
+                        key={order.id_pedido}
+                        onClick={() => navigate(`/pedidos/${order.id_pedido}`)}
+                        className="cursor-pointer hover:bg-blue-50/50 transition-colors"
+                        title={`Ver detalle del pedido #${order.id_pedido}`}
+                      >
                         <TableCell className="font-mono font-bold text-slate-900">
                           #{order.id_pedido}
                         </TableCell>
@@ -165,8 +182,9 @@ export function Orders() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Badge className={`${cfg.color} text-xs border whitespace-nowrap font-medium`} variant="outline">
-                            {cfg.label}
+                          <Badge className={`${cfg.color} text-xs border whitespace-nowrap font-medium gap-1`} variant="outline">
+                            {cfg.isLate && <AlertCircle className="w-3 h-3 text-rose-600 inline flex-shrink-0" />}
+                            <span>{cfg.label}</span>
                           </Badge>
                         </TableCell>
                       </TableRow>

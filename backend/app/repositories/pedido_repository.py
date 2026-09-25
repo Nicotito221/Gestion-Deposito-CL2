@@ -1,5 +1,6 @@
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+import math
+from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
 
 from app.core.config import get_db_connection
@@ -32,7 +33,8 @@ class PedidoRepository:
                        rpp.id_producto, rpp.factor_uso,
                        COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'pallet') AS tipo_empaque,
                        COALESCE(rpm.unidad_por_bulto, m.unidad_por_bulto) AS unidad_por_bulto,
-                       COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet
+                       COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet,
+                       ISNULL(rpm.stock_inicial_planta, 0.0) AS stock_inicial_planta
                 FROM dbo.rundown_parametro_material rpm
                 INNER JOIN dbo.material m ON rpm.id_material = m.id_material
                 INNER JOIN dbo.proveedor p ON rpm.id_proveedor = p.id_proveedor
@@ -61,6 +63,7 @@ class PedidoRepository:
                         "tipo_empaque": str(r[12]) if len(r) > 12 and r[12] else "pallet",
                         "unidad_por_bulto": float(r[13]) if len(r) > 13 and r[13] is not None else None,
                         "bultos_por_pallet": int(r[14]) if len(r) > 14 and r[14] is not None else None,
+                        "stock_inicial_planta": float(r[15]) if len(r) > 15 and r[15] is not None else 0.0,
                         "productos": [],
                     }
                 if r[10]:
@@ -70,6 +73,17 @@ class PedidoRepository:
                     })
 
             return list(materiales_map.values())
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_ultimo_id_conteo_finalizado(self) -> Optional[int]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT TOP 1 id_conteo FROM dbo.conteo WHERE estado = 'finalizado' ORDER BY id_conteo DESC")
+            row = cursor.fetchone()
+            return int(row[0]) if row else None
         finally:
             cursor.close()
             conn.close()
@@ -222,11 +236,24 @@ class PedidoRepository:
         fecha_requerida: Optional[date] = None,
         estado: Optional[str] = None,
         turno: Optional[str] = None,
+        sector: Optional[str] = None,
         limit: int = 50,
     ) -> List[Dict[str, Any]]:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            today = get_argentina_today()
+            cursor.execute(
+                """
+                UPDATE dbo.pedido
+                SET estado = 'pendiente'
+                WHERE estado = 'en_preparacion'
+                  AND COALESCE(fecha_requerida, CAST(fecha_creacion AS DATE)) < ?
+                """,
+                (today,),
+            )
+            conn.commit()
+
             where_clauses: List[str] = []
             params: List[Any] = []
 
@@ -239,6 +266,9 @@ class PedidoRepository:
             if turno and turno != "all":
                 where_clauses.append("p.turno = ?")
                 params.append(turno)
+            if sector and sector not in ("TODOS", "all"):
+                where_clauses.append("p.sector = ?")
+                params.append(sector)
 
             where_str = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -310,30 +340,65 @@ class PedidoRepository:
             if not row:
                 return None
 
+            estado_pedido = str(row[4] or "").lower()
+
             cursor.execute(
                 """
                 SELECT mp.id_material, m.nombre, mp.cantidad_pedida,
-                       mp.cantidad_preparada, mp.cantidad_entregada, mp.estado, mp.comentario
+                       mp.cantidad_preparada, mp.cantidad_entregada, mp.estado, mp.comentario,
+                       ISNULL(m.unidad, 'UN') AS unidad,
+                       COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
+                       COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
                 FROM dbo.material_pedido mp
                 LEFT JOIN dbo.material m ON mp.id_material = m.id_material
+                LEFT JOIN dbo.rundown_parametro_material rpm ON mp.id_material = rpm.id_material AND rpm.activo = 1
                 WHERE mp.id_pedido = ?
                 ORDER BY mp.id_material
                 """,
                 (id_pedido,),
             )
-            items = [
-                {
+            items = []
+            for ir in cursor.fetchall():
+                tipo_emp = str(ir[8] or "unidad").lower()
+                tam_lote = float(ir[9] or 1.0)
+                cant_ped = float(ir[2] or 0.0)
+                cant_prep = float(ir[3] or 0.0)
+                cant_entregada = float(ir[4] or 0.0)
+                is_cancelled = (estado_pedido == "cancelado" or str(ir[5] or "").lower() == "cancelado")
+                cant_pendiente = 0.0 if is_cancelled else max(0.0, round(cant_ped - cant_entregada, 2))
+                cant_prep_final = 0.0 if is_cancelled else cant_prep
+
+                if tipo_emp == "pallet" and tam_lote > 1:
+                    cant_pallets = int(math.ceil(cant_ped / tam_lote)) if cant_ped > 0 else 0
+                    cant_pallets_entregada = int(round(cant_entregada / tam_lote)) if cant_entregada > 0 else 0
+                    cant_pallets_pendiente = 0 if is_cancelled else max(0, cant_pallets - cant_pallets_entregada)
+                    cant_pallets_prep = 0 if is_cancelled else (int(math.ceil(cant_prep / tam_lote)) if cant_prep > 0 else 0)
+                else:
+                    cant_pallets = None
+                    cant_pallets_entregada = None
+                    cant_pallets_pendiente = None
+                    cant_pallets_prep = None
+
+                items.append({
                     "id_material": str(ir[0]),
                     "nombre_material": str(ir[1] or ir[0]),
-                    "unidad": "MTS",
-                    "cantidad_pedida": float(ir[2] or 0.0),
-                    "cantidad_preparada": float(ir[3] or 0.0),
-                    "cantidad_entregada": float(ir[4] or 0.0),
+                    "unidad": str(ir[7] or "UN"),
+                    "cantidad_pedida": cant_ped,
+                    "cantidad_preparada": cant_prep_final,
+                    "cantidad_entregada": cant_entregada,
+                    "cantidad_pendiente": cant_pendiente,
                     "estado": str(ir[5]),
                     "comentario": str(ir[6]) if ir[6] else None,
-                }
-                for ir in cursor.fetchall()
-            ]
+                    "tipo_empaque": tipo_emp,
+                    "tamanio_lote": tam_lote,
+                    "cantidad_pallets": cant_pallets,
+                    "cantidad_pallets_preparada": cant_pallets_prep,
+                    "cantidad_pallets_entregada": cant_pallets_entregada,
+                    "cantidad_pallets_pendiente": cant_pallets_pendiente,
+                })
+
+            remitos = self.get_remitos_by_pedido(id_pedido, cursor=cursor)
+            id_remito = remitos[-1]["id_remito"] if remitos else None
 
             return {
                 "id_pedido": int(row[0]),
@@ -350,9 +415,524 @@ class PedidoRepository:
                 "comentario": str(row[11]) if row[11] else None,
                 "id_usuario_solicitante": int(row[12]) if row[12] is not None else None,
                 "usuario_solicitante": str(row[13]).strip() if row[13] and str(row[13]).strip() else None,
+                "id_remito": id_remito,
+                "remitos": remitos,
                 "total_items": len(items),
                 "items": items,
             }
         finally:
             cursor.close()
             conn.close()
+
+    def get_remitos_by_pedido(self, id_pedido: int, cursor: Optional[Any] = None) -> List[Dict[str, Any]]:
+        own_conn = False
+        conn = None
+        if cursor is None:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            own_conn = True
+        try:
+            cursor.execute(
+                """
+                SELECT r.id_remito, r.id_pedido, r.fecha_emision, r.fecha_entrega, r.estado,
+                       r.id_usuario_emisor, u.nombre AS usuario_emisor, r.observacion,
+                       p.sector AS sector_destino, usol.nombre AS usuario_solicitante,
+                       p.fecha_requerida, p.turno
+                FROM dbo.remito r
+                INNER JOIN dbo.pedido p ON r.id_pedido = p.id_pedido
+                LEFT JOIN dbo.usuario u ON r.id_usuario_emisor = u.id_usuario
+                LEFT JOIN dbo.usuario usol ON p.id_usuario_solicitante = usol.id_usuario
+                WHERE r.id_pedido = ?
+                ORDER BY r.fecha_emision ASC, r.id_remito ASC
+                """,
+                (id_pedido,),
+            )
+            r_rows = cursor.fetchall()
+            remitos: List[Dict[str, Any]] = []
+            for r in r_rows:
+                id_rem = str(r[0])
+                cursor.execute(
+                    """
+                    SELECT mr.id_material, m.nombre, mr.cantidad,
+                           ISNULL(m.unidad, 'UN') AS unidad,
+                           COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
+                           COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
+                    FROM dbo.material_remito mr
+                    LEFT JOIN dbo.material m ON mr.id_material = m.id_material
+                    LEFT JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
+                    WHERE mr.id_remito = ?
+                    ORDER BY mr.id_material ASC
+                    """,
+                    (id_rem,),
+                )
+                m_rows = cursor.fetchall()
+                rem_items = []
+                tot_pallets = 0
+                tot_unidades = 0.0
+                for mr in m_rows:
+                    cant = float(mr[2] or 0.0)
+                    tipo_emp = str(mr[4] or "unidad").lower()
+                    tam_lote = float(mr[5] or 1.0)
+                    if tipo_emp == "pallet" and tam_lote > 1:
+                        cp = int(round(cant / tam_lote)) if cant > 0 else 0
+                    else:
+                        cp = None
+                    if cp:
+                        tot_pallets += cp
+                    tot_unidades += cant
+                    rem_items.append({
+                        "id_material": str(mr[0]),
+                        "nombre_material": str(mr[1] or mr[0]),
+                        "unidad": str(mr[3] or "UN"),
+                        "cantidad": cant,
+                        "tipo_empaque": tipo_emp,
+                        "tamanio_lote": tam_lote,
+                        "cantidad_pallets": cp,
+                    })
+
+                remitos.append({
+                    "id_remito": id_rem,
+                    "id_pedido": int(r[1]),
+                    "fecha_emision": r[2],
+                    "fecha_entrega": r[3],
+                    "estado": str(r[4]),
+                    "id_usuario_emisor": int(r[5]) if r[5] is not None else None,
+                    "usuario_emisor": str(r[6]).strip() if r[6] else None,
+                    "observacion": str(r[7]) if r[7] else None,
+                    "sector_destino": str(r[8]) if r[8] else None,
+                    "usuario_solicitante": str(r[9]).strip() if r[9] else None,
+                    "fecha_requerida": r[10],
+                    "turno": str(r[11]) if r[11] else None,
+                    "total_items": len(rem_items),
+                    "total_pallets": tot_pallets,
+                    "total_unidades": round(tot_unidades, 2),
+                    "items": rem_items,
+                })
+            return remitos
+        finally:
+            if own_conn and conn:
+                cursor.close()
+                conn.close()
+
+    def get_remito_by_id(self, id_remito: str) -> Optional[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            target_id = id_remito.strip()
+            if target_id.isdigit():
+                cursor.execute(
+                    "SELECT TOP 1 id_remito FROM dbo.remito WHERE id_pedido = ? ORDER BY fecha_emision DESC",
+                    (int(target_id),),
+                )
+                r_first = cursor.fetchone()
+                if not r_first:
+                    return None
+                target_id = str(r_first[0])
+
+            cursor.execute(
+                """
+                SELECT r.id_remito, r.id_pedido, r.fecha_emision, r.fecha_entrega, r.estado,
+                       r.id_usuario_emisor, u.nombre AS usuario_emisor, r.observacion,
+                       p.sector AS sector_destino, usol.nombre AS usuario_solicitante,
+                       p.fecha_requerida, p.turno
+                FROM dbo.remito r
+                INNER JOIN dbo.pedido p ON r.id_pedido = p.id_pedido
+                LEFT JOIN dbo.usuario u ON r.id_usuario_emisor = u.id_usuario
+                LEFT JOIN dbo.usuario usol ON p.id_usuario_solicitante = usol.id_usuario
+                WHERE r.id_remito = ?
+                """,
+                (target_id,),
+            )
+            r = cursor.fetchone()
+            if not r:
+                return None
+
+            cursor.execute(
+                """
+                SELECT mr.id_material, m.nombre, mr.cantidad,
+                       ISNULL(m.unidad, 'UN') AS unidad,
+                       COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
+                       COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
+                FROM dbo.material_remito mr
+                LEFT JOIN dbo.material m ON mr.id_material = m.id_material
+                LEFT JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
+                WHERE mr.id_remito = ?
+                ORDER BY mr.id_material ASC
+                """,
+                (target_id,),
+            )
+            m_rows = cursor.fetchall()
+            rem_items = []
+            tot_pallets = 0
+            tot_unidades = 0.0
+            for mr in m_rows:
+                cant = float(mr[2] or 0.0)
+                tipo_emp = str(mr[4] or "unidad").lower()
+                tam_lote = float(mr[5] or 1.0)
+                if tipo_emp == "pallet" and tam_lote > 1:
+                    cp = int(round(cant / tam_lote)) if cant > 0 else 0
+                else:
+                    cp = None
+                if cp:
+                    tot_pallets += cp
+                tot_unidades += cant
+                rem_items.append({
+                    "id_material": str(mr[0]),
+                    "nombre_material": str(mr[1] or mr[0]),
+                    "unidad": str(mr[3] or "UN"),
+                    "cantidad": cant,
+                    "tipo_empaque": tipo_emp,
+                    "tamanio_lote": tam_lote,
+                    "cantidad_pallets": cp,
+                })
+
+            return {
+                "id_remito": str(r[0]),
+                "id_pedido": int(r[1]),
+                "fecha_emision": r[2],
+                "fecha_entrega": r[3],
+                "estado": str(r[4]),
+                "id_usuario_emisor": int(r[5]) if r[5] is not None else None,
+                "usuario_emisor": str(r[6]).strip() if r[6] else None,
+                "observacion": str(r[7]) if r[7] else None,
+                "sector_destino": str(r[8]) if r[8] else None,
+                "usuario_solicitante": str(r[9]).strip() if r[9] else None,
+                "fecha_requerida": r[10],
+                "turno": str(r[11]) if r[11] else None,
+                "total_items": len(rem_items),
+                "total_pallets": tot_pallets,
+                "total_unidades": round(tot_unidades, 2),
+                "items": rem_items,
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def actualizar_preparacion_pedido(
+        self,
+        id_pedido: int,
+        accion: str,
+        comentario: Optional[str],
+        items: List[Dict[str, Any]],
+        id_usuario: Optional[int] = None,
+    ) -> Tuple[Dict[str, Any], Optional[str]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT estado, sector, fecha_requerida FROM dbo.pedido WHERE id_pedido = ?", (id_pedido,))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Pedido #{id_pedido} no existe")
+            estado_actual = str(row[0])
+            sector_pedido = str(row[1])
+            fecha_requerida_pedido = row[2]
+
+            if estado_actual == "cancelado":
+                raise ValueError(f"El pedido #{id_pedido} está cancelado y no puede ser modificado")
+            if estado_actual == "completo" and accion != "guardar_avance":
+                raise ValueError(f"El pedido #{id_pedido} ya se encuentra completo")
+
+            user_id_final = id_usuario
+            if user_id_final:
+                cursor.execute("SELECT 1 FROM dbo.usuario WHERE id_usuario = ?", (user_id_final,))
+                if not cursor.fetchone():
+                    user_id_final = None
+            if not user_id_final:
+                cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 AND eliminado = 0 ORDER BY id_usuario ASC")
+                u_row = cursor.fetchone()
+                user_id_final = int(u_row[0]) if u_row else 3
+
+            id_remito_generado: Optional[str] = None
+
+            if accion == "guardar_avance":
+                for it in items:
+                    c_prep = float(it.get("cantidad_preparada", 0.0))
+                    cursor.execute(
+                        "SELECT cantidad_pedida, ISNULL(cantidad_entregada, 0.0) FROM dbo.material_pedido WHERE id_pedido = ? AND id_material = ?",
+                        (id_pedido, it["id_material"]),
+                    )
+                    ped_row = cursor.fetchone()
+                    if ped_row:
+                        c_ped = float(ped_row[0] or 0.0)
+                        c_entregada = float(ped_row[1] or 0.0)
+                        est_item = "completo" if c_entregada >= c_ped and c_ped > 0 else ("parcial" if c_entregada > 0 else "pendiente")
+                        cursor.execute(
+                            "UPDATE dbo.material_pedido SET cantidad_preparada = ?, estado = ?, comentario = ? WHERE id_pedido = ? AND id_material = ?",
+                            (c_prep, est_item, it.get("comentario"), id_pedido, it["id_material"]),
+                        )
+                if estado_actual == "pendiente":
+                    cursor.execute(
+                        "UPDATE dbo.pedido SET estado = 'en_preparacion', comentario = COALESCE(?, comentario) WHERE id_pedido = ?",
+                        (comentario, id_pedido),
+                    )
+
+            elif accion in ("confirmar_completo", "confirmar_parcial"):
+                cursor.execute(
+                    """
+                    SELECT id_material, cantidad_pedida, ISNULL(cantidad_entregada, 0.0)
+                    FROM dbo.material_pedido
+                    WHERE id_pedido = ?
+                    """,
+                    (id_pedido,),
+                )
+                order_materials = cursor.fetchall()
+                mat_map = {
+                    str(r[0]): {
+                        "pedida": float(r[1] or 0.0),
+                        "entregada": float(r[2] or 0.0),
+                        "pendiente": max(0.0, round(float(r[1] or 0.0) - float(r[2] or 0.0), 2)),
+                    }
+                    for r in order_materials
+                }
+
+                input_map = {str(it["id_material"]): float(it.get("cantidad_preparada", 0.0)) for it in items}
+                coment_map = {str(it["id_material"]): it.get("comentario") for it in items}
+
+                delta_map: Dict[str, float] = {}
+                for id_mat, info in mat_map.items():
+                    c_ped = info["pedida"]
+                    c_prev = info["entregada"]
+                    c_pend = info["pendiente"]
+
+                    if c_pend <= 0:
+                        delta_map[id_mat] = 0.0
+                        continue
+
+                    if id_mat in input_map:
+                        c_input = input_map[id_mat]
+                        if c_input > c_pend:
+                            delta = max(0.0, min(c_input - c_prev, c_pend))
+                        else:
+                            delta = max(0.0, min(c_input, c_pend))
+                    else:
+                        delta = c_pend if accion == "confirmar_completo" else 0.0
+
+                    if accion == "confirmar_completo" and delta == 0.0 and c_pend > 0 and (id_mat not in input_map or input_map[id_mat] == 0):
+                        delta = c_pend
+
+                    delta_map[id_mat] = round(delta, 2)
+
+                total_delta = sum(delta_map.values())
+                if total_delta <= 0:
+                    raise ValueError("No se especificaron cantidades pendientes a despachar mayores a 0")
+
+                cursor.execute("SELECT COUNT(*) FROM dbo.remito WHERE id_pedido = ?", (id_pedido,))
+                n_rem = cursor.fetchone()[0]
+                seq = n_rem + 1
+                id_remito_generado = f"RI-{id_pedido:06d}-{seq:02d}"
+
+                obs_remito = f"Remito de entrega #{seq} por pedido #{id_pedido} para sector {sector_pedido}"
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.remito (id_remito, id_pedido, fecha_emision, fecha_entrega, estado, id_usuario_emisor, observacion)
+                    VALUES (?, ?, GETDATE(), GETDATE(), 'emitido', ?, ?)
+                    """,
+                    (id_remito_generado, id_pedido, user_id_final, obs_remito),
+                )
+
+                for id_mat, info in mat_map.items():
+                    delta = delta_map.get(id_mat, 0.0)
+                    nueva_entregada = round(info["entregada"] + delta, 2)
+                    c_ped = info["pedida"]
+                    est_item = "completo" if nueva_entregada >= c_ped and c_ped > 0 else ("parcial" if nueva_entregada > 0 else "pendiente")
+
+                    cursor.execute(
+                        """
+                        UPDATE dbo.material_pedido
+                        SET cantidad_preparada = ?, cantidad_entregada = ?, estado = ?, comentario = COALESCE(?, comentario)
+                        WHERE id_pedido = ? AND id_material = ?
+                        """,
+                        (nueva_entregada, nueva_entregada, est_item, coment_map.get(id_mat), id_pedido, id_mat),
+                    )
+
+                    if delta > 0:
+                        cursor.execute(
+                            "INSERT INTO dbo.material_remito (id_remito, id_material, cantidad) VALUES (?, ?, ?)",
+                            (id_remito_generado, id_mat, delta),
+                        )
+
+                        cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
+                        stk_row = cursor.fetchone()
+                        if stk_row is not None:
+                            stk_ant = float(stk_row[0] or 0.0)
+                            stk_post = round(max(0.0, stk_ant - delta), 2)
+                            cursor.execute(
+                                "UPDATE dbo.stock_deposito SET stock_actual = ?, fecha_actualizacion = GETDATE() WHERE id_material = ?",
+                                (stk_post, id_mat),
+                            )
+                        else:
+                            stk_ant = 0.0
+                            stk_post = 0.0
+                            cursor.execute(
+                                "INSERT INTO dbo.stock_deposito (id_material, stock_actual, fecha_actualizacion) VALUES (?, 0.0, GETDATE())",
+                                (id_mat,),
+                            )
+
+                        cursor.execute(
+                            """
+                            INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_pedido, id_remito, id_usuario, fecha, observacion)
+                            VALUES (?, 'egreso_pedido', ?, ?, ?, ?, ?, ?, GETDATE(), ?)
+                            """,
+                            (id_mat, delta, stk_ant, stk_post, id_pedido, id_remito_generado, user_id_final, f"Entrega #{seq} pedido #{id_pedido} a {sector_pedido}"),
+                        )
+
+                        today_ar = get_argentina_today()
+                        cursor.execute(
+                            """
+                            SELECT id_parametro, id_proveedor, stock_inicial_planta
+                            FROM dbo.rundown_parametro_material
+                            WHERE id_material = ? AND activo = 1
+                            """,
+                            (id_mat,),
+                        )
+                        rpm_rows = cursor.fetchall()
+                        for rpm in rpm_rows:
+                            id_param = int(rpm[0])
+                            id_prov = int(rpm[1])
+                            init_planta = float(rpm[2] or 0.0)
+
+                            cursor.execute(
+                                """
+                                SELECT stock_ajustado
+                                FROM dbo.rundown_stock_ajuste
+                                WHERE id_parametro = ? AND fecha = ? AND tipo_stock = 'planta'
+                                """,
+                                (id_param, today_ar),
+                            )
+                            adj_today = cursor.fetchone()
+                            if adj_today is not None:
+                                cur_p = float(adj_today[0] or 0.0)
+                                new_p = round(cur_p + delta, 2)
+                                cursor.execute(
+                                    """
+                                    UPDATE dbo.rundown_stock_ajuste
+                                    SET stock_ajustado = ?, observacion = ?, fecha_creacion = SYSUTCDATETIME()
+                                    WHERE id_parametro = ? AND fecha = ? AND tipo_stock = 'planta'
+                                    """,
+                                    (new_p, f"Ingreso por entrega pedido #{id_pedido} ({id_remito_generado})", id_param, today_ar),
+                                )
+                            else:
+                                cursor.execute(
+                                    """
+                                    SELECT TOP 1 stock_ajustado
+                                    FROM dbo.rundown_stock_ajuste
+                                    WHERE id_parametro = ? AND tipo_stock = 'planta' AND fecha < ?
+                                    ORDER BY fecha DESC, fecha_creacion DESC
+                                    """,
+                                    (id_param, today_ar),
+                                )
+                                prev_adj = cursor.fetchone()
+                                cur_p = float(prev_adj[0] or 0.0) if prev_adj else init_planta
+                                new_p = round(cur_p + delta, 2)
+                                cursor.execute(
+                                    """
+                                    INSERT INTO dbo.rundown_stock_ajuste (
+                                        id_parametro, id_proveedor, id_material, fecha, tipo_stock,
+                                        stock_ajustado, observacion, id_usuario, fecha_creacion
+                                    )
+                                    VALUES (?, ?, ?, ?, 'planta', ?, ?, ?, SYSUTCDATETIME())
+                                    """,
+                                    (id_param, id_prov, id_mat, today_ar, new_p, f"Ingreso por entrega pedido #{id_pedido} ({id_remito_generado})", user_id_final),
+                                )
+
+                            cursor.execute(
+                                """
+                                INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_pedido, id_remito, id_usuario, fecha, observacion)
+                                VALUES (?, 'ingreso_pedido', ?, ?, ?, ?, ?, ?, GETDATE(), ?)
+                                """,
+                                (id_mat, delta, cur_p, new_p, id_pedido, id_remito_generado, user_id_final, f"Recepción Planta #{seq} pedido #{id_pedido}"),
+                            )
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM dbo.material_pedido WHERE id_pedido = ? AND ISNULL(cantidad_entregada, 0.0) < cantidad_pedida",
+                    (id_pedido,),
+                )
+                incompletos = cursor.fetchone()[0]
+                nuevo_estado = "completo" if incompletos == 0 else "parcial"
+
+                cursor.execute(
+                    """
+                    UPDATE dbo.pedido
+                    SET estado = ?, fecha_despacho = GETDATE(),
+                        fecha_entrega = (CASE WHEN ? = 'completo' THEN GETDATE() ELSE fecha_entrega END),
+                        comentario = COALESCE(?, comentario)
+                    WHERE id_pedido = ?
+                    """,
+                    (nuevo_estado, nuevo_estado, comentario, id_pedido),
+                )
+
+            conn.commit()
+            pedido_actualizado = self.get_pedido_by_id(id_pedido)
+            return pedido_actualizado, id_remito_generado
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+    def cancelar_pedido(
+        self, id_pedido: int, motivo: str, id_usuario: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT estado, comentario FROM dbo.pedido WHERE id_pedido = ?",
+                (id_pedido,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            estado_actual = str(row[0]).lower()
+            comentario_actual = str(row[1] or "")
+
+            if estado_actual == "cancelado":
+                raise ValueError("El pedido ya se encuentra cancelado")
+            if estado_actual == "completo":
+                raise ValueError("No se puede cancelar un pedido que ya fue completado y entregado")
+
+            user_str = ""
+            if id_usuario:
+                cursor.execute(
+                    "SELECT LTRIM(RTRIM(CONCAT(ISNULL(nombre, ''), ' ', ISNULL(apellido, '')))) FROM dbo.usuario WHERE id_usuario = ?",
+                    (id_usuario,),
+                )
+                urow = cursor.fetchone()
+                if urow and urow[0]:
+                    user_str = f" por {urow[0]}"
+
+            now_str = get_argentina_now().strftime("%d/%m/%Y %H:%M")
+            nota = f"[CANCELADO{user_str} el {now_str}]: {motivo.strip()}"
+            nuevo_comentario = f"{comentario_actual}\n{nota}".strip() if comentario_actual else nota
+
+            cursor.execute(
+                """
+                UPDATE dbo.pedido
+                SET estado = 'cancelado',
+                    comentario = ?
+                WHERE id_pedido = ?
+                """,
+                (nuevo_comentario, id_pedido),
+            )
+
+            cursor.execute(
+                """
+                UPDATE dbo.material_pedido
+                SET estado = 'cancelado',
+                    cantidad_preparada = ISNULL(cantidad_entregada, 0.0)
+                WHERE id_pedido = ? AND estado != 'completo'
+                """,
+                (id_pedido,),
+            )
+
+            conn.commit()
+            return self.get_pedido_by_id(id_pedido)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+

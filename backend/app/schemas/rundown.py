@@ -67,8 +67,17 @@ class RundownDayCell(BaseModel):
     produccion_vehiculos: float
     uso: float
     plan_maritimo: float
+    maritimo_po: Optional[str] = None
+    maritimo_factura: Optional[str] = None
+    maritimo_obs: Optional[str] = None
     pedidos_aereos: float
+    aereo_po: Optional[str] = None
+    aereo_factura: Optional[str] = None
+    aereo_obs: Optional[str] = None
     entregas_locales: float
+    local_po: Optional[str] = None
+    local_factura: Optional[str] = None
+    local_obs: Optional[str] = None
     ajuste_scrap: float
     stock_final: float
     dias_cobertura: float
@@ -214,6 +223,8 @@ class MaterialCatalogoItem(BaseModel):
     nombre: str
     unidad: Optional[str] = "UN"
     categoria: Optional[str] = None
+    tipo_empaque: Optional[str] = "unidad"
+    tamanio_lote: Optional[float] = 1.0
 
 
 class RundownParametroMaterialCreate(BaseModel):

@@ -16,7 +16,11 @@ class RundownRepository:
         self._ensure_alert_columns()
 
     def _ensure_alert_columns(self) -> None:
-        conn = self._get_connection()
+        try:
+            conn = self._get_connection()
+        except Exception:
+            return
+
         cursor = conn.cursor()
         try:
             cursor.execute("""
@@ -240,6 +244,42 @@ class RundownRepository:
                 )
                 for r in rows
             ]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_entregas_pedidos_planta(
+        self, id_proveedor: Union[int, List[int]], fecha_desde: date, fecha_hasta: date
+    ) -> Dict[Tuple[str, date], float]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            if isinstance(id_proveedor, (list, tuple)):
+                if not id_proveedor:
+                    return {}
+                placeholders = ",".join("?" for _ in id_proveedor)
+                where_clause = f"rpm.id_proveedor IN ({placeholders})"
+                query_params = (*id_proveedor, fecha_desde, fecha_hasta)
+            else:
+                where_clause = "rpm.id_proveedor = ?"
+                query_params = (id_proveedor, fecha_desde, fecha_hasta)
+
+            cursor.execute(
+                f"""
+                SELECT mr.id_material, CAST(r.fecha_entrega AS DATE), CAST(SUM(mr.cantidad) AS FLOAT)
+                FROM dbo.material_remito mr
+                INNER JOIN dbo.remito r ON mr.id_remito = r.id_remito
+                INNER JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
+                WHERE {where_clause}
+                  AND r.estado = 'emitido'
+                  AND CAST(r.fecha_entrega AS DATE) >= ?
+                  AND CAST(r.fecha_entrega AS DATE) <= ?
+                GROUP BY mr.id_material, CAST(r.fecha_entrega AS DATE)
+                """,
+                query_params,
+            )
+            rows = cursor.fetchall()
+            return {(str(r[0]), r[1]): float(r[2]) for r in rows if r[0] and r[1]}
         finally:
             cursor.close()
             conn.close()
@@ -547,9 +587,9 @@ class RundownRepository:
                         """
                         UPDATE dbo.rundown_transito_arribo
                         SET cantidad = ?,
-                            po_numero = COALESCE(?, po_numero),
-                            factura_numero = COALESCE(?, factura_numero),
-                            observacion = COALESCE(?, observacion)
+                            po_numero = ?,
+                            factura_numero = ?,
+                            observacion = ?
                         WHERE id_transito = ?
                         """,
                         (cantidad, po_numero, factura_numero, observacion, row[0]),
@@ -974,10 +1014,22 @@ class RundownRepository:
             term = f"%{query.strip()}%" if query.strip() else "%"
             cursor.execute(
                 """
-                SELECT TOP (?) id_material, nombre, unidad, categoria
-                FROM dbo.material
-                WHERE activo = 1 AND (id_material LIKE ? OR nombre LIKE ?)
-                ORDER BY id_material
+                SELECT TOP (?)
+                    m.id_material,
+                    m.nombre,
+                    ISNULL(m.unidad, 'UN') AS unidad,
+                    m.categoria,
+                    COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
+                    COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
+                FROM dbo.material m
+                OUTER APPLY (
+                    SELECT TOP 1 tipo_empaque, lote_mts
+                    FROM dbo.rundown_parametro_material
+                    WHERE id_material = m.id_material AND activo = 1
+                    ORDER BY id_parametro DESC
+                ) rpm
+                WHERE m.activo = 1 AND (m.id_material LIKE ? OR m.nombre LIKE ?)
+                ORDER BY m.id_material
                 """,
                 (limit, term, term),
             )
@@ -987,6 +1039,8 @@ class RundownRepository:
                     "nombre": str(r[1] or ""),
                     "unidad": str(r[2] or "UN"),
                     "categoria": str(r[3]) if r[3] else None,
+                    "tipo_empaque": str(r[4] or "unidad"),
+                    "tamanio_lote": float(r[5] or 1.0),
                 }
                 for r in cursor.fetchall()
             ]

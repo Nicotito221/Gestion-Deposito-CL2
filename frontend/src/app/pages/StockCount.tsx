@@ -61,6 +61,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
+import { getTodayISODate } from "../components/ui/format";
 import {
   searchMaterialesConteo,
   createConteo,
@@ -473,6 +474,8 @@ export function StockCount() {
 
   const handleConfirmCreateOrders = async () => {
     if (!sugerenciaData) return;
+    const todayStr = getTodayISODate();
+    const targetFecha = sugerenciaFecha && sugerenciaFecha >= todayStr ? sugerenciaFecha : todayStr;
     setIsCreatingOrders(true);
     try {
       const ordersToCreate: PedidoCreate[] = [];
@@ -495,11 +498,11 @@ export function StockCount() {
             sector: orderSector,
             prioridad: "normal",
             origen: "conteo_planta",
-            fecha_requerida: sugerenciaFecha,
+            fecha_requerida: targetFecha,
             turno: turno === "Completo" ? undefined : turno,
             id_conteo: sugerenciaTargetConteoId,
             id_usuario_solicitante: currentUser?.id_usuario,
-            comentario: `Pedido sugerido Conteo (${turno}) para el ${formatSoloFechaAR(sugerenciaFecha)}`,
+            comentario: `Pedido sugerido Conteo (${turno}) para el ${formatSoloFechaAR(targetFecha)}`,
             items: items,
           });
         }
@@ -531,32 +534,60 @@ export function StockCount() {
     }
   };
 
-  const handleTransferToNewOrder = () => {
+  const handleTransferToNewOrder = (selectedTurno?: string) => {
     if (!sugerenciaData) return;
+    const isSpecificTurno = Boolean(selectedTurno && selectedTurno !== "todos" && selectedTurno !== "Completo");
     const suggestedMats = sugerenciaData.items
       .map((it) => {
-        const totalNet = Object.values(editedQuantities[it.id_material] || {}).reduce(
-          (a, b) => a + b,
-          0
-        );
+        let totalNet = 0;
+        if (isSpecificTurno) {
+          totalNet = editedQuantities[it.id_material]?.[selectedTurno!] ?? (it.sugerido_por_turno[selectedTurno!] ?? 0);
+        } else {
+          totalNet = Object.values(editedQuantities[it.id_material] || {}).reduce(
+            (a, b) => a + b,
+            0
+          );
+        }
+
+        const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
+        const isPallet = it.tipo_empaque === "pallet" && lotSize > 1;
+        const palletsCount = isPallet
+          ? (isSpecificTurno && it.pallets_por_turno?.[selectedTurno!]
+              ? it.pallets_por_turno[selectedTurno!]
+              : Math.ceil(totalNet / lotSize))
+          : undefined;
+
         return {
           id: it.id_material,
           code: it.id_material,
           name: it.nombre,
           unit: it.unidad,
           suggestedQuantity: totalNet,
+          suggestedPallets: palletsCount,
           quantity: totalNet,
-          observations: `Consumo día: ${it.consumo_diario} | DOH Planta: ${it.doh_sugerido_planta}d`,
+          pallets: palletsCount,
+          tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
+          tamanio_lote: lotSize,
+          observations: `Consumo día: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
         };
       })
       .filter((m) => m.quantity > 0);
 
+    if (suggestedMats.length === 0) {
+      toast.info("No hay materiales con cantidad sugerida mayor a 0 para pedir.");
+      return;
+    }
+
     setSugerenciaModalOpen(false);
+    const todayStr = getTodayISODate();
+    const targetFecha = sugerenciaFecha && sugerenciaFecha >= todayStr ? sugerenciaFecha : todayStr;
     navigate("/nuevo-pedido", {
       state: {
         fromConteo: true,
-        fecha_requerida: sugerenciaFecha,
+        id_conteo: sugerenciaTargetConteoId,
+        fecha_requerida: targetFecha,
         modalidad_turnos: sugerenciaModalidad,
+        turno: isSpecificTurno ? selectedTurno : (sugerenciaModalidad === "2_turnos" ? "Turno Mañana" : "Turno Mañana"),
         suggestedMaterials: suggestedMats,
         sector: orderSector,
       },
@@ -1752,47 +1783,75 @@ export function StockCount() {
           </div>
 
           {/* FOOTER CON BOTONES DE ACCIÓN */}
-          <DialogFooter className="flex-shrink-0 pt-3 border-t border-slate-200 flex flex-col sm:flex-row gap-2">
+          <DialogFooter className="flex-shrink-0 pt-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => setSugerenciaModalOpen(false)}
-              className="w-full sm:w-auto"
+              className="w-full sm:w-auto text-slate-500 hover:text-slate-800"
             >
               Cancelar
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTransferToNewOrder}
-              disabled={!sugerenciaData || sugerenciaLoading}
-              className="w-full sm:w-auto text-slate-700 border-slate-300 gap-1.5"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-              <span>Revisar en Nuevo Pedido</span>
-            </Button>
-
-            <Button
-              size="sm"
-              onClick={handleConfirmCreateOrders}
-              disabled={!sugerenciaData || sugerenciaLoading || isCreatingOrders}
-              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold gap-1.5 shadow-sm"
-            >
-              {isCreatingOrders ? (
+            <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto justify-end">
+              {sugerenciaModalidad === "2_turnos" ? (
                 <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Emitiendo pedidos...</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleTransferToNewOrder("Turno Mañana")}
+                    disabled={!sugerenciaData || sugerenciaLoading}
+                    className="w-full sm:w-auto text-blue-700 border-blue-200 hover:bg-blue-50 font-semibold gap-1.5"
+                  >
+                    <Sun className="w-3.5 h-3.5 text-amber-500" />
+                    <span>Revisar Turno Mañana</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleTransferToNewOrder("Turno Tarde")}
+                    disabled={!sugerenciaData || sugerenciaLoading}
+                    className="w-full sm:w-auto text-indigo-700 border-indigo-200 hover:bg-indigo-50 font-semibold gap-1.5"
+                  >
+                    <Moon className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Revisar Turno Tarde</span>
+                  </Button>
                 </>
               ) : (
-                <>
-                  <Send className="w-3.5 h-3.5" />
-                  <span>
-                    Crear {sugerenciaData?.turnos.length && sugerenciaData.turnos.length > 1 ? `${sugerenciaData.turnos.length} Pedidos` : "Pedido"} Ahora
-                  </span>
-                </>
+                <Button
+                  size="sm"
+                  onClick={() => handleTransferToNewOrder()}
+                  disabled={!sugerenciaData || sugerenciaLoading}
+                  className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold gap-1.5 shadow-sm"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-white" />
+                  <span>Revisar y Confirmar en Nuevo Pedido</span>
+                </Button>
               )}
-            </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleConfirmCreateOrders}
+                disabled={!sugerenciaData || sugerenciaLoading || isCreatingOrders}
+                className="w-full sm:w-auto text-slate-700 border-slate-300 gap-1.5 text-xs"
+                title="Generar los pedidos de forma directa sin pasar por la pantalla de revisión"
+              >
+                {isCreatingOrders ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Emitiendo...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3.5 h-3.5 text-slate-500" />
+                    <span>
+                      Crear Directo ({sugerenciaData?.turnos.length && sugerenciaData.turnos.length > 1 ? `${sugerenciaData.turnos.length} pedidos` : "1 pedido"})
+                    </span>
+                  </>
+                )}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
