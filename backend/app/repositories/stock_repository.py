@@ -650,6 +650,7 @@ class StockRepository:
         unidad_por_bulto: Optional[float],
         bultos_por_pallet: Optional[int],
         doh_sugerido_planta: float,
+        unidad: Optional[str] = None,
     ) -> None:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -662,10 +663,11 @@ class StockRepository:
                     tipo_empaque = ?,
                     lote_minimo = ?,
                     unidad_por_bulto = ?,
-                    bultos_por_pallet = ?
+                    bultos_por_pallet = ?,
+                    unidad = COALESCE(?, unidad)
                 WHERE id_material = ?
                 """,
-                (id_proveedor, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, id_material),
+                (id_proveedor, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, unidad, id_material),
             )
 
             # 2. Update/Insert into dbo.proveedor_material if id_proveedor is valid
@@ -704,15 +706,16 @@ class StockRepository:
                                    unidad_por_bulto = ?,
                                    bultos_por_pallet = ?,
                                    doh_sugerido_planta = ?,
+                                   unidad = COALESCE(?, unidad),
                                    activo = 1
                     WHEN NOT MATCHED THEN
-                        INSERT (id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, activo)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, 1);
+                        INSERT (id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, activo)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'UN'), 1);
                     """,
                     (
                         id_proveedor, id_material,
-                        tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta,
-                        id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta,
+                        tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad,
+                        id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad,
                     ),
                 )
                 cursor.execute(
@@ -739,10 +742,11 @@ class StockRepository:
                         lote_mts = ?,
                         unidad_por_bulto = ?,
                         bultos_por_pallet = ?,
-                        doh_sugerido_planta = ?
+                        doh_sugerido_planta = ?,
+                        unidad = COALESCE(?, unidad)
                     WHERE id_material = ?
                     """,
-                    (tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, id_material),
+                    (tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, id_material),
                 )
             conn.commit()
         finally:

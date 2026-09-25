@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "./ui/utils";
 import { useAuth } from "../context/AuthContext";
+import tbarLogo from "../../assets/tbar-logo.png";
 
 interface NavItem {
   path: string;
@@ -59,7 +60,7 @@ const navGroups: NavGroup[] = [
       { path: "/deposito", label: "Preparación pedidos", icon: Warehouse, roles: ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"] },
       { path: "/materiales", label: "Control Stock CL2", icon: Package, roles: ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"] },
       { path: "/remitos", label: "Remitos", icon: Receipt, roles: ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"] },
-      { path: "/conteo-ciclico", label: "Conteo cíclico", icon: RefreshCw, roles: ["administrador", "gerente", "jefe", "analista", "contador_ciclico", "deposito", "operario_deposito"] },
+      { path: "/conteo-ciclico", label: "Conteo cíclico", icon: RefreshCw, roles: ["administrador", "gerente", "jefe", "analista", "contador_ciclico"] },
     ],
   },
   {
@@ -103,9 +104,28 @@ function NavContent({
     return navGroups
       .map((group) => {
         const visibleItems = group.items.filter((item) => {
-          if (!item.roles || item.roles.length === 0) return true;
-          if (!user) return true;
+          if (!user) return false;
           if (user.rol === "administrador") return true;
+
+          const isDepositoOrCL2 =
+            user.rol === "deposito" ||
+            user.rol === "operario_deposito" ||
+            user.sector?.toUpperCase() === "CL2";
+
+          if (isDepositoOrCL2) {
+            if (
+              item.path === "/conteo-ciclico" ||
+              item.path === "/conteo" ||
+              item.path === "/rundown" ||
+              item.path === "/suministro-bom" ||
+              item.path === "/stock" ||
+              item.path === "/nuevo-pedido"
+            ) {
+              return false;
+            }
+          }
+
+          if (!item.roles || item.roles.length === 0) return true;
           return item.roles.includes(user.rol);
         });
         return { ...group, items: visibleItems };
@@ -192,9 +212,9 @@ export function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50">
+    <div className="flex flex-col h-screen bg-slate-50 print:h-auto print:bg-white">
       {/* Mobile top bar */}
-      <header className="lg:hidden flex-shrink-0 flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 z-30">
+      <header className="lg:hidden flex-shrink-0 flex items-center justify-between px-4 py-2.5 bg-white border-b border-slate-200 z-30 print:hidden">
         <button
           onClick={() => setMobileOpen(true)}
           className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-slate-100 transition-colors"
@@ -202,30 +222,31 @@ export function Layout() {
         >
           <Menu className="w-5 h-5 text-slate-700" />
         </button>
-        <span className="font-semibold text-slate-900 text-sm">Sistema de Pedidos</span>
+        <div className="flex items-center gap-2.5">
+          <img src={tbarLogo} alt="TBAR" className="h-8 w-auto object-contain" />
+          <span className="text-xs text-slate-500 font-medium">Gestión de Materiales</span>
+        </div>
         <div className="w-9" />
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden print:overflow-visible print:h-auto">
         {/* Mobile overlay sidebar */}
         {mobileOpen && (
-          <div className="lg:hidden fixed inset-0 z-50 flex">
+          <div className="lg:hidden fixed inset-0 z-50 flex print:hidden">
             <div
               className="absolute inset-0 bg-black/40"
               onClick={() => setMobileOpen(false)}
             />
             <aside className="relative w-72 bg-white h-full flex flex-col overflow-y-auto shadow-xl z-10">
-              <div className="flex items-center justify-between p-5 border-b border-slate-200 flex-shrink-0">
-                <div>
-                  <h1 className="font-semibold text-slate-900 leading-tight">Sistema de Pedidos</h1>
-                  <p className="text-xs text-slate-500 mt-0.5">Gestión de Materiales</p>
-                </div>
+              <div className="relative p-5 border-b border-slate-200 flex-shrink-0 flex flex-col items-center text-center">
                 <button
                   onClick={() => setMobileOpen(false)}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 transition-colors"
+                  className="absolute right-4 top-4 w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 transition-colors"
                 >
                   <X className="w-4 h-4 text-slate-600" />
                 </button>
+                <img src={tbarLogo} alt="Toyota Boshoku" className="h-16 w-auto object-contain mx-auto" />
+                <p className="text-xs font-semibold text-slate-600 mt-2">Gestión de Materiales</p>
               </div>
               <NavContent onNavigate={() => setMobileOpen(false)} />
             </aside>
@@ -233,15 +254,15 @@ export function Layout() {
         )}
 
         {/* Desktop sidebar */}
-        <aside className="hidden lg:flex w-60 bg-white border-r border-slate-200 flex-col overflow-y-auto flex-shrink-0">
-          <div className="p-5 border-b border-slate-200 flex-shrink-0">
-            <h1 className="font-semibold text-slate-900 leading-tight">Sistema de Pedidos</h1>
-            <p className="text-xs text-slate-500 mt-0.5">Gestión de Materiales</p>
+        <aside className="hidden lg:flex w-60 bg-white border-r border-slate-200 flex-col overflow-y-auto flex-shrink-0 print:hidden">
+          <div className="py-6 px-4 border-b border-slate-200 flex-shrink-0 flex flex-col items-center text-center">
+            <img src={tbarLogo} alt="Toyota Boshoku" className="h-20 w-auto object-contain mx-auto" />
+            <p className="text-xs font-semibold text-slate-600 tracking-wide mt-2">Gestión de Materiales</p>
           </div>
           <NavContent />
         </aside>
 
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto print:overflow-visible print:h-auto">
           <Outlet />
         </main>
       </div>

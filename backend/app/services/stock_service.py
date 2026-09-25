@@ -177,4 +177,5 @@ class StockService:
             unidad_por_bulto=data.unidad_por_bulto if data.tipo_empaque == "rollo" else None,
             bultos_por_pallet=data.bultos_por_pallet if data.tipo_empaque == "rollo" else None,
             doh_sugerido_planta=data.doh_sugerido_planta,
+            unidad=data.unidad.strip().upper() if data.unidad and data.unidad.strip() else None,
         )

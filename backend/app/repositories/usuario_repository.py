@@ -130,36 +130,21 @@ class UsuarioRepository:
     def update(
         self,
         id_usuario: int,
-        nombre: Optional[str] = None,
-        apellido: Optional[str] = None,
-        rol: Optional[str] = None,
-        sector: Optional[str] = None,
-        email: Optional[str] = None,
-        activo: Optional[bool] = None,
+        fields: Dict[str, Any],
     ) -> Optional[Dict[str, Any]]:
+        if not fields:
+            return self.get_by_id(id_usuario)
+
         conn = get_db_connection()
         cur = conn.cursor()
         try:
             sets: List[str] = []
             params: List[Any] = []
-            if nombre is not None:
-                sets.append("nombre = ?")
-                params.append(nombre)
-            if apellido is not None:
-                sets.append("apellido = ?")
-                params.append(apellido)
-            if rol is not None:
-                sets.append("rol = ?")
-                params.append(rol)
-            if sector is not None:
-                sets.append("sector = ?")
-                params.append(sector)
-            if email is not None:
-                sets.append("email = ?")
-                params.append(email)
-            if activo is not None:
-                sets.append("activo = ?")
-                params.append(1 if activo else 0)
+            allowed_cols = {"nombre", "apellido", "rol", "sector", "email", "activo"}
+            for col, val in fields.items():
+                if col in allowed_cols:
+                    sets.append(f"{col} = ?")
+                    params.append(val)
 
             if not sets:
                 return self.get_by_id(id_usuario)

@@ -25,6 +25,7 @@ import {
   PenLine,
 } from "lucide-react";
 import { toast } from "sonner";
+import { DeliveryNoteModal } from "../components/DeliveryNoteModal";
 
 interface ReceivedItem {
   id: string;
@@ -51,6 +52,7 @@ export function DeliveryConfirm() {
   const [confirmed, setConfirmed] = useState(false);
   const [signature, setSignature] = useState("");
   const [observations, setObservations] = useState("");
+  const [isRemitoModalOpen, setIsRemitoModalOpen] = useState(false);
 
   const now = formatNow();
 
@@ -107,12 +109,18 @@ export function DeliveryConfirm() {
               <Button variant="outline" onClick={() => navigate("/pedidos")}>
                 Ver mis pedidos
               </Button>
-              <Button onClick={() => navigate(`/remitos/${orderNumber}`)}>
+              <Button onClick={() => setIsRemitoModalOpen(true)}>
                 Ver remito
               </Button>
             </div>
           </CardContent>
         </Card>
+
+        <DeliveryNoteModal
+          isOpen={isRemitoModalOpen}
+          onClose={() => setIsRemitoModalOpen(false)}
+          idRemito={orderNumber}
+        />
       </div>
     );
   }

@@ -37,24 +37,34 @@ import {
   AlertCircle,
   CheckCircle2,
   Minus,
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   createPedido,
   searchMaterialesCatalogo,
+  calcularSugerenciaPedido,
   type MaterialCatalogoItem,
+  type CalcularSugerenciaResponse,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
-import { formatSoloFechaAR } from "../components/ui/format";
+import { formatSoloFechaAR, getTodayISODate } from "../components/ui/format";
 
 interface Material {
   id: string;
   code: string;
   name: string;
   suggestedQuantity?: number;
+  suggestedPallets?: number;
   quantity: number;
   unit: string;
   observations: string;
+  tipo_empaque?: string;
+  tamanio_lote?: number;
+  pallets?: number;
 }
 
 const SECTORES_PLANTA = [
@@ -83,15 +93,13 @@ export function NewOrder() {
   const location = useLocation();
   const { user: currentUser } = useAuth();
 
-  const fromConteo = location.state?.fromConteo === true;
+  const [fromConteo, setFromConteo] = useState<boolean>(location.state?.fromConteo === true);
   const suggestedMaterials: Material[] = location.state?.suggestedMaterials ?? [];
+  const todayStr = useMemo(() => getTodayISODate(), []);
   const initialFechaReq =
-    location.state?.fecha_requerida ||
-    (() => {
-      const d = new Date();
-      d.setDate(d.getDate() + 1);
-      return d.toISOString().split("T")[0];
-    })();
+    location.state?.fecha_requerida && location.state.fecha_requerida >= todayStr
+      ? location.state.fecha_requerida
+      : todayStr;
   const initialTurno = location.state?.turno || "Turno Mañana";
 
   const isSectorLocked = Boolean(currentUser?.sector && currentUser.sector !== "TODOS");
@@ -103,9 +111,25 @@ export function NewOrder() {
   const [priority, setPriority] = useState<"normal" | "urgente">("normal");
   const [fechaRequerida, setFechaRequerida] = useState<string>(initialFechaReq);
   const [turno, setTurno] = useState<string>(initialTurno);
-  const [materials, setMaterials] = useState<Material[]>(
-    fromConteo && suggestedMaterials.length > 0 ? suggestedMaterials : []
-  );
+  const [materials, setMaterials] = useState<Material[]>(() => {
+    if (suggestedMaterials.length > 0) {
+      return suggestedMaterials.map((m) => {
+        const lotSize = m.tamanio_lote && m.tamanio_lote > 1 ? m.tamanio_lote : 1;
+        const isPallet = (m.tipo_empaque === "pallet" || (!m.tipo_empaque && lotSize > 1)) && lotSize > 1;
+        const pCount = isPallet ? (m.pallets ?? Math.ceil(m.quantity / lotSize)) : undefined;
+        const suggPCount = isPallet ? (m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / lotSize)) : undefined;
+        return {
+          ...m,
+          tipo_empaque: isPallet ? "pallet" : "unidad",
+          tamanio_lote: lotSize,
+          pallets: pCount,
+          suggestedPallets: suggPCount,
+        };
+      });
+    }
+    return [];
+  });
+  const [loadingSuggestion, setLoadingSuggestion] = useState<boolean>(false);
 
   const [searchValue, setSearchValue] = useState("");
   const [showCatalog, setShowCatalog] = useState(false);
@@ -149,15 +173,160 @@ export function NewOrder() {
     [materials]
   );
 
+  const totalPallets = useMemo(
+    () =>
+      materials.reduce((acc, m) => {
+        const isPallet = m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1;
+        if (!isPallet) return acc;
+        return acc + (m.pallets ?? Math.ceil(m.quantity / (m.tamanio_lote || 1)));
+      }, 0),
+    [materials]
+  );
+
+  const [suggestionPreview, setSuggestionPreview] = useState<CalcularSugerenciaResponse | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState<boolean>(false);
+  const [previewExpanded, setPreviewExpanded] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const loadPreview = async () => {
+      const finalSector = isSectorLocked ? (currentUser?.sector as string) : sector;
+      if (!finalSector) return;
+      setLoadingPreview(true);
+      try {
+        const res = await calcularSugerenciaPedido({
+          sector: finalSector,
+          fecha_requerida: fechaRequerida,
+          turno: turno,
+          modalidad_turnos: turno === "Completo" ? "completo" : "2_turnos",
+        });
+        if (!isCancelled) {
+          setSuggestionPreview(res);
+        }
+      } catch {
+        if (!isCancelled) {
+          setSuggestionPreview(null);
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoadingPreview(false);
+        }
+      }
+    };
+    loadPreview();
+    return () => {
+      isCancelled = true;
+    };
+  }, [fechaRequerida, turno, sector, isSectorLocked, currentUser?.sector]);
+
+  const previewEvaluatedItems = useMemo(() => {
+    if (!suggestionPreview) return [];
+    return suggestionPreview.items.map((it) => {
+      const qty = turno && turno !== "Completo" ? (it.sugerido_por_turno[turno] ?? it.cantidad_sugerida_neta) : it.cantidad_sugerida_neta;
+      const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
+      const isPallet = (it.tipo_empaque === "pallet" || (!it.tipo_empaque && lotSize > 1)) && lotSize > 1;
+      const pCount = isPallet ? Math.ceil(qty / lotSize) : undefined;
+      return {
+        material: {
+          id: it.id_material,
+          code: it.id_material,
+          name: it.nombre,
+          unit: it.unidad,
+          suggestedQuantity: qty,
+          suggestedPallets: pCount,
+          quantity: qty > 0 ? qty : (isPallet ? lotSize : 1),
+          pallets: pCount ?? (isPallet ? 1 : undefined),
+          tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
+          tamanio_lote: lotSize,
+          observations: `Sugerido por Conteo | Consumo: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
+        } as Material,
+        raw: it,
+        qtySugerida: qty,
+        palletsSugeridos: pCount,
+        isPallet,
+        lotSize,
+        tieneDeficit: qty > 0,
+      };
+    });
+  }, [suggestionPreview, turno]);
+
+  const previewItemsConDeficit = useMemo(() => {
+    return previewEvaluatedItems.filter((it) => it.tieneDeficit);
+  }, [previewEvaluatedItems]);
+
+  const applySuggestionItems = (itemsToLoad: Material[]) => {
+    if (itemsToLoad.length === 0) {
+      toast.info("No hay materiales para cargar.");
+      return;
+    }
+    setMaterials(itemsToLoad);
+    setFromConteo(true);
+    toast.success(`${itemsToLoad.length} materiales sugeridos cargados correctamente.`);
+  };
+
+  const handleLoadSuggestion = async () => {
+    const finalSector = isSectorLocked ? (currentUser?.sector as string) : sector;
+    if (!finalSector) {
+      toast.error("Seleccione un sector antes de cargar la sugerencia.");
+      return;
+    }
+    setLoadingSuggestion(true);
+    try {
+      const res = await calcularSugerenciaPedido({
+        sector: finalSector,
+        fecha_requerida: fechaRequerida,
+        turno: turno,
+        modalidad_turnos: turno === "Completo" ? "completo" : "2_turnos",
+      });
+      setSuggestionPreview(res);
+      const itemsToLoad: Material[] = res.items
+        .map((it) => {
+          const qty = turno && turno !== "Completo" ? (it.sugerido_por_turno[turno] ?? it.cantidad_sugerida_neta) : it.cantidad_sugerida_neta;
+          const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
+          const isPallet = (it.tipo_empaque === "pallet" || (!it.tipo_empaque && lotSize > 1)) && lotSize > 1;
+          const pCount = isPallet ? Math.ceil(qty / lotSize) : undefined;
+          return {
+            id: it.id_material,
+            code: it.id_material,
+            name: it.nombre,
+            unit: it.unidad,
+            suggestedQuantity: qty,
+            suggestedPallets: pCount,
+            quantity: qty,
+            pallets: pCount,
+            tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
+            tamanio_lote: lotSize,
+            observations: `Sugerido por Conteo | Consumo: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
+          };
+        })
+        .filter((m) => m.quantity > 0);
+
+      if (itemsToLoad.length === 0) {
+        toast.info("No se encontraron materiales sugeridos con déficit para este sector y fecha. El stock en planta cubre la demanda.");
+        return;
+      }
+      applySuggestionItems(itemsToLoad);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al calcular sugerencia de pedido");
+    } finally {
+      setLoadingSuggestion(false);
+    }
+  };
+
   const handleAddFromCatalog = (item: MaterialCatalogoItem) => {
+    const lotSize = item.tamanio_lote && item.tamanio_lote > 1 ? item.tamanio_lote : 1;
+    const isPallet = (item.tipo_empaque === "pallet" || (!item.tipo_empaque && lotSize > 1)) && lotSize > 1;
     setMaterials((prev) => [
       ...prev,
       {
         id: String(Date.now()) + Math.random().toString(36).substring(2, 6),
         code: item.id_material,
         name: item.nombre || item.id_material,
-        unit: item.unidad || "MTS",
-        quantity: 1,
+        unit: item.unidad || "UN",
+        quantity: isPallet ? lotSize : 1,
+        pallets: isPallet ? 1 : undefined,
+        tipo_empaque: isPallet ? "pallet" : "unidad",
+        tamanio_lote: lotSize,
         observations: "",
       },
     ]);
@@ -179,6 +348,17 @@ export function NewOrder() {
     setMaterials((prev) =>
       prev.map((m) => {
         if (m.id === id) {
+          const lotSize = (m.tamanio_lote && m.tamanio_lote > 1) ? m.tamanio_lote : 1;
+          const isPallet = m.tipo_empaque === "pallet" && lotSize > 1;
+          if (isPallet) {
+            const currentPallets = m.pallets ?? Math.ceil(m.quantity / lotSize);
+            const updatedPallets = Math.max(1, currentPallets + delta);
+            return {
+              ...m,
+              pallets: updatedPallets,
+              quantity: updatedPallets * lotSize,
+            };
+          }
           const updated = Math.max(1, (Number(m.quantity) || 0) + delta);
           return { ...m, quantity: updated };
         }
@@ -195,6 +375,10 @@ export function NewOrder() {
     }
     if (materials.length === 0) {
       toast.error("Debe agregar al menos un material");
+      return;
+    }
+    if (!fechaRequerida || fechaRequerida < todayStr) {
+      toast.error("La fecha requerida no puede ser anterior a la fecha actual.");
       return;
     }
 
@@ -300,40 +484,171 @@ export function NewOrder() {
         </div>
       </div>
 
-      {/* Banner de Origen */}
-      {fromConteo ? (
-        <Card className="bg-blue-50/80 border-blue-200 shadow-2xs">
-          <CardContent className="p-4 flex items-start gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg text-blue-700 flex-shrink-0 mt-0.5">
-              <ClipboardList className="w-5 h-5" />
+      {/* Sugerencia Inteligente Preview & Banner */}
+      <Card className="border-blue-200/80 bg-linear-to-b from-blue-50/50 to-white shadow-2xs overflow-hidden">
+        <CardHeader className="py-3 px-4 border-b border-blue-100 flex flex-row items-center justify-between gap-3 bg-blue-50/60">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-blue-100 rounded-md text-blue-700">
+              <Sparkles className="w-4 h-4 text-blue-600" />
             </div>
-            <div className="flex-1 text-xs">
-              <p className="font-bold text-blue-900 text-sm">
-                Pedido sugerido a partir de Conteo Físico de Planta
-              </p>
-              <p className="text-blue-700 mt-0.5 leading-relaxed">
-                Los materiales y cantidades sugeridas fueron precargados automáticamente para alcanzar el DOH objetivo de planta. Puede ajustar las cantidades finales antes de confirmar.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="bg-slate-50 border-slate-200/80 shadow-2xs">
-          <CardContent className="p-3.5 flex items-center justify-between gap-3 text-xs text-slate-600">
-            <div className="flex items-center gap-2.5">
-              <div className="p-1.5 bg-slate-200/70 rounded-md text-slate-700">
-                <ShoppingCart className="w-4 h-4" />
+            <div>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm font-bold text-blue-950">
+                  Sugerencia Inteligente de Pedidos (Preview)
+                </CardTitle>
+                {loadingPreview && <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-600" />}
               </div>
-              <span>
-                <strong>Modo manual:</strong> Busque materiales en el catálogo para agregarlos directamente a la solicitud.
-              </span>
+              <p className="text-[11px] text-blue-700">
+                Calculado en vivo para <strong>{formatSoloFechaAR(fechaRequerida)}</strong> &bull; <strong>{turno}</strong> &bull; Sector <strong>{isSectorLocked ? (currentUser?.sector as string) : sector}</strong>
+              </p>
             </div>
-            <span className="text-slate-400 hidden sm:inline text-[11px]">
-              Los pedidos cargados impactan en tiempo real en la cola del depósito.
-            </span>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+          <div className="flex items-center gap-2">
+            {previewItemsConDeficit.length > 0 ? (
+              <Badge className="bg-amber-100 text-amber-900 border-amber-300 font-semibold text-xs">
+                {previewItemsConDeficit.length} {previewItemsConDeficit.length === 1 ? "material con déficit" : "materiales con déficit"}
+              </Badge>
+            ) : (
+              <Badge className="bg-emerald-100 text-emerald-900 border-emerald-300 font-semibold text-xs">
+                Planta con stock suficiente (0 déficit)
+              </Badge>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setPreviewExpanded((prev) => !prev)}
+              className="h-8 px-2 text-blue-700 hover:bg-blue-100/60 text-xs gap-1"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>{previewExpanded ? "Ocultar tabla" : "Ver tabla"}</span>
+              {previewExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {fromConteo
+                ? "Las cantidades sugeridas se calcularon según el inventario físico de planta, el consumo planificado y los pedidos ya registrados para este día."
+                : "A continuación se muestra el requerimiento calculado en base al inventario de planta y la producción."}
+            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              {previewItemsConDeficit.length > 0 ? (
+                <Button
+                  size="sm"
+                  onClick={() => applySuggestionItems(previewItemsConDeficit.map((it) => it.material))}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold gap-1.5 text-xs shadow-xs"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Cargar {previewItemsConDeficit.length} {previewItemsConDeficit.length === 1 ? "sugerido" : "sugeridos"} al pedido</span>
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => applySuggestionItems(previewEvaluatedItems.map((it) => it.material))}
+                  className="text-xs text-slate-700 border-slate-300 hover:bg-slate-50 gap-1.5"
+                >
+                  <Layers className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Cargar todos para ajuste manual</span>
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLoadSuggestion}
+                disabled={loadingSuggestion || loadingPreview}
+                className="text-blue-700 border-blue-200 hover:bg-blue-50 font-semibold gap-1.5 text-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingSuggestion || loadingPreview ? "animate-spin" : ""}`} />
+                <span>Recalcular</span>
+              </Button>
+            </div>
+          </div>
+
+          {previewExpanded && (
+            <div className="border border-slate-200 rounded-lg overflow-x-auto bg-white shadow-2xs">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50/80 text-[11px]">
+                    <TableHead className="py-2 px-3 font-semibold text-slate-700">Material</TableHead>
+                    <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Stock Planta</TableHead>
+                    <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Consumo Previsto</TableHead>
+                    <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Stock Objetivo</TableHead>
+                    <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Ya Pedido</TableHead>
+                    <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Sugerencia Neta</TableHead>
+                    <TableHead className="py-2 px-3 text-center font-semibold text-slate-700">Estado</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody className="text-xs divide-y divide-slate-100">
+                  {previewEvaluatedItems.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-4 text-slate-400">
+                        {loadingPreview ? "Calculando sugerencias de pedidos..." : "No se hallaron materiales configurados para el cálculo."}
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    previewEvaluatedItems.map((it) => (
+                      <TableRow
+                        key={it.raw.id_material}
+                        className={it.tieneDeficit ? "bg-blue-50/40 font-medium" : "hover:bg-slate-50/60"}
+                      >
+                        <TableCell className="py-2 px-3">
+                          <div className="font-mono font-bold text-slate-800">{it.raw.id_material}</div>
+                          <div className="text-[11px] text-slate-500 truncate max-w-[200px]">{it.raw.nombre}</div>
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right font-mono text-slate-700">
+                          {it.raw.stock_contado.toLocaleString()} {it.raw.unidad}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right font-mono text-slate-600">
+                          {it.raw.consumo_diario.toLocaleString()} {it.raw.unidad}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right font-mono text-slate-600">
+                          {it.raw.stock_objetivo.toLocaleString()} {it.raw.unidad}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right font-mono text-slate-600">
+                          {it.raw.cantidad_ya_pedida_total > 0 ? (
+                            <span className="text-blue-700 font-semibold">
+                              {it.raw.cantidad_ya_pedida_total.toLocaleString()} {it.raw.unidad}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right font-mono">
+                          {it.tieneDeficit ? (
+                            <span className="font-bold text-blue-700">
+                              +{it.qtySugerida.toLocaleString()} {it.raw.unidad}
+                              {it.palletsSugeridos !== undefined && (
+                                <span className="text-[10px] text-blue-900 block font-normal">
+                                  ({it.palletsSugeridos} {it.palletsSugeridos === 1 ? "pallet" : "pallets"})
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">0 {it.raw.unidad}</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-center">
+                          {it.tieneDeficit ? (
+                            <Badge className="bg-amber-100 text-amber-800 border-amber-200 text-[10px] font-bold">
+                              Déficit
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">
+                              Cubierto
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
         {/* Columna Izquierda: Formulario y Materiales */}
@@ -435,8 +750,16 @@ export function NewOrder() {
                   <Input
                     id="fecha-req"
                     type="date"
+                    min={todayStr}
                     value={fechaRequerida}
-                    onChange={(e) => setFechaRequerida(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v && v < todayStr) {
+                        toast.error("La fecha requerida no puede ser anterior a la fecha actual.");
+                        return;
+                      }
+                      setFechaRequerida(v);
+                    }}
                     className="h-9 font-mono text-xs"
                   />
                 </div>
@@ -540,9 +863,15 @@ export function NewOrder() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-[10px] bg-slate-50 font-mono text-slate-600">
-                              {item.unidad || "MTS"}
-                            </Badge>
+                            {item.tipo_empaque === "pallet" && (item.tamanio_lote || 1) > 1 ? (
+                              <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold">
+                                Pallet ({item.tamanio_lote} {item.unidad})
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] bg-slate-50 font-mono text-slate-600">
+                                {item.unidad || "UN"}
+                              </Badge>
+                            )}
                             <span className="text-xs font-semibold text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
                               <Plus className="w-3.5 h-3.5" /> Agregar
                             </span>
@@ -574,13 +903,14 @@ export function NewOrder() {
                       <TableRow>
                         <TableHead className="text-xs font-semibold text-slate-700">Código</TableHead>
                         <TableHead className="text-xs font-semibold text-slate-700">Material</TableHead>
+                        <TableHead className="text-center w-28 text-xs font-semibold text-slate-700">Presentación</TableHead>
                         {fromConteo && (
-                          <TableHead className="text-center w-28 text-xs font-semibold text-slate-700">
+                          <TableHead className="text-center w-32 text-xs font-semibold text-slate-700">
                             Sugerido
                           </TableHead>
                         )}
-                        <TableHead className="text-center w-36 text-xs font-semibold text-slate-700">
-                          {fromConteo ? "Cant. Final" : "Cantidad"}
+                        <TableHead className="text-center w-40 text-xs font-semibold text-slate-700">
+                          {fromConteo ? "Cant. Final a Pedir" : "Cantidad a Pedir"}
                         </TableHead>
                         <TableHead className="w-20 text-xs font-semibold text-slate-700">Unidad</TableHead>
                         <TableHead className="text-xs font-semibold text-slate-700">Observaciones</TableHead>
@@ -597,45 +927,119 @@ export function NewOrder() {
                             {m.name}
                           </TableCell>
 
+                          <TableCell className="text-center">
+                            {m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
+                              <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold gap-1 whitespace-nowrap">
+                                <Layers className="w-2.5 h-2.5 text-indigo-500" />
+                                Pallet ({m.tamanio_lote} {m.unit})
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600 border-slate-200 whitespace-nowrap">
+                                Unidad ({m.unit})
+                              </Badge>
+                            )}
+                          </TableCell>
+
                           {fromConteo && (
                             <TableCell className="text-center whitespace-nowrap">
-                              <span className="font-mono font-bold text-slate-500 text-xs">
-                                {(m.suggestedQuantity ?? m.quantity).toLocaleString("es-AR")}
-                              </span>
-                              <span className="text-[10px] text-slate-400 ml-1">{m.unit}</span>
+                              {m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
+                                <div className="flex flex-col items-center justify-center">
+                                  <span className="font-mono font-bold text-slate-800 text-xs">
+                                    {m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / (m.tamanio_lote || 1))} {((m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / (m.tamanio_lote || 1))) === 1) ? "Pallet" : "Pallets"}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-mono block">
+                                    ({(m.suggestedQuantity ?? m.quantity).toLocaleString("es-AR")} {m.unit})
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center">
+                                  <span className="font-mono font-bold text-slate-800 text-xs">
+                                    {(m.suggestedQuantity ?? m.quantity).toLocaleString("es-AR")}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 ml-1">{m.unit}</span>
+                                </div>
+                              )}
                             </TableCell>
                           )}
 
                           <TableCell>
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleStepQuantity(m.id, -1)}
-                                className="w-6 h-7 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 transition-colors"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </button>
-                              <Input
-                                type="number"
-                                min="1"
-                                value={m.quantity}
-                                onChange={(e) =>
-                                  handleUpdateMaterial(
-                                    m.id,
-                                    "quantity",
-                                    Math.max(1, parseFloat(e.target.value) || 1)
-                                  )
-                                }
-                                className="w-16 h-7 text-center font-mono font-bold text-xs p-1"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => handleStepQuantity(m.id, 1)}
-                                className="w-6 h-7 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 transition-colors"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                            </div>
+                            {m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-0.5">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStepQuantity(m.id, -1)}
+                                    className="w-6 h-7 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 transition-colors"
+                                    title="Restar 1 pallet"
+                                  >
+                                    <Minus className="w-3 h-3" />
+                                  </button>
+                                  <div className="flex items-center gap-1">
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      value={m.pallets ?? Math.ceil(m.quantity / (m.tamanio_lote || 1))}
+                                      onChange={(e) => {
+                                        const p = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                        const lot = m.tamanio_lote || 1;
+                                        setMaterials((prev) =>
+                                          prev.map((item) =>
+                                            item.id === m.id
+                                              ? { ...item, pallets: p, quantity: p * lot }
+                                              : item
+                                          )
+                                        );
+                                      }}
+                                      className="w-14 h-7 text-center font-mono font-bold text-xs p-1"
+                                    />
+                                    <span className="text-xs font-semibold text-indigo-700">pal</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStepQuantity(m.id, 1)}
+                                    className="w-6 h-7 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 transition-colors"
+                                    title="Sumar 1 pallet"
+                                  >
+                                    <Plus className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                <span className="text-[10px] text-slate-500 font-mono block">
+                                  ({m.quantity.toLocaleString("es-AR")} {m.unit})
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStepQuantity(m.id, -1)}
+                                  className="w-6 h-7 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 transition-colors"
+                                  title="Restar 1 unidad"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={m.quantity}
+                                  onChange={(e) =>
+                                    handleUpdateMaterial(
+                                      m.id,
+                                      "quantity",
+                                      Math.max(1, parseFloat(e.target.value) || 1)
+                                    )
+                                  }
+                                  className="w-20 h-7 text-center font-mono font-bold text-xs p-1"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleStepQuantity(m.id, 1)}
+                                  className="w-6 h-7 rounded border border-slate-200 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-600 transition-colors"
+                                  title="Sumar 1 unidad"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
                           </TableCell>
 
                           <TableCell className="text-xs text-slate-500 font-mono">
@@ -747,6 +1151,16 @@ export function NewOrder() {
                     {materials.length}
                   </Badge>
                 </div>
+
+                {totalPallets > 0 && (
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <span className="text-slate-500">Total pallets:</span>
+                    <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 font-bold font-mono text-xs gap-1">
+                      <Layers className="w-3 h-3 text-indigo-600" />
+                      {totalPallets} {totalPallets === 1 ? "Pallet" : "Pallets"}
+                    </Badge>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-slate-700 font-semibold">Total unidades/mts:</span>

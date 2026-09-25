@@ -6,9 +6,13 @@ from app.core.security import verify_access_token
 from app.schemas.pedido import (
     CalcularSugerenciaRequest,
     CalcularSugerenciaResponse,
+    PedidoCancelarRequest,
     PedidoCreate,
     PedidoOut,
     PedidosListResponse,
+    PreparacionPedidoResponse,
+    PreparacionPedidoUpdate,
+    RemitoDetalleOut,
 )
 from app.services.pedido_service import PedidoService
 
@@ -74,6 +78,7 @@ def listar_pedidos(
     fecha_requerida: Optional[date] = Query(default=None, description="Filtrar por fecha requerida"),
     estado: Optional[str] = Query(default=None, description="Filtrar por estado"),
     turno: Optional[str] = Query(default=None, description="Filtrar por turno"),
+    sector: Optional[str] = Query(default=None, description="Filtrar por sector solicitante"),
     limit: int = Query(default=50, ge=1, le=200),
     service: PedidoService = Depends(get_pedido_service),
 ) -> PedidosListResponse:
@@ -81,8 +86,25 @@ def listar_pedidos(
         fecha_requerida=fecha_requerida,
         estado=estado,
         turno=turno,
+        sector=sector,
         limit=limit,
     )
+
+
+@router.get("/remitos/{id_remito}", response_model=RemitoDetalleOut)
+def obtener_remito(
+    id_remito: str,
+    service: PedidoService = Depends(get_pedido_service),
+) -> RemitoDetalleOut:
+    return service.get_remito_by_id(id_remito)
+
+
+@router.get("/{id_pedido}/remitos", response_model=List[RemitoDetalleOut])
+def listar_remitos_pedido(
+    id_pedido: int,
+    service: PedidoService = Depends(get_pedido_service),
+) -> List[RemitoDetalleOut]:
+    return service.get_remitos_by_pedido(id_pedido)
 
 
 @router.get("/{id_pedido}", response_model=PedidoOut)
@@ -91,3 +113,26 @@ def obtener_pedido(
     service: PedidoService = Depends(get_pedido_service),
 ) -> PedidoOut:
     return service.get_pedido_by_id(id_pedido)
+
+
+@router.put("/{id_pedido}/preparacion", response_model=PreparacionPedidoResponse)
+def actualizar_preparacion_pedido(
+    id_pedido: int,
+    data: PreparacionPedidoUpdate,
+    token_data: Optional[dict] = Depends(get_optional_token_payload),
+    service: PedidoService = Depends(get_pedido_service),
+) -> PreparacionPedidoResponse:
+    id_usuario = token_data.get("id_usuario") if token_data else None
+    return service.actualizar_preparacion(id_pedido, data, id_usuario)
+
+
+@router.post("/{id_pedido}/cancelar", response_model=PedidoOut)
+def cancelar_pedido(
+    id_pedido: int,
+    data: PedidoCancelarRequest,
+    token_data: Optional[dict] = Depends(get_optional_token_payload),
+    service: PedidoService = Depends(get_pedido_service),
+) -> PedidoOut:
+    id_usuario = token_data.get("id_usuario") if token_data else data.id_usuario
+    return service.cancelar_pedido(id_pedido, data.motivo, id_usuario)
+

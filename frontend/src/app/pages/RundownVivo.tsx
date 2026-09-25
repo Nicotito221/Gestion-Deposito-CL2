@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -110,8 +111,16 @@ export function RundownVivo() {
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const [searchParams] = useSearchParams();
+  const initRiesgo = searchParams.get("riesgo") === "1" || searchParams.get("filtro") === "riesgo";
   const [activeMaterialTab, setActiveMaterialTab] = useState<string>("todos");
-  const [filterSoloRiesgo, setFilterSoloRiesgo] = useState<boolean>(false);
+  const [filterSoloRiesgo, setFilterSoloRiesgo] = useState<boolean>(initRiesgo);
+
+  useEffect(() => {
+    if (searchParams.get("riesgo") === "1" || searchParams.get("filtro") === "riesgo") {
+      setFilterSoloRiesgo(true);
+    }
+  }, [searchParams]);
   const [riskJumpIndex, setRiskJumpIndex] = useState<number>(0);
   const [highlightedRiskId, setHighlightedRiskId] = useState<string | null>(null);
 
@@ -469,6 +478,11 @@ export function RundownVivo() {
     let list = report.materiales;
     if (filterSoloRiesgo) {
       list = list.filter((m) => m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojo));
+      list = [...list].sort((a, b) => {
+        const minA = a.dias.length > 0 ? Math.min(...a.dias.map((d) => d.dias_cobertura)) : 999;
+        const minB = b.dias.length > 0 ? Math.min(...b.dias.map((d) => d.dias_cobertura)) : 999;
+        return minA - minB;
+      });
     }
     if (activeMaterialTab === "todos") return list;
     return list.filter((m) => m.id_material === activeMaterialTab);
@@ -604,7 +618,10 @@ export function RundownVivo() {
     fechaEta: string,
     diaNombre: string,
     tipoVia: "Maritimo" | "Aereo" | "Local" | "AjusteScrap",
-    currentVal: number
+    currentVal: number,
+    existingPo?: string | null,
+    existingFactura?: string | null,
+    existingObs?: string | null
   ) => {
     setIngresoEditForm({
       id_material: materialId,
@@ -613,9 +630,9 @@ export function RundownVivo() {
       dia_nombre: diaNombre,
       tipo_via: tipoVia,
       cantidad: currentVal,
-      po_numero: "",
-      factura_numero: "",
-      observacion: "",
+      po_numero: existingPo || "",
+      factura_numero: existingFactura || "",
+      observacion: existingObs || "",
     });
     setEditIngresoModalOpen(true);
   };
@@ -757,16 +774,23 @@ export function RundownVivo() {
           const newDias = m.dias.map((d) => {
             let pMar = d.plan_maritimo;
             let pAer = d.pedidos_aereos;
+            let pLoc = d.entregas_locales || 0;
 
             if (d.fecha === fecha_origen) {
-              const subMar = Math.min(pMar, cantidad);
-              pMar -= subMar;
-              const rem = cantidad - subMar;
-              if (rem > 0) pAer = Math.max(0, pAer - rem);
+              if (tipo_via === "Local") {
+                pLoc = Math.max(0, pLoc - cantidad);
+              } else {
+                const subMar = Math.min(pMar, cantidad);
+                pMar -= subMar;
+                const rem = cantidad - subMar;
+                if (rem > 0) pAer = Math.max(0, pAer - rem);
+              }
             }
             if (d.fecha === targetFecha) {
               if (tipo_via === "Aereo") {
                 pAer += cantidad;
+              } else if (tipo_via === "Local") {
+                pLoc += cantidad;
               } else {
                 pMar += cantidad;
               }
@@ -775,6 +799,7 @@ export function RundownVivo() {
               ...d,
               plan_maritimo: pMar,
               pedidos_aereos: pAer,
+              entregas_locales: pLoc,
             };
           });
 
@@ -1960,8 +1985,11 @@ export function RundownVivo() {
                             <span>Pedido</span>
                           </td>
                           {mat.dias.map((d) => {
-                            const pedidoVal = d.plan_maritimo + d.pedidos_aereos;
-                            const viaToUse: "Maritimo" | "Aereo" = d.pedidos_aereos > 0 ? "Aereo" : "Maritimo";
+                            const pedidoVal = (d.plan_maritimo || 0) + (d.pedidos_aereos || 0) + (d.entregas_locales || 0);
+                            const viaToUse: "Maritimo" | "Aereo" | "Local" = (d.entregas_locales || 0) > 0 ? "Local" : ((d.pedidos_aereos || 0) > 0 ? "Aereo" : "Maritimo");
+                            const existingPo = viaToUse === "Local" ? d.local_po : (viaToUse === "Aereo" ? d.aereo_po : d.maritimo_po);
+                            const existingFactura = viaToUse === "Local" ? d.local_factura : (viaToUse === "Aereo" ? d.aereo_factura : d.maritimo_factura);
+                            const existingObs = viaToUse === "Local" ? d.local_obs : (viaToUse === "Aereo" ? d.aereo_obs : d.maritimo_obs);
                             const isBeingDragged =
                               draggedPedido?.id_material === mat.id_material &&
                               draggedPedido?.fecha_origen === d.fecha;
@@ -1978,7 +2006,7 @@ export function RundownVivo() {
                                 key={d.fecha}
                                 onClick={() => {
                                   if (!draggedPedido) {
-                                    handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal);
+                                    handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal, existingPo, existingFactura, existingObs);
                                   }
                                 }}
                                 onDragOver={(e) => {
@@ -2033,6 +2061,11 @@ export function RundownVivo() {
                                   >
                                     <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
                                     +{pedidoVal.toLocaleString()}
+                                    {(existingFactura || existingPo) && (
+                                      <span className="text-[9px] font-mono text-blue-950 font-normal ml-0.5 px-1 py-0 bg-blue-200/80 rounded">
+                                        #{existingFactura || existingPo}
+                                      </span>
+                                    )}
                                   </span>
                                 ) : (
                                   <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
@@ -2068,7 +2101,7 @@ export function RundownVivo() {
                                   key={d.fecha}
                                   onClick={() => {
                                     if (!draggedPedido) {
-                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo);
+                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo, d.maritimo_po, d.maritimo_factura, d.maritimo_obs);
                                     }
                                   }}
                                   onDragOver={(e) => {
@@ -2097,7 +2130,11 @@ export function RundownVivo() {
                                       ? "hover:bg-blue-100/60"
                                       : "hover:bg-blue-100/70"
                                   }`}
-                                  title={d.plan_maritimo > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar arribo marítimo"}
+                                  title={
+                                    d.maritimo_factura || d.maritimo_po
+                                      ? `Factura: ${d.maritimo_factura || "—"} | PO: ${d.maritimo_po || "—"}${d.maritimo_obs ? ` (${d.maritimo_obs})` : ""}`
+                                      : d.plan_maritimo > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar arribo marítimo"
+                                  }
                                 >
                                   {d.plan_maritimo > 0 ? (
                                     <span
@@ -2123,6 +2160,11 @@ export function RundownVivo() {
                                     >
                                       <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
                                       +{d.plan_maritimo.toLocaleString()}
+                                      {(d.maritimo_factura || d.maritimo_po) && (
+                                        <span className="text-[9px] font-mono text-blue-950 font-normal ml-0.5 px-1 py-0 bg-blue-200/80 rounded">
+                                          #{d.maritimo_factura || d.maritimo_po}
+                                        </span>
+                                      )}
                                     </span>
                                   ) : (
                                     <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
@@ -2157,7 +2199,16 @@ export function RundownVivo() {
                                   key={d.fecha}
                                   onClick={() => {
                                     if (!draggedPedido) {
-                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Aereo", d.pedidos_aereos);
+                                      handleCellClickIngreso(
+                                        mat.id_material,
+                                        d.fecha,
+                                        d.dia_nombre,
+                                        "Aereo",
+                                        d.pedidos_aereos,
+                                        d.aereo_po,
+                                        d.aereo_factura,
+                                        d.aereo_obs
+                                      );
                                     }
                                   }}
                                   onDragOver={(e) => {
@@ -2186,7 +2237,11 @@ export function RundownVivo() {
                                       ? "hover:bg-purple-100/60"
                                       : "hover:bg-purple-100/70"
                                   }`}
-                                  title={d.pedidos_aereos > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido aéreo"}
+                                  title={
+                                    d.aereo_factura || d.aereo_po
+                                      ? `Factura: ${d.aereo_factura || "—"} | PO: ${d.aereo_po || "—"}${d.aereo_obs ? ` (${d.aereo_obs})` : ""}`
+                                      : d.pedidos_aereos > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido aéreo"
+                                  }
                                 >
                                   {d.pedidos_aereos > 0 ? (
                                     <span
@@ -2212,6 +2267,11 @@ export function RundownVivo() {
                                     >
                                       <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
                                       +{d.pedidos_aereos.toLocaleString()}
+                                      {(d.aereo_factura || d.aereo_po) && (
+                                        <span className="text-[9px] font-mono text-purple-950 font-normal ml-0.5 px-1 py-0 bg-purple-200/80 rounded">
+                                          #{d.aereo_factura || d.aereo_po}
+                                        </span>
+                                      )}
                                     </span>
                                   ) : (
                                     <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
@@ -2220,6 +2280,25 @@ export function RundownVivo() {
                               );
                             })}
                           </tr>
+                          {mat.dias.some((d) => (d.entregas_locales || 0) > 0) && (
+                            <tr className="hover:bg-emerald-50/30">
+                              <td className="sticky left-0 z-10 bg-white font-medium text-emerald-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                                <Truck className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>Transf. CL2</span>
+                              </td>
+                              {mat.dias.map((d) => (
+                                <td key={d.fecha} className="px-2 py-1.5 text-center font-mono border-r border-slate-100">
+                                  {(d.entregas_locales || 0) > 0 ? (
+                                    <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[11px]">
+                                      +{(d.entregas_locales || 0).toLocaleString()}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-300 text-[11px]">—</span>
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          )}
                         </>
                       )}
 

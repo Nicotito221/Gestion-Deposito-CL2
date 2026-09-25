@@ -14,6 +14,10 @@ from app.schemas.pedido import (
     PedidoItemOut,
     PedidoOut,
     PedidosListResponse,
+    PreparacionPedidoResponse,
+    PreparacionPedidoUpdate,
+    RemitoDetalleOut,
+    RemitoItemOut,
     SugerenciaMaterialDetalle,
 )
 
@@ -50,7 +54,24 @@ class PedidoService:
             for m in request.materiales:
                 counts_map[m.id_material] = float(m.stock_contado)
 
-        ids_to_query = list(counts_map.keys()) if counts_map else None
+        if not request.id_conteo and not request.materiales:
+            ultimo_id_conteo = self._repo.get_ultimo_id_conteo_finalizado()
+            if ultimo_id_conteo:
+                conteo = self._conteo_repo.get_conteo_detalle(ultimo_id_conteo)
+                if conteo:
+                    if conteo.get("fecha_impacto"):
+                        try:
+                            raw_f = conteo["fecha_impacto"]
+                            if isinstance(raw_f, date):
+                                fecha_conteo = raw_f
+                            else:
+                                fecha_conteo = datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
+                        except Exception:
+                            pass
+                    for it in conteo.get("items", []):
+                        counts_map[it["id_material"]] = float(it["stock_contado"])
+
+        ids_to_query = list(counts_map.keys()) if (request.id_conteo or request.materiales) else None
         materiales = self._repo.get_materiales_para_sugerencia(ids_to_query)
 
         all_products: List[str] = list({
@@ -94,7 +115,12 @@ class PedidoService:
                     pedidos_hoy_map.get(p["id_material"], 0.0) + p["cantidad_pedida"], 2
                 )
 
-        modalidad = request.modalidad_turnos.lower()
+        modalidad = request.modalidad_turnos.lower() if request.modalidad_turnos else "completo"
+        if request.turno in ("Turno Mañana", "Turno Tarde"):
+            modalidad = "2_turnos"
+        elif request.turno == "Turno Noche":
+            modalidad = "3_turnos"
+
         if modalidad == "2_turnos":
             turnos_list = ["Turno Mañana", "Turno Tarde"]
         elif modalidad == "3_turnos":
@@ -108,7 +134,7 @@ class PedidoService:
 
         for m in materiales:
             mat_id = m["id_material"]
-            stock_contado = counts_map.get(mat_id, 0.0)
+            stock_contado = counts_map.get(mat_id, float(m.get("stock_inicial_planta") or 0.0))
 
             veh_prod_hoy = sum(
                 prod_map_hoy.get(p["id_producto"], 0.0) * p["factor_uso"]
@@ -209,26 +235,34 @@ class PedidoService:
             pallets_por_turno: Dict[str, int] = {}
 
             if modalidad == "completo":
+                if es_pallet:
+                    p1 = math.ceil(cant_pallets / 2.0)
+                    p2 = cant_pallets - p1
+                    pallets_por_turno = {"Completo": cant_pallets, "Turno Mañana": p1, "Turno Tarde": p2}
+                    sugerido_por_turno = {"Completo": cantidad_neta, "Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size)}
+                else:
+                    u1 = math.ceil(cantidad_neta / 2.0)
+                    u2 = int(cantidad_neta - u1)
+                    pallets_por_turno = {"Completo": cant_pallets, "Turno Mañana": u1, "Turno Tarde": u2}
+                    sugerido_por_turno = {"Completo": cantidad_neta, "Turno Mañana": float(u1), "Turno Tarde": float(u2)}
                 desglose_turnos = {"Completo": sugerido_bruto}
-                sugerido_por_turno = {"Completo": cantidad_neta}
-                pallets_por_turno = {"Completo": cant_pallets}
             elif modalidad == "2_turnos":
                 if es_pallet:
                     p1 = math.ceil(cant_pallets / 2.0)
                     p2 = cant_pallets - p1
-                    pallets_por_turno = {"Turno Mañana": p1, "Turno Tarde": p2}
-                    sugerido_por_turno = {"Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size)}
+                    pallets_por_turno = {"Turno Mañana": p1, "Turno Tarde": p2, "Completo": cant_pallets}
+                    sugerido_por_turno = {"Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size), "Completo": cantidad_neta}
                     bruto_p1 = math.ceil((sugerido_bruto / lot_size) / 2.0)
                     bruto_p2 = int(round(sugerido_bruto / lot_size)) - bruto_p1
-                    desglose_turnos = {"Turno Mañana": float(bruto_p1 * lot_size), "Turno Tarde": float(bruto_p2 * lot_size)}
+                    desglose_turnos = {"Turno Mañana": float(bruto_p1 * lot_size), "Turno Tarde": float(bruto_p2 * lot_size), "Completo": sugerido_bruto}
                 else:
                     u1 = math.ceil(cantidad_neta / 2.0)
                     u2 = int(cantidad_neta - u1)
-                    pallets_por_turno = {"Turno Mañana": u1, "Turno Tarde": u2}
-                    sugerido_por_turno = {"Turno Mañana": float(u1), "Turno Tarde": float(u2)}
+                    pallets_por_turno = {"Turno Mañana": u1, "Turno Tarde": u2, "Completo": cant_pallets}
+                    sugerido_por_turno = {"Turno Mañana": float(u1), "Turno Tarde": float(u2), "Completo": cantidad_neta}
                     b1 = math.ceil(sugerido_bruto / 2.0)
                     b2 = int(sugerido_bruto - b1)
-                    desglose_turnos = {"Turno Mañana": float(b1), "Turno Tarde": float(b2)}
+                    desglose_turnos = {"Turno Mañana": float(b1), "Turno Tarde": float(b2), "Completo": sugerido_bruto}
             else:
                 if es_pallet:
                     p1 = math.ceil(cant_pallets / 3.0)
@@ -313,6 +347,13 @@ class PedidoService:
                 detail="El pedido debe contener al menos un material",
             )
 
+        today = get_argentina_today()
+        if data.fecha_requerida and data.fecha_requerida < today:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La fecha requerida no puede ser anterior a la fecha actual",
+            )
+
         items_dict = [it.model_dump() for it in data.items]
         id_pedido = self._repo.create_pedido(
             sector=data.sector,
@@ -345,12 +386,14 @@ class PedidoService:
         fecha_requerida: Optional[date] = None,
         estado: Optional[str] = None,
         turno: Optional[str] = None,
+        sector: Optional[str] = None,
         limit: int = 50,
     ) -> PedidosListResponse:
         raw_list = self._repo.get_pedidos(
             fecha_requerida=fecha_requerida,
             estado=estado,
             turno=turno,
+            sector=sector,
             limit=limit,
         )
         return PedidosListResponse(
@@ -372,15 +415,59 @@ class PedidoService:
             PedidoItemOut(
                 id_material=it["id_material"],
                 nombre_material=it.get("nombre_material") or it["id_material"],
-                unidad=it.get("unidad", "MTS"),
+                unidad=it.get("unidad", "UN"),
                 cantidad_pedida=float(it["cantidad_pedida"]),
                 cantidad_preparada=float(it.get("cantidad_preparada", 0.0)),
                 cantidad_entregada=float(it.get("cantidad_entregada", 0.0)),
+                cantidad_pendiente=float(it.get("cantidad_pendiente", 0.0)),
                 estado=it.get("estado", "pendiente"),
                 comentario=it.get("comentario"),
+                tipo_empaque=it.get("tipo_empaque", "unidad"),
+                tamanio_lote=float(it.get("tamanio_lote", 1.0)),
+                cantidad_pallets=it.get("cantidad_pallets"),
+                cantidad_pallets_preparada=it.get("cantidad_pallets_preparada"),
+                cantidad_pallets_entregada=it.get("cantidad_pallets_entregada"),
+                cantidad_pallets_pendiente=it.get("cantidad_pallets_pendiente"),
             )
             for it in p.get("items", [])
         ]
+        remitos_out = [
+            RemitoDetalleOut(
+                id_remito=r["id_remito"],
+                id_pedido=r["id_pedido"],
+                fecha_emision=r["fecha_emision"],
+                fecha_entrega=r.get("fecha_entrega"),
+                estado=r.get("estado", "emitido"),
+                id_usuario_emisor=r.get("id_usuario_emisor"),
+                usuario_emisor=r.get("usuario_emisor"),
+                observacion=r.get("observacion"),
+                sector_destino=r.get("sector_destino"),
+                usuario_solicitante=r.get("usuario_solicitante"),
+                fecha_requerida=r.get("fecha_requerida"),
+                turno=r.get("turno"),
+                total_items=r.get("total_items", len(r.get("items", []))),
+                total_pallets=r.get("total_pallets", 0),
+                total_unidades=r.get("total_unidades", 0.0),
+                items=[
+                    RemitoItemOut(
+                        id_material=m["id_material"],
+                        nombre_material=m.get("nombre_material"),
+                        unidad=m.get("unidad", "UN"),
+                        cantidad=float(m["cantidad"]),
+                        tipo_empaque=m.get("tipo_empaque", "unidad"),
+                        tamanio_lote=float(m.get("tamanio_lote", 1.0)),
+                        cantidad_pallets=m.get("cantidad_pallets"),
+                    )
+                    for m in r.get("items", [])
+                ],
+            )
+            for r in p.get("remitos", [])
+        ]
+        today = get_argentina_today()
+        fecha_ref = p.get("fecha_requerida") or (p["fecha_creacion"].date() if p.get("fecha_creacion") else None)
+        es_demorado = bool(
+            fecha_ref and fecha_ref < today and p.get("estado") not in ("completo", "cancelado")
+        )
         return PedidoOut(
             id_pedido=p["id_pedido"],
             sector=p["sector"],
@@ -396,6 +483,142 @@ class PedidoService:
             comentario=p.get("comentario"),
             id_usuario_solicitante=p.get("id_usuario_solicitante"),
             usuario_solicitante=p.get("usuario_solicitante"),
+            id_remito=p.get("id_remito"),
+            remitos=remitos_out,
             total_items=p.get("total_items", len(items_out)),
             items=items_out,
+            es_demorado=es_demorado,
         )
+
+    def get_remitos_by_pedido(self, id_pedido: int) -> List[RemitoDetalleOut]:
+        data = self._repo.get_remitos_by_pedido(id_pedido)
+        return [
+            RemitoDetalleOut(
+                id_remito=r["id_remito"],
+                id_pedido=r["id_pedido"],
+                fecha_emision=r["fecha_emision"],
+                fecha_entrega=r.get("fecha_entrega"),
+                estado=r.get("estado", "emitido"),
+                id_usuario_emisor=r.get("id_usuario_emisor"),
+                usuario_emisor=r.get("usuario_emisor"),
+                observacion=r.get("observacion"),
+                sector_destino=r.get("sector_destino"),
+                usuario_solicitante=r.get("usuario_solicitante"),
+                fecha_requerida=r.get("fecha_requerida"),
+                turno=r.get("turno"),
+                total_items=r.get("total_items", len(r.get("items", []))),
+                total_pallets=r.get("total_pallets", 0),
+                total_unidades=r.get("total_unidades", 0.0),
+                items=[
+                    RemitoItemOut(
+                        id_material=m["id_material"],
+                        nombre_material=m.get("nombre_material"),
+                        unidad=m.get("unidad", "UN"),
+                        cantidad=float(m["cantidad"]),
+                        tipo_empaque=m.get("tipo_empaque", "unidad"),
+                        tamanio_lote=float(m.get("tamanio_lote", 1.0)),
+                        cantidad_pallets=m.get("cantidad_pallets"),
+                    )
+                    for m in r.get("items", [])
+                ],
+            )
+            for r in data
+        ]
+
+    def get_remito_by_id(self, id_remito: str) -> RemitoDetalleOut:
+        data = self._repo.get_remito_by_id(id_remito)
+        if not data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Remito {id_remito} no encontrado",
+            )
+        return RemitoDetalleOut(
+            id_remito=data["id_remito"],
+            id_pedido=data["id_pedido"],
+            fecha_emision=data["fecha_emision"],
+            fecha_entrega=data.get("fecha_entrega"),
+            estado=data.get("estado", "emitido"),
+            id_usuario_emisor=data.get("id_usuario_emisor"),
+            usuario_emisor=data.get("usuario_emisor"),
+            observacion=data.get("observacion"),
+            sector_destino=data.get("sector_destino"),
+            usuario_solicitante=data.get("usuario_solicitante"),
+            fecha_requerida=data.get("fecha_requerida"),
+            turno=data.get("turno"),
+            total_items=data.get("total_items", len(data.get("items", []))),
+            total_pallets=data.get("total_pallets", 0),
+            total_unidades=data.get("total_unidades", 0.0),
+            items=[
+                RemitoItemOut(
+                    id_material=m["id_material"],
+                    nombre_material=m.get("nombre_material"),
+                    unidad=m.get("unidad", "UN"),
+                    cantidad=float(m["cantidad"]),
+                    tipo_empaque=m.get("tipo_empaque", "unidad"),
+                    tamanio_lote=float(m.get("tamanio_lote", 1.0)),
+                    cantidad_pallets=m.get("cantidad_pallets"),
+                )
+                for m in data.get("items", [])
+            ],
+        )
+
+    def actualizar_preparacion(
+        self,
+        id_pedido: int,
+        data: PreparacionPedidoUpdate,
+        id_usuario: Optional[int] = None,
+    ) -> PreparacionPedidoResponse:
+        items_dict = [it.model_dump() for it in data.items]
+        try:
+            pedido_actualizado, id_remito = self._repo.actualizar_preparacion_pedido(
+                id_pedido=id_pedido,
+                accion=data.accion,
+                comentario=data.comentario,
+                items=items_dict,
+                id_usuario=id_usuario,
+            )
+        except ValueError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(ve),
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error al procesar preparación del pedido: {str(e)}",
+            )
+
+        msg = "Avance de preparación guardado exitosamente."
+        if data.accion == "confirmar_completo":
+            msg = f"Pedido #{id_pedido} completado exitosamente. Remito {id_remito} emitido."
+        elif data.accion == "confirmar_parcial":
+            msg = f"Pedido #{id_pedido} confirmado como parcial. Remito {id_remito} emitido."
+
+        return PreparacionPedidoResponse(
+            pedido=self._to_pedido_out(pedido_actualizado),
+            id_remito=id_remito,
+            mensaje=msg,
+        )
+
+    def cancelar_pedido(
+        self, id_pedido: int, motivo: str, id_usuario: Optional[int] = None
+    ) -> PedidoOut:
+        if not motivo or not motivo.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Debe indicar el motivo de la cancelación",
+            )
+        try:
+            res = self._repo.cancelar_pedido(id_pedido, motivo.strip(), id_usuario)
+            if not res:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Pedido #{id_pedido} no encontrado",
+                )
+            return self._to_pedido_out(res)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
