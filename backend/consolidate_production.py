@@ -533,7 +533,16 @@ class ProductionConsolidator:
             if col not in self.daily_columns:
                 self.daily_columns.append(col)
 
-        tent_cols = [h for h in headers if is_future_tentative_column(h, 9) and h not in self.daily_columns]
+        for col in daily_cols:
+            m = re.match(r'^\d{1,2}-([a-z]+)', col.strip().lower())
+            if m:
+                detected_m = MONTHS_LOOKUP.get(m.group(1))
+                if detected_m:
+                    self.firm_month = detected_m
+                    break
+        firm_m = getattr(self, 'firm_month', 9) or 9
+
+        tent_cols = [h for h in headers if is_future_tentative_column(h, firm_m) and h not in self.daily_columns]
         for col in tent_cols:
             if col not in self.tentative_columns_f1:
                 self.tentative_columns_f1.append(col)
@@ -575,7 +584,8 @@ class ProductionConsolidator:
             'SUPPLIER CODE', 'SUPPLIER NAME', 'PART NUMBER', 'PART NAME',
             'DOCK/ROUTING', 'KANBAN NO.', 'DOCK', 'ROUTING'
         }
-        month_cols = [h for h in headers if h.strip().upper() not in non_month_keys and is_future_tentative_column(h, 9)]
+        firm_m = getattr(self, 'firm_month', 9) or 9
+        month_cols = [h for h in headers if h.strip().upper() not in non_month_keys and is_future_tentative_column(h, firm_m)]
         for col in month_cols:
             if col not in self.tentative_columns_f2:
                 self.tentative_columns_f2.append(col)
@@ -625,12 +635,15 @@ class ProductionConsolidator:
         sorted_daily, all_tentative = self.get_sorted_columns()
         sap_tent = [col for col in all_tentative if 'TOTAL' not in col.upper()]
 
-        firm_months = set()
-        for d in sorted_daily:
-            m = re.match(r'^\d{1,2}-([a-z]+)', d.strip().lower())
-            if m:
-                firm_months.add(MONTHS_LOOKUP.get(m.group(1), 9))
-        firm_month = list(firm_months)[0] if firm_months else 9
+        firm_m = getattr(self, 'firm_month', None)
+        if not firm_m:
+            firm_months = set()
+            for d in sorted_daily:
+                m = re.match(r'^\d{1,2}-([a-z]+)', d.strip().lower())
+                if m:
+                    firm_months.add(MONTHS_LOOKUP.get(m.group(1), 9))
+            firm_m = list(firm_months)[0] if firm_months else 9
+        firm_month = firm_m
 
         month_names_es = {
             1: 'Enero', 2: 'Febrero', 3: 'Marzo', 4: 'Abril', 5: 'Mayo', 6: 'Junio',

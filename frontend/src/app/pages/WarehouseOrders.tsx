@@ -249,7 +249,6 @@ export function WarehouseOrders() {
                   <TableHead>Fecha Requerida / Turno</TableHead>
                   <TableHead className="text-center">Ítems</TableHead>
                   <TableHead>Prioridad</TableHead>
-                  <TableHead>Origen</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acción</TableHead>
                 </TableRow>
@@ -257,14 +256,14 @@ export function WarehouseOrders() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-12 text-center text-slate-500">
+                    <TableCell colSpan={8} className="py-12 text-center text-slate-500">
                       <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-600 mb-2" />
                       <span className="text-xs">Cargando pedidos de depósito...</span>
                     </TableCell>
                   </TableRow>
                 ) : filteredOrders.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-12 text-center text-slate-400">
+                    <TableCell colSpan={8} className="py-12 text-center text-slate-400">
                       <Package className="w-8 h-8 mx-auto text-slate-300 mb-2" />
                       <p className="text-sm font-medium">No se encontraron pedidos con los filtros aplicados</p>
                       <p className="text-xs text-slate-400 mt-1">Los pedidos creados desde Nuevo Pedido o Conteo se reflejan aquí en tiempo real.</p>
@@ -324,11 +323,6 @@ export function WarehouseOrders() {
                             className="text-xs capitalize"
                           >
                             {order.prioridad === "urgente" ? "Urgente" : "Normal"}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs text-slate-600">
-                          <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-600">
-                            {order.origen === "conteo_planta" ? "Conteo Planta" : "Manual"}
                           </Badge>
                         </TableCell>
                         <TableCell>

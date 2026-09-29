@@ -249,14 +249,17 @@ export interface RundownDayCell {
   maritimo_po?: string | null;
   maritimo_factura?: string | null;
   maritimo_obs?: string | null;
+  maritimo_estado?: "planificado" | "confirmado" | null;
   pedidos_aereos: number;
   aereo_po?: string | null;
   aereo_factura?: string | null;
   aereo_obs?: string | null;
+  aereo_estado?: "planificado" | "confirmado" | null;
   entregas_locales: number;
   local_po?: string | null;
   local_factura?: string | null;
   local_obs?: string | null;
+  local_estado?: "planificado" | "confirmado" | null;
   ajuste_scrap: number;
   stock_final: number;
   dias_cobertura: number;
@@ -290,6 +293,7 @@ export interface RundownPeriodoItem {
   mes: number;
   label: string;
   es_firme: boolean;
+  es_finalizado?: boolean;
   es_proyectado_manual?: boolean;
   periodo_copia?: string | null;
   total_volumen?: number;
@@ -323,6 +327,7 @@ export interface RundownTransitoInput {
   factura_numero?: string;
   cantidad: number;
   observacion?: string;
+  estado?: "planificado" | "confirmado";
 }
 
 export interface RundownIngresoDiaInput {
@@ -335,6 +340,7 @@ export interface RundownIngresoDiaInput {
   factura_numero?: string;
   observacion?: string;
   fecha_origen?: string;
+  estado?: "planificado" | "confirmado";
 }
 
 export async function getSupplierRundown(
@@ -652,6 +658,8 @@ export interface MaterialCatalogoItem {
   categoria?: string | null;
   tipo_empaque?: string;
   tamanio_lote?: number;
+  id_proveedor?: number | null;
+  proveedor_nombre?: string | null;
 }
 
 export interface RundownParametroMaterialItem {
@@ -706,6 +714,15 @@ export async function searchMaterialesCatalogo(q: string = ""): Promise<Material
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
   const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo${qs}`);
   if (!res.ok) throw new Error("Error al buscar materiales en catálogo");
+  return res.json();
+}
+
+export async function getMaterialCatalogoInfo(idMaterial: string): Promise<MaterialCatalogoItem | null> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo/${encodeURIComponent(idMaterial.trim())}`);
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    throw new Error("Error al obtener información del material");
+  }
   return res.json();
 }
 
@@ -1110,7 +1127,7 @@ export async function searchMaterialesConteo(params?: {
 export async function createConteo(data: ConteoCreateRequest): Promise<ConteoResponse> {
   const res = await fetch(`${API_BASE_URL}/api/conteo`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   if (!res.ok) {
@@ -1130,7 +1147,7 @@ export async function getHistoricoConteos(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/conteo/historico${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar histórico de conteos");
@@ -1139,7 +1156,9 @@ export async function getHistoricoConteos(params?: {
 }
 
 export async function getDetalleConteo(id_conteo: number): Promise<ConteoResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/conteo/${id_conteo}`);
+  const res = await fetch(`${API_BASE_URL}/api/conteo/${id_conteo}`, {
+    headers: getAuthHeaders(),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al obtener detalle del conteo");
@@ -1161,6 +1180,7 @@ export interface SugerenciaMaterialInput {
 
 export interface CalcularSugerenciaRequest {
   id_conteo?: number;
+  solo_conteo?: boolean;
   materiales?: SugerenciaMaterialInput[];
   fecha_conteo?: string;
   fecha_requerida?: string;
@@ -1178,6 +1198,8 @@ export interface SugerenciaMaterialDetalle {
   id_proveedor: number;
   nombre_proveedor: string;
   stock_contado: number;
+  stock_cl2?: number;
+  en_cl2?: boolean;
   consumo_diario: number;
   consumo_sig?: number;
   doh_sugerido_planta: number;
@@ -1462,6 +1484,7 @@ export interface MaterialConfigItem {
   doh_sugerido_planta: number;
   id_parametro?: number | null;
   activo: boolean;
+  en_cl2: boolean;
 }
 
 export interface MaterialConfigListResponse {
@@ -1482,12 +1505,14 @@ export interface MaterialConfigUpdate {
   bultos_por_pallet?: number | null;
   doh_sugerido_planta: number;
   unidad?: string | null;
+  en_cl2?: boolean | null;
 }
 
 export async function getMaterialesConfiguracion(params?: {
   search?: string;
   id_proveedor?: number;
   tipo_empaque?: string;
+  en_cl2?: boolean;
   page?: number;
   page_size?: number;
 }): Promise<MaterialConfigListResponse> {
@@ -1495,6 +1520,7 @@ export async function getMaterialesConfiguracion(params?: {
   if (params?.search) query.append("search", params.search);
   if (params?.id_proveedor) query.append("id_proveedor", String(params.id_proveedor));
   if (params?.tipo_empaque && params.tipo_empaque !== "all") query.append("tipo_empaque", params.tipo_empaque);
+  if (params?.en_cl2 !== undefined) query.append("en_cl2", String(params.en_cl2));
   if (params?.page) query.append("page", String(params.page));
   if (params?.page_size) query.append("page_size", String(params.page_size));
 
@@ -1839,6 +1865,61 @@ export async function confirmarRecepcionIngreso(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al confirmar recepción en depósito");
+  }
+  return res.json();
+}
+
+export async function deleteIngreso(idIngreso: number): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `Error al eliminar comprobante #${idIngreso}`);
+  }
+}
+
+export interface TraceEvent {
+  timestamp: string;
+  action: string;
+  user: string;
+  role: string;
+  detail: string;
+  type: "solicitud" | "aprobacion" | "preparacion" | "entrega" | "ajuste" | "sistema";
+}
+
+export interface TraceOrder {
+  id: string;
+  number: string;
+  sector: string;
+  status: string;
+  events: TraceEvent[];
+}
+
+export interface AuditListResponse {
+  orders: TraceOrder[];
+  total_orders: number;
+}
+
+export async function getAuditoriaPedidos(params?: {
+  search?: string;
+  sector?: string;
+  estado?: string;
+  limit?: number;
+}): Promise<AuditListResponse> {
+  const query = new URLSearchParams();
+  if (params?.search) query.append("search", params.search);
+  if (params?.sector) query.append("sector", params.sector);
+  if (params?.estado) query.append("estado", params.estado);
+  if (params?.limit) query.append("limit", String(params.limit));
+
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/api/auditoria/pedidos${qs ? `?${qs}` : ""}`;
+  const res = await fetch(url, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener historial de auditoría");
   }
   return res.json();
 }

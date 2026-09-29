@@ -18,6 +18,7 @@ class SugerenciaMaterialInput(BaseModel):
 
 class CalcularSugerenciaRequest(BaseModel):
     id_conteo: Optional[int] = None
+    solo_conteo: Optional[bool] = False
     materiales: Optional[List[SugerenciaMaterialInput]] = None
     fecha_conteo: Optional[date] = None
     fecha_requerida: Optional[date] = None
@@ -35,6 +36,8 @@ class SugerenciaMaterialDetalle(BaseModel):
     id_proveedor: int
     nombre_proveedor: str
     stock_contado: float
+    stock_cl2: float = 0.0
+    en_cl2: bool = True
     consumo_diario: float
     consumo_sig: float = 0.0
     doh_sugerido_planta: float

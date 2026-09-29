@@ -47,11 +47,13 @@ import {
   Check,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "../context/AuthContext";
 import {
   getIngresos,
   getIngresoById,
   createIngreso,
   confirmarRecepcionIngreso,
+  deleteIngreso,
   getRundownSecciones,
   searchMaterialesCatalogo,
   type IngresoOut,
@@ -68,12 +70,19 @@ const statusConfig: Record<string, { label: string; color: string; icon: typeof 
 };
 
 export function Remitos() {
+  const { hasRole } = useAuth();
+  const canDeleteRemito = hasRole(["gerente", "jefe"]);
+
   const [ingresos, setIngresos] = useState<IngresoOut[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
   const [search, setSearch] = useState<string>("");
   const [filterEstado, setFilterEstado] = useState<string>("all");
   const [filterProveedor, setFilterProveedor] = useState<string>("all");
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState<boolean>(false);
+  const [targetToDelete, setTargetToDelete] = useState<IngresoOut | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   const [newModalOpen, setNewModalOpen] = useState<boolean>(false);
   const [isSubmittingNew, setIsSubmittingNew] = useState<boolean>(false);
@@ -347,6 +356,22 @@ export function Remitos() {
     }
   };
 
+  const handleDeleteIngreso = async () => {
+    if (!targetToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteIngreso(targetToDelete.id_ingreso);
+      toast.success(`Factura / Remito #${targetToDelete.numero_factura} eliminado correctamente`);
+      setDeleteModalOpen(false);
+      setTargetToDelete(null);
+      await fetchIngresosList();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al eliminar comprobante");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const kpis = useMemo(() => {
     const total = ingresos.length;
     const pendientes = ingresos.filter((i) => i.estado === "pendiente").length;
@@ -573,6 +598,21 @@ export function Remitos() {
                               >
                                 <Truck className="w-3.5 h-3.5" />
                                 <span>Ingresar Stock</span>
+                              </Button>
+                            )}
+
+                            {canDeleteRemito && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setTargetToDelete(ing);
+                                  setDeleteModalOpen(true);
+                                }}
+                                className="h-7 px-2 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                title="Eliminar remito (solo Jefe / Gerente / Administrador)"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
                               </Button>
                             )}
                           </div>
@@ -1130,6 +1170,92 @@ export function Remitos() {
           <DialogFooter className="pt-2">
             <Button size="sm" onClick={() => setDetailModalOpen(false)}>
               Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL CONFIRMAR ELIMINACIÓN DE REMITO */}
+      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base text-red-600">
+              <AlertCircle className="w-5 h-5 text-red-600" />
+              <span>Eliminar Comprobante #{targetToDelete?.numero_factura}</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Esta acción no se puede deshacer.
+            </DialogDescription>
+          </DialogHeader>
+
+          {targetToDelete && (
+            <div className="space-y-3 py-2 text-xs">
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-1">
+                <p>
+                  <strong className="text-slate-700">Proveedor:</strong> {targetToDelete.nombre_proveedor}
+                </p>
+                <p>
+                  <strong className="text-slate-700">Estado:</strong>{" "}
+                  <span className="capitalize font-semibold">{targetToDelete.estado}</span>
+                </p>
+                {targetToDelete.orden_compra && (
+                  <p>
+                    <strong className="text-slate-700">Orden de Compra:</strong> {targetToDelete.orden_compra}
+                  </p>
+                )}
+                <p>
+                  <strong className="text-slate-700">Total ítems:</strong> {targetToDelete.total_items}
+                </p>
+              </div>
+
+              {targetToDelete.estado !== "pendiente" ? (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5 text-xs text-red-900">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                    <span>¡Atención: Stock ya ingresado!</span>
+                  </p>
+                  <p className="text-[11px] leading-relaxed">
+                    Este remito ya impactó en el stock ({targetToDelete.deposito_en_planta ? "Planta" : "CL2 Depósito"}).
+                    Al eliminarlo, se revertirá automáticamente el stock ingresado y se eliminará el arribo registrado en el Rundown.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-slate-600 text-xs">
+                  ¿Confirmas que deseas eliminar esta factura pendiente? No impactará en el stock de materiales.
+                </p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDeleteModalOpen(false);
+                setTargetToDelete(null);
+              }}
+              disabled={isDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleDeleteIngreso}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 text-white gap-1.5 shadow-xs font-semibold"
+            >
+              {isDeleting ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Eliminando...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  <span>Eliminar Definitivamente</span>
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

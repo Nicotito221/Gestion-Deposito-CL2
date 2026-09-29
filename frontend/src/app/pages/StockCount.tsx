@@ -381,12 +381,12 @@ export function StockCount() {
 
       const res = await createConteo(payload);
       setLastSavedConteo(res);
-      setSuccessModalOpen(true);
+      setRows([]);
+      setGeneralObs("");
       toast.success(
         `Conteo #${res.id_conteo} guardado. Sincronizado con Rundown Planta para el ${formatSoloFechaAR(res.fecha_impacto)}.`
       );
-      setRows([]);
-      setGeneralObs("");
+      handleOpenSugerencia(res.id_conteo);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al guardar conteo");
     } finally {
@@ -407,11 +407,13 @@ export function StockCount() {
           fecha_conteo?: string;
           modalidad_turnos: "completo" | "2_turnos" | "3_turnos";
           id_conteo?: number;
+          solo_conteo?: boolean;
           materiales?: { id_material: string; stock_contado: number }[];
         } = {
           fecha_requerida: fecha,
           fecha_conteo: fechaImpacto,
           modalidad_turnos: modalidad,
+          solo_conteo: true,
         };
         if (id_conteo) {
           payload.id_conteo = id_conteo;
@@ -1447,6 +1449,20 @@ export function StockCount() {
             </p>
           </DialogHeader>
 
+          {lastSavedConteo && lastSavedConteo.id_conteo === sugerenciaTargetConteoId && (
+            <div className="flex-shrink-0 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+                <div>
+                  <span className="font-bold">Conteo #{lastSavedConteo.id_conteo} registrado y sincronizado.</span>
+                  <p className="text-[11px] text-emerald-700 mt-0.5">
+                    {lastSavedConteo.total_items} materiales actualizados para el {formatSoloFechaAR(lastSavedConteo.fecha_impacto)}. A continuación se detalla la propuesta de reposición:
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* BARRA DE CONFIGURACIÓN DE LA SUGERENCIA */}
           <div className="flex-shrink-0 bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3">
@@ -1646,8 +1662,14 @@ export function StockCount() {
                           )}
                           <div className="text-right">
                             <span className="text-[10px] text-slate-400 block">Stock Planta</span>
-                            <span className="font-mono font-semibold text-slate-700">
+                            <span className={`font-mono font-semibold ${item.stock_contado < 0 ? "text-rose-600 font-bold" : "text-slate-700"}`}>
                               {item.stock_contado}
+                            </span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-[10px] text-slate-400 block">Stock CL2</span>
+                            <span className={`font-mono font-semibold ${(item.stock_cl2 ?? 0) > 0 ? "text-slate-900 font-bold" : "text-amber-600"}`}>
+                              {(item.stock_cl2 ?? 0).toLocaleString("es-AR")}
                             </span>
                           </div>
                           <div className="text-right border-l pl-2.5 border-slate-100 hidden sm:block">

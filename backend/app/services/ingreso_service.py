@@ -53,3 +53,12 @@ class IngresoService:
             )
         res = self._repo.confirmar_recepcion(id_ingreso, data, id_usuario=id_usuario)
         return IngresoOut.model_validate(res)
+
+    def delete_ingreso(self, id_ingreso: int, id_usuario: Optional[int] = None) -> None:
+        self.get_ingreso_by_id(id_ingreso)
+        success = self._repo.delete_ingreso(id_ingreso, id_usuario=id_usuario)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Comprobante de ingreso #{id_ingreso} no encontrado",
+            )

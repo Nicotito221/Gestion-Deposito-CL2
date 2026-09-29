@@ -79,6 +79,20 @@ def search_materiales_catalogo(
     return service.search_materiales_catalogo(q)
 
 
+@router.get("/materiales-catalogo/{id_material}", response_model=MaterialCatalogoItem)
+def get_material_catalogo(
+    id_material: str,
+    service: RundownService = Depends(get_rundown_service),
+) -> MaterialCatalogoItem:
+    item = service.get_material_catalogo(id_material)
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Material '{id_material}' no encontrado en el catálogo",
+        )
+    return item
+
+
 @router.get("/proveedores/{id_proveedor}/materiales", response_model=List[RundownParametroMaterialItem])
 def get_materiales_proveedor(
     id_proveedor: int,

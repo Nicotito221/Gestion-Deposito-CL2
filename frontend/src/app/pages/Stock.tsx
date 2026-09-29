@@ -192,8 +192,8 @@ export function Stock() {
   const handleOpenAdjust = (mat: StockMaterialItem) => {
     setSelectedMaterial(mat);
     setAdjustForm({
-      nuevo_stock_planta: String(mat.stock_planta),
-      nuevo_stock_cl2: String(mat.stock_cl2),
+      nuevo_stock_planta: String(Math.max(0, mat.stock_planta)),
+      nuevo_stock_cl2: String(Math.max(0, mat.stock_cl2)),
       observacion: "",
     });
     setAdjustOpen(true);
@@ -251,6 +251,21 @@ export function Stock() {
 
   const getTipoMovBadge = (tipo: string) => {
     switch (tipo) {
+      case "ingreso_pedido":
+        return (
+          <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] gap-1">
+            <ArrowUpCircle className="w-3 h-3 text-emerald-600" />
+            Recepción Planta
+          </Badge>
+        );
+      case "egreso_pedido":
+        return (
+          <Badge className="bg-amber-50 text-amber-800 border-amber-200 text-[10px] gap-1">
+            <ArrowDownCircle className="w-3 h-3 text-amber-600" />
+            Transf. CL2
+          </Badge>
+        );
+      case "ingreso_proveedor":
       case "ingreso":
         return (
           <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] gap-1">
@@ -503,6 +518,13 @@ export function Stock() {
                                 <span className="font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                                   {mat.stock_planta.toLocaleString("es-AR")}
                                 </span>
+                              ) : mat.stock_planta < 0 ? (
+                                <span
+                                  className="font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 cursor-help"
+                                  title="Déficit proyectado en planta por consumo de producción"
+                                >
+                                  {mat.stock_planta.toLocaleString("es-AR")}
+                                </span>
                               ) : (
                                 <span className="text-slate-400">0</span>
                               )}
@@ -514,6 +536,13 @@ export function Stock() {
                                 <span className="font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                                   {mat.stock_cl2.toLocaleString("es-AR")}
                                 </span>
+                              ) : mat.stock_cl2 < 0 ? (
+                                <span
+                                  className="font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 cursor-help"
+                                  title="Saldo negativo en CL2"
+                                >
+                                  {mat.stock_cl2.toLocaleString("es-AR")}
+                                </span>
                               ) : (
                                 <span className="text-slate-400">0</span>
                               )}
@@ -521,6 +550,13 @@ export function Stock() {
                             <TableCell className="text-right font-mono text-xs">
                               {mat.stock_total > 0 ? (
                                 <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                  {mat.stock_total.toLocaleString("es-AR")}
+                                </span>
+                              ) : mat.stock_total < 0 ? (
+                                <span
+                                  className="font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 cursor-help"
+                                  title="Déficit neto total proyectado"
+                                >
                                   {mat.stock_total.toLocaleString("es-AR")}
                                 </span>
                               ) : (
@@ -631,9 +667,10 @@ export function Stock() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Todos los tipos</SelectItem>
-                        <SelectItem value="ajuste_manual">Ajuste manual</SelectItem>
-                        <SelectItem value="ingreso">Ingreso</SelectItem>
-                        <SelectItem value="egreso">Egreso</SelectItem>
+                        <SelectItem value="egreso_pedido">Transferencia CL2 (Egreso)</SelectItem>
+                        <SelectItem value="ingreso_pedido">Recepción Planta (Ingreso)</SelectItem>
+                        <SelectItem value="ingreso_proveedor">Ingreso Proveedor</SelectItem>
+                        <SelectItem value="ajuste_manual">Ajuste manual / Conteo</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -791,21 +828,21 @@ export function Stock() {
                 </div>
                 <div className="flex justify-between pt-1 border-t border-slate-200">
                   <span className="text-slate-500">Stock Actual Planta:</span>
-                  <span className="font-mono font-semibold text-blue-700">
+                  <span className={`font-mono font-semibold ${selectedMaterial.stock_planta < 0 ? "text-rose-600" : "text-blue-700"}`}>
                     {selectedMaterial.stock_planta.toLocaleString("es-AR")} {selectedMaterial.unidad}
                   </span>
                 </div>
                 {!selectedMaterial.deposito_en_planta && (
                   <div className="flex justify-between">
                     <span className="text-slate-500">Stock Actual CL2:</span>
-                    <span className="font-mono font-semibold text-amber-700">
+                    <span className={`font-mono font-semibold ${selectedMaterial.stock_cl2 < 0 ? "text-rose-600" : "text-amber-700"}`}>
                       {selectedMaterial.stock_cl2.toLocaleString("es-AR")} {selectedMaterial.unidad}
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between pt-1 border-t border-slate-200">
                   <span className="text-slate-700 font-medium">Stock Total Actual:</span>
-                  <span className="font-mono font-bold text-emerald-700">
+                  <span className={`font-mono font-bold ${selectedMaterial.stock_total < 0 ? "text-rose-600" : "text-emerald-700"}`}>
                     {selectedMaterial.stock_total.toLocaleString("es-AR")} {selectedMaterial.unidad}
                   </span>
                 </div>

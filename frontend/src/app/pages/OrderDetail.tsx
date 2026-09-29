@@ -383,7 +383,8 @@ export function OrderDetail() {
                 </TableHeader>
                 <TableBody>
                   {order.items.map((it) => {
-                    const isPallet = it.tipo_empaque === "pallet" && (it.tamanio_lote || 1) > 1;
+                    const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
+                    const isPallet = (it.cantidad_pallets != null && it.cantidad_pallets > 0) || (it.tipo_empaque === "pallet" && lotSize > 1 && it.cantidad_pedida >= lotSize);
                     const isReady = it.cantidad_preparada >= it.cantidad_pedida && it.cantidad_pedida > 0;
                     const isPartial = it.cantidad_preparada > 0 && it.cantidad_preparada < it.cantidad_pedida;
 

@@ -95,6 +95,7 @@ class MaterialConfigItem(BaseModel):
     doh_sugerido_planta: float = 1.0
     id_parametro: Optional[int] = None
     activo: bool = True
+    en_cl2: bool = True
 
 
 class MaterialConfigListResponse(BaseModel):
@@ -115,3 +116,4 @@ class MaterialConfigUpdate(BaseModel):
     bultos_por_pallet: Optional[int] = Field(default=None, ge=1)
     doh_sugerido_planta: float = Field(default=1.0, ge=0)
     unidad: Optional[str] = Field(default=None, max_length=20)
+    en_cl2: Optional[bool] = None

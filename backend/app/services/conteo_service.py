@@ -66,7 +66,7 @@ class ConteoService:
             )
 
         target_date = data.fecha_impacto or get_argentina_yesterday()
-        user_id = id_usuario or 2
+        user_id = id_usuario
 
         rs = self._get_rundown_service()
         planta_stocks = rs.get_planta_stocks_map(target_date)
