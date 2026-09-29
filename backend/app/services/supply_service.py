@@ -123,19 +123,27 @@ class SupplyService:
 
         filename, rows = self.repository.get_latest_demand_for_export()
 
+        month_counts: dict = {}
+        for _, fecha_dt, cant, _, _, _ in rows:
+            if float(cant or 0.0) > 0 and hasattr(fecha_dt, "year") and hasattr(fecha_dt, "month"):
+                k = (fecha_dt.year, fecha_dt.month)
+                month_counts[k] = month_counts.get(k, 0) + 1
+
+        firm_key = max(month_counts.keys(), key=lambda k: month_counts[k]) if month_counts else (2026, 9)
+
         for prod_id, fecha_dt, cant, desc, tasa, centro in rows:
             canonical = clean_code(prod_id)
             item = consolidator.get_or_create_demand(canonical)
             item.n_parte = format_part_number(prod_id)
             item.codigo_tasa_tbar = format_part_number(tasa)
             item.descripcion = str(desc or "")
-            if fecha_dt.month == 9:
+            if (fecha_dt.year, fecha_dt.month) == firm_key:
                 col_name = f"{fecha_dt.day}-{SPANISH_MONTHS.get(fecha_dt.month, 'mes')}"
                 if col_name not in consolidator.daily_columns:
                     consolidator.daily_columns.append(col_name)
                 item.daily_values[col_name] = item.daily_values.get(col_name, 0.0) + float(cant)
-            else:
-                col_name = SPANISH_MONTHS.get(fecha_dt.month, 'mes').capitalize()
+            elif float(cant or 0.0) > 0:
+                col_name = f"{SPANISH_MONTHS.get(fecha_dt.month, 'mes').capitalize()} {fecha_dt.year}"
                 if col_name not in consolidator.tentative_columns_f2:
                     consolidator.tentative_columns_f2.append(col_name)
                 item.tentative_values[col_name] = item.tentative_values.get(col_name, 0.0) + float(cant)

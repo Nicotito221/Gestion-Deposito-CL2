@@ -12,6 +12,7 @@ import {
 } from "../components/ui/table";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Switch } from "../components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -41,6 +42,7 @@ import {
   Building2,
   Calendar,
   Scale,
+  Warehouse,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -67,6 +69,7 @@ export function MaterialConfig() {
   const [activeSearch, setActiveSearch] = useState<string>("");
   const [selectedProvId, setSelectedProvId] = useState<string>("all");
   const [selectedEmpaque, setSelectedEmpaque] = useState<string>("all");
+  const [selectedEnCl2, setSelectedEnCl2] = useState<string>("all");
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
 
@@ -83,6 +86,7 @@ export function MaterialConfig() {
     bultos_por_pallet: string;
     doh_sugerido_planta: string;
     unidad: string;
+    en_cl2: boolean;
   }>({
     id_proveedor: "",
     deposito_en_planta: false,
@@ -92,6 +96,7 @@ export function MaterialConfig() {
     bultos_por_pallet: "1",
     doh_sugerido_planta: "1.0",
     unidad: "UN",
+    en_cl2: true,
   });
 
   const proveedoresList = useMemo(() => {
@@ -126,6 +131,7 @@ export function MaterialConfig() {
         search: activeSearch || undefined,
         id_proveedor: selectedProvId !== "all" ? parseInt(selectedProvId, 10) : undefined,
         tipo_empaque: selectedEmpaque !== "all" ? selectedEmpaque : undefined,
+        en_cl2: selectedEnCl2 === "all" ? undefined : selectedEnCl2 === "true",
         page,
         page_size: pageSize,
       });
@@ -135,7 +141,7 @@ export function MaterialConfig() {
     } finally {
       setLoading(false);
     }
-  }, [activeSearch, selectedProvId, selectedEmpaque, page, pageSize]);
+  }, [activeSearch, selectedProvId, selectedEmpaque, selectedEnCl2, page, pageSize]);
 
   useEffect(() => {
     fetchProveedores();
@@ -162,6 +168,7 @@ export function MaterialConfig() {
       bultos_por_pallet: mat.bultos_por_pallet && mat.bultos_por_pallet > 0 ? String(mat.bultos_por_pallet) : "6",
       doh_sugerido_planta: String(mat.doh_sugerido_planta || 1.0),
       unidad: mat.unidad || "UN",
+      en_cl2: mat.en_cl2 ?? true,
     });
     setEditModalOpen(true);
   };
@@ -217,6 +224,7 @@ export function MaterialConfig() {
         bultos_por_pallet: bultosPorPalletVal,
         doh_sugerido_planta: dohVal,
         unidad: unidadFinal,
+        en_cl2: formState.en_cl2,
       });
 
       toast.success(`Configuración de ${selectedMaterial.id_material} guardada con éxito`);
@@ -387,6 +395,25 @@ export function MaterialConfig() {
                 </Select>
               </div>
 
+              <div className="w-36">
+                <Select
+                  value={selectedEnCl2}
+                  onValueChange={(val) => {
+                    setSelectedEnCl2(val);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Gestión CL2" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todo CL2</SelectItem>
+                    <SelectItem value="true">Solo en CL2</SelectItem>
+                    <SelectItem value="false">Sin CL2</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <span>Filas:</span>
                 <Select
@@ -420,13 +447,14 @@ export function MaterialConfig() {
                   <TableHead className="w-32 text-xs font-semibold text-slate-700 text-center">Modalidad Empaque</TableHead>
                   <TableHead className="w-48 text-xs font-semibold text-slate-700 text-center">Detalle de Presentación</TableHead>
                   <TableHead className="w-28 text-xs font-semibold text-slate-700 text-center">DOH Sugerido</TableHead>
+                  <TableHead className="w-24 text-xs font-semibold text-slate-700 text-center">Gestión CL2</TableHead>
                   <TableHead className="w-24 text-xs font-semibold text-slate-700 text-center">Acción</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className="divide-y divide-slate-100">
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-12 text-slate-400">
+                    <TableCell colSpan={9} className="text-center py-12 text-slate-400">
                       <div className="flex items-center justify-center gap-2">
                         <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" />
                         <span>Cargando configuración de materiales...</span>
@@ -435,7 +463,7 @@ export function MaterialConfig() {
                   </TableRow>
                 ) : data.items.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-12 text-slate-400">
+                    <TableCell colSpan={9} className="text-center py-12 text-slate-400">
                       No se encontraron materiales con los filtros aplicados.
                     </TableCell>
                   </TableRow>
@@ -495,6 +523,17 @@ export function MaterialConfig() {
                         </TableCell>
                         <TableCell className="text-center text-xs font-mono font-semibold text-slate-700">
                           {mat.doh_sugerido_planta ? `${mat.doh_sugerido_planta} d` : "1.0 d"}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          {mat.en_cl2 ? (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-semibold">
+                              En CL2
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="bg-slate-50 text-slate-400 border-slate-200 text-[10px]">
+                              Sin CL2
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-center">
                           <Button
@@ -781,6 +820,29 @@ export function MaterialConfig() {
                   <p className="text-[11px] text-slate-500">
                     Días de consumo a mantener en planta para la sugerencia automática de pedidos diarios.
                   </p>
+                </div>
+
+                <div className="space-y-1.5 p-3 rounded-lg border border-slate-200 bg-slate-50/70">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Warehouse className="w-4 h-4 text-indigo-600" />
+                      <div>
+                        <Label htmlFor="en_cl2_switch" className="text-xs font-bold text-slate-800 cursor-pointer">
+                          Gestión en Depósito CL2
+                        </Label>
+                        <p className="text-[11px] text-slate-500">
+                          {formState.en_cl2
+                            ? "Habilitado: El material se almacena en CL2 y genera sugerencias de pedidos diarios."
+                            : "Deshabilitado: Material directo a planta o sin CL2. No se sugerirán pedidos a depósito."}
+                        </p>
+                      </div>
+                    </div>
+                    <Switch
+                      id="en_cl2_switch"
+                      checked={formState.en_cl2}
+                      onCheckedChange={(checked) => setFormState({ ...formState, en_cl2: checked })}
+                    />
+                  </div>
                 </div>
               </div>
             </div>

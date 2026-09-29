@@ -194,6 +194,19 @@ class ConteoRepository:
         start_time = fecha_inicio or now_ba
 
         try:
+            final_user_id = id_usuario
+            if final_user_id:
+                cursor.execute("SELECT 1 FROM dbo.usuario WHERE id_usuario = ? AND activo = 1", (final_user_id,))
+                if not cursor.fetchone():
+                    final_user_id = None
+
+            if not final_user_id:
+                cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+                u_row = cursor.fetchone()
+                if u_row:
+                    final_user_id = int(u_row[0])
+                else:
+                    raise ValueError("No se encontró ningún usuario activo en el sistema")
 
             cursor.execute(
                 """
@@ -204,7 +217,7 @@ class ConteoRepository:
                 VALUES ('planta', ?, 'finalizado', ?, ?, ?, ?);
                 """,
                 (
-                    id_usuario,
+                    final_user_id,
                     target_date,
                     start_time,
                     now_ba,
@@ -342,7 +355,7 @@ class ConteoRepository:
                             abs(desvio),
                             stock_teorico,
                             stock_contado,
-                            id_usuario,
+                            final_user_id,
                             now_ba,
                             f"Conteo de planta #{id_conteo} fecha {target_date.strftime('%Y-%m-%d')} (desvío: {desvio:+0.1f})",
                         ),
@@ -364,14 +377,14 @@ class ConteoRepository:
 
             conn.commit()
 
-            cursor.execute("SELECT nombre, apellido FROM dbo.usuario WHERE id_usuario = ?", (id_usuario,))
+            cursor.execute("SELECT nombre, apellido FROM dbo.usuario WHERE id_usuario = ?", (final_user_id,))
             u_row = cursor.fetchone()
-            nombre_u = f"{u_row[0]} {u_row[1]}".strip() if u_row else f"Usuario #{id_usuario}"
+            nombre_u = f"{u_row[0]} {u_row[1]}".strip() if u_row else f"Usuario #{final_user_id}"
 
             return {
                 "id_conteo": id_conteo,
                 "tipo": "planta",
-                "id_usuario": id_usuario,
+                "id_usuario": final_user_id,
                 "nombre_usuario": nombre_u,
                 "estado": "finalizado",
                 "fecha_impacto": target_date,

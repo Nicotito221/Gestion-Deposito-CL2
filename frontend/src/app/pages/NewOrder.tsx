@@ -94,6 +94,7 @@ export function NewOrder() {
   const { user: currentUser } = useAuth();
 
   const [fromConteo, setFromConteo] = useState<boolean>(location.state?.fromConteo === true);
+  const idConteo: number | undefined = location.state?.id_conteo ? Number(location.state.id_conteo) : undefined;
   const suggestedMaterials: Material[] = location.state?.suggestedMaterials ?? [];
   const todayStr = useMemo(() => getTodayISODate(), []);
   const initialFechaReq =
@@ -198,7 +199,7 @@ export function NewOrder() {
           sector: finalSector,
           fecha_requerida: fechaRequerida,
           turno: turno,
-          modalidad_turnos: turno === "Completo" ? "completo" : "2_turnos",
+          modalidad_turnos: "completo",
         });
         if (!isCancelled) {
           setSuggestionPreview(res);
@@ -217,15 +218,15 @@ export function NewOrder() {
     return () => {
       isCancelled = true;
     };
-  }, [fechaRequerida, turno, sector, isSectorLocked, currentUser?.sector]);
+  }, [fechaRequerida, turno, sector, isSectorLocked, currentUser?.sector, idConteo]);
 
   const previewEvaluatedItems = useMemo(() => {
     if (!suggestionPreview) return [];
     return suggestionPreview.items.map((it) => {
-      const qty = turno && turno !== "Completo" ? (it.sugerido_por_turno[turno] ?? it.cantidad_sugerida_neta) : it.cantidad_sugerida_neta;
+      const qty = it.cantidad_sugerida_neta;
       const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
       const isPallet = (it.tipo_empaque === "pallet" || (!it.tipo_empaque && lotSize > 1)) && lotSize > 1;
-      const pCount = isPallet ? Math.ceil(qty / lotSize) : undefined;
+      const pCount = isPallet ? (it.cantidad_pallets_sugerida ?? Math.ceil(qty / lotSize)) : undefined;
       return {
         material: {
           id: it.id_material,
@@ -234,8 +235,8 @@ export function NewOrder() {
           unit: it.unidad,
           suggestedQuantity: qty,
           suggestedPallets: pCount,
-          quantity: qty > 0 ? qty : (isPallet ? lotSize : 1),
-          pallets: pCount ?? (isPallet ? 1 : undefined),
+          quantity: qty,
+          pallets: pCount,
           tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
           tamanio_lote: lotSize,
           observations: `Sugerido por Conteo | Consumo: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
@@ -267,7 +268,7 @@ export function NewOrder() {
   const handleLoadSuggestion = async () => {
     const finalSector = isSectorLocked ? (currentUser?.sector as string) : sector;
     if (!finalSector) {
-      toast.error("Seleccione un sector antes de cargar la sugerencia.");
+      toast.error("Seleccione un sector antes de recalcular la sugerencia.");
       return;
     }
     setLoadingSuggestion(true);
@@ -276,38 +277,12 @@ export function NewOrder() {
         sector: finalSector,
         fecha_requerida: fechaRequerida,
         turno: turno,
-        modalidad_turnos: turno === "Completo" ? "completo" : "2_turnos",
+        modalidad_turnos: "completo",
       });
       setSuggestionPreview(res);
-      const itemsToLoad: Material[] = res.items
-        .map((it) => {
-          const qty = turno && turno !== "Completo" ? (it.sugerido_por_turno[turno] ?? it.cantidad_sugerida_neta) : it.cantidad_sugerida_neta;
-          const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
-          const isPallet = (it.tipo_empaque === "pallet" || (!it.tipo_empaque && lotSize > 1)) && lotSize > 1;
-          const pCount = isPallet ? Math.ceil(qty / lotSize) : undefined;
-          return {
-            id: it.id_material,
-            code: it.id_material,
-            name: it.nombre,
-            unit: it.unidad,
-            suggestedQuantity: qty,
-            suggestedPallets: pCount,
-            quantity: qty,
-            pallets: pCount,
-            tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
-            tamanio_lote: lotSize,
-            observations: `Sugerido por Conteo | Consumo: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
-          };
-        })
-        .filter((m) => m.quantity > 0);
-
-      if (itemsToLoad.length === 0) {
-        toast.info("No se encontraron materiales sugeridos con déficit para este sector y fecha. El stock en planta cubre la demanda.");
-        return;
-      }
-      applySuggestionItems(itemsToLoad);
+      toast.success("Sugerencias recalculadas correctamente.");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al calcular sugerencia de pedido");
+      toast.error(err instanceof Error ? err.message : "Error al recalcular sugerencia de pedido");
     } finally {
       setLoadingSuggestion(false);
     }
@@ -390,7 +365,7 @@ export function NewOrder() {
         origen: (fromConteo ? "conteo_planta" : "manual") as "conteo_planta" | "manual",
         fecha_requerida: fechaRequerida,
         turno: turno === "Completo" ? undefined : turno,
-        id_conteo: location.state?.id_conteo,
+        id_conteo: idConteo,
         id_usuario_solicitante: currentUser?.id_usuario,
         comentario: `Pedido ${fromConteo ? "sugerido desde conteo" : "manual"} para el ${formatSoloFechaAR(fechaRequerida)}${turno && turno !== "Completo" ? ` (${turno})` : ""}`,
         items: materials.map((m) => ({
@@ -573,6 +548,7 @@ export function NewOrder() {
                   <TableRow className="bg-slate-50/80 text-[11px]">
                     <TableHead className="py-2 px-3 font-semibold text-slate-700">Material</TableHead>
                     <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Stock Planta</TableHead>
+                    <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Stock CL2</TableHead>
                     <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Consumo Previsto</TableHead>
                     <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Stock Objetivo</TableHead>
                     <TableHead className="py-2 px-3 text-right font-semibold text-slate-700">Ya Pedido</TableHead>
@@ -583,7 +559,7 @@ export function NewOrder() {
                 <TableBody className="text-xs divide-y divide-slate-100">
                   {previewEvaluatedItems.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-4 text-slate-400">
+                      <TableCell colSpan={8} className="text-center py-4 text-slate-400">
                         {loadingPreview ? "Calculando sugerencias de pedidos..." : "No se hallaron materiales configurados para el cálculo."}
                       </TableCell>
                     </TableRow>
@@ -597,8 +573,13 @@ export function NewOrder() {
                           <div className="font-mono font-bold text-slate-800">{it.raw.id_material}</div>
                           <div className="text-[11px] text-slate-500 truncate max-w-[200px]">{it.raw.nombre}</div>
                         </TableCell>
-                        <TableCell className="py-2 px-3 text-right font-mono text-slate-700">
+                        <TableCell className={`py-2 px-3 text-right font-mono ${it.raw.stock_contado < 0 ? "text-rose-600 font-bold" : "text-slate-700"}`}>
                           {it.raw.stock_contado.toLocaleString()} {it.raw.unidad}
+                        </TableCell>
+                        <TableCell className="py-2 px-3 text-right font-mono text-slate-700">
+                          <span className={it.raw.stock_cl2 && it.raw.stock_cl2 > 0 ? "font-bold text-slate-900" : "text-amber-600"}>
+                            {(it.raw.stock_cl2 ?? 0).toLocaleString()} {it.raw.unidad}
+                          </span>
                         </TableCell>
                         <TableCell className="py-2 px-3 text-right font-mono text-slate-600">
                           {it.raw.consumo_diario.toLocaleString()} {it.raw.unidad}

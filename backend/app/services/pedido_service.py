@@ -34,7 +34,16 @@ class PedidoService:
         fecha_sig = fecha_req + timedelta(days=1)
 
         counts_map: Dict[str, float] = {}
-        fecha_conteo: date = request.fecha_conteo or yesterday
+        ids_to_query: Optional[List[str]] = None
+
+        from app.services.rundown_service import RundownService
+        rundown_svc = RundownService()
+        ref_date = min(today, fecha_req) - timedelta(days=1)
+        planta_stocks = rundown_svc.get_planta_stocks_map(ref_date)
+        for mat_id, st in planta_stocks.items():
+            counts_map[mat_id] = float(st)
+        fecha_conteo: date = request.fecha_conteo or ref_date
+
         if request.id_conteo:
             conteo = self._conteo_repo.get_conteo_detalle(request.id_conteo)
             if conteo:
@@ -47,31 +56,35 @@ class PedidoService:
                             fecha_conteo = datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
                     except Exception:
                         pass
+                conteo_mat_ids = []
                 for it in conteo.get("items", []):
-                    counts_map[it["id_material"]] = float(it["stock_contado"])
+                    if fecha_conteo >= ref_date:
+                        counts_map[it["id_material"]] = float(it["stock_contado"])
+                    conteo_mat_ids.append(it["id_material"])
+                if request.solo_conteo and conteo_mat_ids:
+                    ids_to_query = conteo_mat_ids
 
         if request.materiales:
+            ids_to_query = []
             for m in request.materiales:
                 counts_map[m.id_material] = float(m.stock_contado)
+                ids_to_query.append(m.id_material)
 
         if not request.id_conteo and not request.materiales:
             ultimo_id_conteo = self._repo.get_ultimo_id_conteo_finalizado()
             if ultimo_id_conteo:
                 conteo = self._conteo_repo.get_conteo_detalle(ultimo_id_conteo)
-                if conteo:
-                    if conteo.get("fecha_impacto"):
-                        try:
-                            raw_f = conteo["fecha_impacto"]
-                            if isinstance(raw_f, date):
-                                fecha_conteo = raw_f
-                            else:
-                                fecha_conteo = datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
-                        except Exception:
-                            pass
-                    for it in conteo.get("items", []):
-                        counts_map[it["id_material"]] = float(it["stock_contado"])
+                if conteo and conteo.get("fecha_impacto"):
+                    try:
+                        raw_f = conteo["fecha_impacto"]
+                        f_imp = raw_f if isinstance(raw_f, date) else datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
+                        if f_imp >= ref_date:
+                            fecha_conteo = f_imp
+                            for it in conteo.get("items", []):
+                                counts_map[it["id_material"]] = float(it["stock_contado"])
+                    except Exception:
+                        pass
 
-        ids_to_query = list(counts_map.keys()) if (request.id_conteo or request.materiales) else None
         materiales = self._repo.get_materiales_para_sugerencia(ids_to_query)
 
         all_products: List[str] = list({
@@ -115,11 +128,9 @@ class PedidoService:
                     pedidos_hoy_map.get(p["id_material"], 0.0) + p["cantidad_pedida"], 2
                 )
 
-        modalidad = request.modalidad_turnos.lower() if request.modalidad_turnos else "completo"
-        if request.turno in ("Turno Mañana", "Turno Tarde"):
-            modalidad = "2_turnos"
-        elif request.turno == "Turno Noche":
-            modalidad = "3_turnos"
+        modalidad = "completo"
+        if request.modalidad_turnos in ("2_turnos", "3_turnos"):
+            modalidad = request.modalidad_turnos
 
         if modalidad == "2_turnos":
             turnos_list = ["Turno Mañana", "Turno Tarde"]
@@ -173,20 +184,7 @@ class PedidoService:
                 dias_avance = (fecha_req - today).days
                 consumo_intermedio = consumo_hoy * dias_avance
                 pedidos_intermedios = pedidos_hoy_map.get(mat_id, 0.0)
-                stock_proyectado_inicio = max(0.0, round(stock_contado + pedidos_intermedios - consumo_intermedio, 2))
-
-            doh = m["doh_sugerido_planta"]
-            target_doh_req = round(consumo_diario * doh, 2)
-            target_buffer_manana = round(consumo_diario + (0.40 * doh * consumo_sig), 2)
-            stock_objetivo = max(target_doh_req, target_buffer_manana)
-
-            min_buffer_manana = round(consumo_diario + (0.30 * doh * consumo_sig), 2)
-            stock_minimo_inicio = max(round(consumo_diario * (doh * 0.5), 2), min_buffer_manana)
-
-            tipo_empaque = m.get("tipo_empaque") or "pallet"
-            lote_mts = m.get("lote_mts")
-            es_pallet = (tipo_empaque in ("pallet", "rollo")) and (lote_mts is not None) and (float(lote_mts) > 1.0)
-            lot_size = float(lote_mts) if (lote_mts and float(lote_mts) > 0) else 1.0
+                stock_proyectado_inicio = round(stock_contado + pedidos_intermedios - consumo_intermedio, 2)
 
             mat_pedidos = pedidos_por_mat.get(mat_id, [])
             pedidos_items = [
@@ -213,38 +211,48 @@ class PedidoService:
                 total_ya_pedido = round(total_ya_pedido + p["cantidad_pedida"], 2)
 
             stock_con_pedidos = round(stock_proyectado_inicio + total_ya_pedido, 2)
-            deficit_minimo = max(0.0, round(stock_minimo_inicio - stock_con_pedidos, 2))
-            deficit_objetivo = max(0.0, round(stock_objetivo - stock_con_pedidos, 2))
+
+            doh = m["doh_sugerido_planta"]
+            stock_umbral_doh = round(consumo_diario * doh, 2)
+            tiene_deficit_doh = (consumo_diario > 0) and (stock_con_pedidos < stock_umbral_doh)
+
+            stock_objetivo = round(consumo_diario + (0.65 * consumo_sig), 2)
+            stock_minimo_inicio = stock_umbral_doh
+
+            deficit = max(0.0, round(stock_objetivo - stock_con_pedidos, 2)) if tiene_deficit_doh else 0.0
+
+            tipo_empaque = m.get("tipo_empaque") or "pallet"
+            lote_mts = m.get("lote_mts")
+            es_pallet = (tipo_empaque in ("pallet", "rollo")) and (lote_mts is not None) and (float(lote_mts) > 1.0)
+            lot_size = float(lote_mts) if (lote_mts and float(lote_mts) > 0) else 1.0
 
             if es_pallet:
-                pallets_min = math.ceil(deficit_minimo / lot_size) if deficit_minimo > 0 else 0
-                pallets_obj = math.ceil(deficit_objetivo / lot_size) if deficit_objetivo > 0 else 0
-                cant_pallets = max(pallets_min, pallets_obj)
+                cant_pallets = math.ceil(deficit / lot_size) if deficit > 0 else 0
                 cantidad_neta = float(cant_pallets * lot_size)
-
-                bruto_min = math.ceil(max(0.0, stock_minimo_inicio - stock_proyectado_inicio) / lot_size) if stock_minimo_inicio > stock_proyectado_inicio else 0
-                bruto_obj = math.ceil(max(0.0, stock_objetivo - stock_proyectado_inicio) / lot_size) if stock_objetivo > stock_proyectado_inicio else 0
-                sugerido_bruto = float(max(bruto_min, bruto_obj) * lot_size)
+                bruto_def = max(0.0, stock_objetivo - stock_proyectado_inicio)
+                sugerido_bruto = float(math.ceil(bruto_def / lot_size) * lot_size) if tiene_deficit_doh else 0.0
             else:
-                cant_pallets = int(math.ceil(max(deficit_minimo, deficit_objetivo)))
+                cant_pallets = int(math.ceil(deficit)) if deficit > 0 else 0
                 cantidad_neta = float(cant_pallets)
-                sugerido_bruto = float(int(math.ceil(max(0.0, stock_objetivo - stock_proyectado_inicio))))
+                sugerido_bruto = float(int(math.ceil(max(0.0, stock_objetivo - stock_proyectado_inicio)))) if tiene_deficit_doh else 0.0
 
             desglose_turnos: Dict[str, float] = {}
             sugerido_por_turno: Dict[str, float] = {}
             pallets_por_turno: Dict[str, int] = {}
 
             if modalidad == "completo":
-                if es_pallet:
-                    p1 = math.ceil(cant_pallets / 2.0)
-                    p2 = cant_pallets - p1
-                    pallets_por_turno = {"Completo": cant_pallets, "Turno Mañana": p1, "Turno Tarde": p2}
-                    sugerido_por_turno = {"Completo": cantidad_neta, "Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size)}
-                else:
-                    u1 = math.ceil(cantidad_neta / 2.0)
-                    u2 = int(cantidad_neta - u1)
-                    pallets_por_turno = {"Completo": cant_pallets, "Turno Mañana": u1, "Turno Tarde": u2}
-                    sugerido_por_turno = {"Completo": cantidad_neta, "Turno Mañana": float(u1), "Turno Tarde": float(u2)}
+                pallets_por_turno = {
+                    "Completo": cant_pallets,
+                    "Turno Mañana": cant_pallets,
+                    "Turno Tarde": cant_pallets,
+                    "Turno Noche": cant_pallets,
+                }
+                sugerido_por_turno = {
+                    "Completo": cantidad_neta,
+                    "Turno Mañana": cantidad_neta,
+                    "Turno Tarde": cantidad_neta,
+                    "Turno Noche": cantidad_neta,
+                }
                 desglose_turnos = {"Completo": sugerido_bruto}
             elif modalidad == "2_turnos":
                 if es_pallet:
@@ -310,6 +318,8 @@ class PedidoService:
                     id_proveedor=m["id_proveedor"],
                     nombre_proveedor=m["nombre_proveedor"],
                     stock_contado=stock_contado,
+                    stock_cl2=float(m.get("stock_cl2") or 0.0),
+                    en_cl2=bool(m.get("en_cl2", True)),
                     consumo_diario=consumo_diario,
                     consumo_sig=consumo_sig,
                     doh_sugerido_planta=doh,

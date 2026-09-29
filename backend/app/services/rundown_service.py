@@ -112,6 +112,7 @@ class RundownService:
                 mes=m["mes"],
                 label=m["label"],
                 es_firme=m["es_firme"],
+                es_finalizado=bool(m.get("es_finalizado", False)),
                 es_proyectado_manual=bool(m.get("es_proyectado_manual", False)),
                 periodo_copia=m.get("periodo_copia"),
                 total_volumen=float(m.get("total_volumen", 0.0)),
@@ -124,13 +125,8 @@ class RundownService:
         elif fecha_desde:
             target_periodo = f"{fecha_desde.year:04d}-{fecha_desde.month:02d}"
         else:
-            from app.core.time import get_argentina_today
-            now_period = get_argentina_today().strftime("%Y-%m")
-            if any(m["periodo"] == now_period for m in meses_raw):
-                target_periodo = now_period
-            else:
-                firme_p = next((m["periodo"] for m in meses_raw if m.get("es_firme")), None)
-                target_periodo = firme_p or (meses_raw[0]["periodo"] if meses_raw else "2026-09")
+            firme_p = next((m["periodo"] for m in meses_raw if m.get("es_firme")), None)
+            target_periodo = firme_p or (meses_raw[0]["periodo"] if meses_raw else "2026-10")
 
         anio, mes = [int(x) for x in target_periodo.split("-")]
         mes_info = next((m for m in meses_raw if m["periodo"] == target_periodo), None)
@@ -154,14 +150,43 @@ class RundownService:
         cant_laborales = len(dias_laborales)
 
         if es_mes_firme:
-            prod_map = self._repo.get_produccion_planificada(all_products, d_start, d_end)
+            raw_prod_map = self._repo.get_produccion_planificada(all_products, d_start, d_end)
+            prod_map = {p: {} for p in all_products}
+
+            dias_con_prod = [
+                d for d in dias_laborales
+                if sum(raw_prod_map.get(p, {}).get(d, 0.0) for p in all_products) > 0
+            ]
+            
+            avg_per_prod = {}
+            if dias_con_prod:
+                for p in all_products:
+                    tot_prod = sum(raw_prod_map.get(p, {}).get(d, 0.0) for d in dias_con_prod)
+                    avg_per_prod[p] = round(tot_prod / len(dias_con_prod), 2)
+            else:
+                monthly_vols = self._repo.get_produccion_mensual_productos(all_products, anio, mes)
+                for p in all_products:
+                    tot_prod = monthly_vols.get(p, 0.0)
+                    avg_per_prod[p] = round(tot_prod / cant_laborales, 2) if cant_laborales > 0 else 0.0
+
+            for d in dates_timeline:
+                if d in dias_laborales:
+                    if d in dias_con_prod:
+                        for p in all_products:
+                            prod_map[p][d] = raw_prod_map.get(p, {}).get(d, 0.0)
+                    else:
+                        for p in all_products:
+                            prod_map[p][d] = avg_per_prod.get(p, 0.0)
+                else:
+                    for p in all_products:
+                        prod_map[p][d] = 0.0
         else:
             monthly_vols = self._repo.get_produccion_mensual_productos(all_products, anio, mes)
             prod_map = {}
             for p in all_products:
                 tot_p = monthly_vols.get(p, 0.0)
                 daily_p = round(tot_p / cant_laborales, 2) if cant_laborales > 0 else 0.0
-                prod_map[p] = {d: daily_p for d in dias_laborales}
+                prod_map[p] = {d: (daily_p if d in dias_laborales else 0.0) for d in dates_timeline}
 
         transitos = self._repo.get_transitos(prov_ids, d_start, d_end)
         ajustes_map = self._repo.get_stock_ajustes(prov_ids, d_start, d_end)
@@ -182,6 +207,7 @@ class RundownService:
                     "po_numero": t.po_numero,
                     "factura_numero": t.factura_numero,
                     "observacion": t.observacion,
+                    "estado": t.estado,
                 }
             else:
                 if t.po_numero and not transito_meta_map[key]["po_numero"]:
@@ -190,6 +216,8 @@ class RundownService:
                     transito_meta_map[key]["factura_numero"] = t.factura_numero
                 if t.observacion and not transito_meta_map[key]["observacion"]:
                     transito_meta_map[key]["observacion"] = t.observacion
+                if t.estado == "confirmado":
+                    transito_meta_map[key]["estado"] = "confirmado"
 
         columnas_fechas = [d.strftime("%Y-%m-%d") for d in dates_timeline]
         material_grids: List[RundownMaterialGrid] = []
@@ -204,8 +232,7 @@ class RundownService:
             s_planta = float(round(self._compute_carryover_stock(param, all_products, d_start, "planta", meses_raw)))
             s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw)))
             if es_dep_en_planta:
-                s_unificado = s_planta if s_planta > 0 else s_total
-                s_planta = s_unificado
+                s_unificado = s_planta
                 s_total = s_unificado
                 stock_corriente = s_unificado
             else:
@@ -308,14 +335,17 @@ class RundownService:
                         maritimo_po=m_meta.get("po_numero"),
                         maritimo_factura=m_meta.get("factura_numero"),
                         maritimo_obs=m_meta.get("observacion"),
+                        maritimo_estado=m_meta.get("estado"),
                         pedidos_aereos=aereo,
                         aereo_po=a_meta.get("po_numero"),
                         aereo_factura=a_meta.get("factura_numero"),
                         aereo_obs=a_meta.get("observacion"),
+                        aereo_estado=a_meta.get("estado"),
                         entregas_locales=local,
                         local_po=l_meta.get("po_numero"),
                         local_factura=l_meta.get("factura_numero"),
                         local_obs=l_meta.get("observacion"),
+                        local_estado=l_meta.get("estado"),
                         ajuste_scrap=scrap,
                         stock_final=stock_corriente,
                         dias_cobertura=dias_cobertura,
@@ -428,6 +458,7 @@ class RundownService:
             factura_numero=data.factura_numero,
             observacion=data.observacion,
             fecha_origen=data.fecha_origen,
+            estado=data.estado,
         )
 
     def get_secciones(self) -> List[RundownSeccionItem]:
@@ -508,9 +539,26 @@ class RundownService:
                 categoria=r["categoria"],
                 tipo_empaque=r.get("tipo_empaque", "unidad"),
                 tamanio_lote=r.get("tamanio_lote", 1.0),
+                id_proveedor=r.get("id_proveedor"),
+                proveedor_nombre=r.get("proveedor_nombre"),
             )
             for r in rows
         ]
+
+    def get_material_catalogo(self, id_material: str) -> Optional[MaterialCatalogoItem]:
+        r = self._repo.get_material_catalogo(id_material)
+        if not r:
+            return None
+        return MaterialCatalogoItem(
+            id_material=r["id_material"],
+            nombre=r["nombre"],
+            unidad=r["unidad"],
+            categoria=r["categoria"],
+            tipo_empaque=r.get("tipo_empaque", "unidad"),
+            tamanio_lote=r.get("tamanio_lote", 1.0),
+            id_proveedor=r.get("id_proveedor"),
+            proveedor_nombre=r.get("proveedor_nombre"),
+        )
 
     def get_materiales_proveedor(
         self, id_proveedor: int
@@ -680,15 +728,34 @@ class RundownService:
         alcance: str,
         meses_raw: List[Dict[str, Any]],
     ) -> float:
-        init_date = param.get("fecha_stock_inicial") or date(2026, 9, 1)
+        init_date = param.get("fecha_stock_inicial") or self._repo.get_fecha_inicio_firme()
         init_stock_field = "stock_inicial_planta" if alcance == "planta" else "stock_inicial_total"
-        s_val = float(param.get(init_stock_field, 0.0) or param.get("stock_inicial_referencia", 0.0) or 0.0)
+        raw_val = param.get(init_stock_field)
+        if raw_val is not None:
+            s_val = float(raw_val)
+        elif param.get("stock_inicial_referencia") is not None:
+            s_val = float(param.get("stock_inicial_referencia"))
+        else:
+            s_val = 0.0
+
         if alcance == "total" and not param.get("deposito_en_planta", False):
             stock_cl2 = float(param.get("stock_cl2", 0.0))
-            s_val = float(param.get("stock_inicial_planta", 0.0) or 0.0) + stock_cl2
+            p_val = param.get("stock_inicial_planta")
+            s_planta_init = float(p_val) if p_val is not None else 0.0
+            s_val = s_planta_init + stock_cl2
 
-        if target_start <= init_date:
+        if target_start == init_date:
             return s_val
+
+        if target_start < init_date:
+            past_ajustes = self._repo.get_stock_ajustes(param["id_proveedor"], target_start, target_start)
+            pl_key = (param["id_parametro"], target_start, "planta")
+            tot_key = (param["id_parametro"], target_start, "total")
+            if alcance == "planta" and pl_key in past_ajustes:
+                return float(past_ajustes[pl_key])
+            elif alcance == "total" and tot_key in past_ajustes:
+                return float(past_ajustes[tot_key])
+            return 0.0
 
         end_prev = target_start - timedelta(days=1)
         prev_ajustes = self._repo.get_stock_ajustes(param["id_proveedor"], init_date, end_prev)
@@ -700,6 +767,7 @@ class RundownService:
 
         firm_prod_map = self._repo.get_produccion_planificada(all_products, init_date, end_prev)
         forecast_cache: Dict[Tuple[int, int], Dict[date, float]] = {}
+        cal_overrides_cache: Dict[Tuple[int, int], Dict[date, Tuple[bool, Optional[str]]]] = {}
 
         curr = init_date
         while curr <= end_prev:
@@ -707,11 +775,22 @@ class RundownService:
             m_info = next((m for m in meses_raw if m["anio"] == curr.year and m["mes"] == curr.month), None)
             is_firm = m_info["es_firme"] if m_info else (curr.month == 9 and curr.year == 2026)
 
+            m_start = date(curr.year, curr.month, 1)
+            m_next = date(curr.year + 1, 1, 1) if curr.month == 12 else date(curr.year, curr.month + 1, 1)
+            m_end = m_next - timedelta(days=1)
+            if m_key not in cal_overrides_cache:
+                cal_overrides_cache[m_key] = self._repo.get_calendario_overrides(m_start, m_end)
+            ovs = cal_overrides_cache[m_key]
+            is_lab = ovs[curr][0] if curr in ovs else (curr.weekday() < 5)
+
             if is_firm:
-                veh_prod = sum(
-                    firm_prod_map.get(p["id_producto"], {}).get(curr, 0.0) * p["factor_uso"]
-                    for p in param["productos"]
-                )
+                if not is_lab:
+                    veh_prod = 0.0
+                else:
+                    veh_prod = sum(
+                        firm_prod_map.get(p["id_producto"], {}).get(curr, 0.0) * p["factor_uso"]
+                        for p in param["productos"]
+                    )
             else:
                 if m_key not in forecast_cache:
                     m_start = date(curr.year, curr.month, 1)

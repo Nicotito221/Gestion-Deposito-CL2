@@ -459,7 +459,8 @@ class IngresoRepository:
                             UPDATE dbo.rundown_transito_arribo
                             SET fecha_eta = ?,
                                 cantidad = ?,
-                                observacion = ?
+                                observacion = ?,
+                                estado = 'confirmado'
                             WHERE id_transito = ?
                             """,
                             (
@@ -474,9 +475,9 @@ class IngresoRepository:
                             """
                             INSERT INTO dbo.rundown_transito_arribo (
                                 id_proveedor, id_material, fecha_eta, tipo_via,
-                                po_numero, factura_numero, cantidad, observacion
+                                po_numero, factura_numero, cantidad, observacion, estado
                             )
-                            VALUES (?, ?, ?, 'Local', ?, ?, ?, ?)
+                            VALUES (?, ?, ?, 'Local', ?, ?, ?, ?, 'confirmado')
                             """,
                             (
                                 id_prov,
@@ -513,6 +514,114 @@ class IngresoRepository:
 
             conn.commit()
             return self.get_ingreso_by_id(id_ingreso) or {}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_ingreso(self, id_ingreso: int, id_usuario: Optional[int] = None) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT im.id_ingreso, im.numero_factura, im.estado, ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta, im.fecha_recepcion
+                FROM dbo.ingreso_material im
+                INNER JOIN dbo.proveedor p ON im.id_proveedor = p.id_proveedor
+                WHERE im.id_ingreso = ?
+                """,
+                (id_ingreso,),
+            )
+            ing_row = cursor.fetchone()
+            if not ing_row:
+                return False
+
+            nro_factura = str(ing_row[1] or "")
+            estado = str(ing_row[2] or "pendiente")
+            deposito_en_planta = bool(ing_row[3])
+            fecha_recep = ing_row[4]
+            fecha_recep_date = (
+                fecha_recep.date() if isinstance(fecha_recep, datetime) else (fecha_recep or get_argentina_today())
+            )
+
+            if estado in ("completo", "parcial"):
+                cursor.execute(
+                    """
+                    SELECT id_material, cantidad_recibida
+                    FROM dbo.ingreso_material_detalle
+                    WHERE id_ingreso = ? AND cantidad_recibida > 0
+                    """,
+                    (id_ingreso,),
+                )
+                items_recibidos = cursor.fetchall()
+                for r in items_recibidos:
+                    id_mat = str(r[0])
+                    cant_rec = float(r[1] or 0.0)
+                    if cant_rec <= 0:
+                        continue
+
+                    if deposito_en_planta:
+                        cursor.execute(
+                            "SELECT id_parametro FROM dbo.rundown_parametro_material WHERE id_material = ? AND activo = 1",
+                            (id_mat,),
+                        )
+                        p_row = cursor.fetchone()
+                        if p_row:
+                            id_param = int(p_row[0])
+                            cursor.execute(
+                                "SELECT stock_ajustado FROM dbo.rundown_stock_ajuste WHERE id_parametro = ? AND fecha = ? AND tipo_stock = 'planta'",
+                                (id_param, fecha_recep_date),
+                            )
+                            adj_row = cursor.fetchone()
+                            if adj_row is not None:
+                                stk_ant = float(adj_row[0] or 0.0)
+                                stk_post = max(0.0, stk_ant - cant_rec)
+                                cursor.execute(
+                                    """
+                                    UPDATE dbo.rundown_stock_ajuste
+                                    SET stock_ajustado = ?, observacion = ?, fecha_creacion = SYSUTCDATETIME()
+                                    WHERE id_parametro = ? AND fecha = ? AND tipo_stock = 'planta'
+                                    """,
+                                    (stk_post, f"Reversión por eliminación de factura {nro_factura}", id_param, fecha_recep_date),
+                                )
+                                cursor.execute(
+                                    """
+                                    INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_usuario, fecha, observacion)
+                                    VALUES (?, 'ajuste_manual', ?, ?, ?, ?, GETDATE(), ?)
+                                    """,
+                                    (id_mat, -cant_rec, stk_ant, stk_post, id_usuario or 1, f"Reversión stock por eliminación remito #{nro_factura}"),
+                                )
+                    else:
+                        cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
+                        stk_row = cursor.fetchone()
+                        if stk_row is not None:
+                            stk_ant = float(stk_row[0] or 0.0)
+                            stk_post = max(0.0, stk_ant - cant_rec)
+                            cursor.execute(
+                                "UPDATE dbo.stock_deposito SET stock_actual = ?, fecha_actualizacion = GETDATE() WHERE id_material = ?",
+                                (stk_post, id_mat),
+                            )
+                            cursor.execute(
+                                """
+                                INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_usuario, fecha, observacion)
+                                VALUES (?, 'ajuste_manual', ?, ?, ?, ?, GETDATE(), ?)
+                                """,
+                                (id_mat, -cant_rec, stk_ant, stk_post, id_usuario or 1, f"Reversión stock por eliminación remito #{nro_factura}"),
+                            )
+
+                    cursor.execute(
+                        "DELETE FROM dbo.rundown_transito_arribo WHERE id_material = ? AND factura_numero = ?",
+                        (id_mat, nro_factura),
+                    )
+
+            cursor.execute("UPDATE dbo.movimiento_stock SET id_ingreso = NULL WHERE id_ingreso = ?", (id_ingreso,))
+            cursor.execute("DELETE FROM dbo.ingreso_material_detalle WHERE id_ingreso = ?", (id_ingreso,))
+            cursor.execute("DELETE FROM dbo.ingreso_material WHERE id_ingreso = ?", (id_ingreso,))
+
+            conn.commit()
+            return True
         except Exception:
             conn.rollback()
             raise

@@ -12,6 +12,7 @@ class RundownTransitoCreate(BaseModel):
     factura_numero: Optional[str] = Field(default=None, max_length=50)
     cantidad: float
     observacion: Optional[str] = Field(default=None, max_length=255)
+    estado: str = Field(default="planificado", pattern=r"^(planificado|confirmado)$")
 
 
 class RundownTransitoOut(BaseModel):
@@ -26,6 +27,7 @@ class RundownTransitoOut(BaseModel):
     factura_numero: Optional[str] = None
     cantidad: float
     observacion: Optional[str] = None
+    estado: str = "planificado"
 
 
 class RundownStockInicialUpdate(BaseModel):
@@ -59,6 +61,7 @@ class RundownIngresoDiaUpdate(BaseModel):
     factura_numero: Optional[str] = Field(default=None, max_length=50)
     observacion: Optional[str] = Field(default=None, max_length=255)
     fecha_origen: Optional[date] = None
+    estado: str = Field(default="planificado", pattern=r"^(planificado|confirmado)$")
 
 
 class RundownDayCell(BaseModel):
@@ -70,14 +73,17 @@ class RundownDayCell(BaseModel):
     maritimo_po: Optional[str] = None
     maritimo_factura: Optional[str] = None
     maritimo_obs: Optional[str] = None
+    maritimo_estado: Optional[str] = None
     pedidos_aereos: float
     aereo_po: Optional[str] = None
     aereo_factura: Optional[str] = None
     aereo_obs: Optional[str] = None
+    aereo_estado: Optional[str] = None
     entregas_locales: float
     local_po: Optional[str] = None
     local_factura: Optional[str] = None
     local_obs: Optional[str] = None
+    local_estado: Optional[str] = None
     ajuste_scrap: float
     stock_final: float
     dias_cobertura: float
@@ -111,6 +117,7 @@ class RundownPeriodoItem(BaseModel):
     mes: int
     label: str
     es_firme: bool
+    es_finalizado: bool = False
     es_proyectado_manual: bool = False
     periodo_copia: Optional[str] = None
     total_volumen: float = 0.0
@@ -225,6 +232,8 @@ class MaterialCatalogoItem(BaseModel):
     categoria: Optional[str] = None
     tipo_empaque: Optional[str] = "unidad"
     tamanio_lote: Optional[float] = 1.0
+    id_proveedor: Optional[int] = None
+    proveedor_nombre: Optional[str] = None
 
 
 class RundownParametroMaterialCreate(BaseModel):

@@ -397,6 +397,36 @@ class StockRepository:
                 else (mat_info["stock_planta"] + mat_info["stock_cl2"])
             )
 
+            if target_planta is not None or target_cl2 is not None:
+                cur_planta = mat_info["stock_planta"]
+                cur_total = mat_info["stock_total"]
+
+                cursor.execute(
+                    """
+                    SELECT TOP 1 YEAR(p.fecha), MONTH(p.fecha)
+                    FROM dbo.produccion_planificada p
+                    JOIN dbo.importacion_archivo i ON p.id_importacion = i.id_importacion
+                    WHERE i.tipo = 'produccion_planificada' AND i.estado = 'procesada'
+                    GROUP BY i.id_importacion, YEAR(p.fecha), MONTH(p.fecha)
+                    HAVING COUNT(DISTINCT p.fecha) > 5
+                    ORDER BY i.id_importacion DESC, YEAR(p.fecha) ASC, MONTH(p.fecha) ASC
+                    """
+                )
+                row_f = cursor.fetchone()
+                f_date = date(int(row_f[0]), int(row_f[1]), 1) if row_f else date(2026, 10, 1)
+
+                cursor.execute(
+                    """
+                    UPDATE dbo.rundown_parametro_material
+                    SET stock_inicial_planta = ?,
+                        stock_inicial_total = ?,
+                        stock_inicial_referencia = ?,
+                        fecha_stock_inicial = ?
+                    WHERE id_material = ?
+                    """,
+                    (cur_planta, cur_total, cur_total, f_date, id_material),
+                )
+
             conn.commit()
             return {
                 "id_material": id_material,
@@ -502,6 +532,7 @@ class StockRepository:
         search: Optional[str] = None,
         id_proveedor: Optional[int] = None,
         tipo_empaque: Optional[str] = None,
+        en_cl2: Optional[bool] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -523,6 +554,10 @@ class StockRepository:
             if tipo_empaque and tipo_empaque != "all":
                 where_clauses.append("COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'pallet') = ?")
                 params.append(tipo_empaque)
+
+            if en_cl2 is not None:
+                where_clauses.append("COALESCE(rpm.en_cl2, m.en_cl2, 0) = ?")
+                params.append(1 if en_cl2 else 0)
 
             where_str = " AND ".join(where_clauses)
             offset = max(0, (page - 1) * page_size)
@@ -553,7 +588,8 @@ class StockRepository:
                         rpm.unidad_por_bulto,
                         rpm.bultos_por_pallet,
                         rpm.tipo_empaque,
-                        rpm.doh_sugerido_planta
+                        rpm.doh_sugerido_planta,
+                        rpm.en_cl2
                     FROM dbo.rundown_parametro_material rpm
                     WHERE rpm.id_material = m.id_material AND rpm.activo = 1
                       AND (prov.id_proveedor IS NULL OR rpm.id_proveedor = prov.id_proveedor)
@@ -578,7 +614,8 @@ class StockRepository:
                     COALESCE(rpm.unidad_por_bulto, m.unidad_por_bulto) AS unidad_por_bulto,
                     COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet,
                     COALESCE(rpm.doh_sugerido_planta, prov.doh_sugerido_planta, 1.0) AS doh_sugerido_planta,
-                    rpm.id_parametro
+                    rpm.id_parametro,
+                    COALESCE(rpm.en_cl2, m.en_cl2, 0) AS en_cl2
                 FROM dbo.material m
                 OUTER APPLY (
                     SELECT TOP 1 
@@ -603,7 +640,8 @@ class StockRepository:
                         rpm.unidad_por_bulto,
                         rpm.bultos_por_pallet,
                         rpm.tipo_empaque,
-                        rpm.doh_sugerido_planta
+                        rpm.doh_sugerido_planta,
+                        rpm.en_cl2
                     FROM dbo.rundown_parametro_material rpm
                     WHERE rpm.id_material = m.id_material AND rpm.activo = 1
                       AND (prov.id_proveedor IS NULL OR rpm.id_proveedor = prov.id_proveedor)
@@ -632,6 +670,7 @@ class StockRepository:
                     "doh_sugerido_planta": float(r[11] if r[11] is not None else 1.0),
                     "id_parametro": int(r[12]) if r[12] is not None else None,
                     "activo": True,
+                    "en_cl2": bool(r[13]) if len(r) > 13 else True,
                 }
                 for r in rows
             ]
@@ -651,10 +690,12 @@ class StockRepository:
         bultos_por_pallet: Optional[int],
         doh_sugerido_planta: float,
         unidad: Optional[str] = None,
+        en_cl2: Optional[bool] = None,
     ) -> None:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            cl2_val = 1 if en_cl2 is True else (0 if en_cl2 is False else None)
             # 1. Update dbo.material
             cursor.execute(
                 """
@@ -664,10 +705,11 @@ class StockRepository:
                     lote_minimo = ?,
                     unidad_por_bulto = ?,
                     bultos_por_pallet = ?,
-                    unidad = COALESCE(?, unidad)
+                    unidad = COALESCE(?, unidad),
+                    en_cl2 = COALESCE(?, en_cl2)
                 WHERE id_material = ?
                 """,
-                (id_proveedor, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, unidad, id_material),
+                (id_proveedor, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, unidad, cl2_val, id_material),
             )
 
             # 2. Update/Insert into dbo.proveedor_material if id_proveedor is valid
@@ -707,15 +749,16 @@ class StockRepository:
                                    bultos_por_pallet = ?,
                                    doh_sugerido_planta = ?,
                                    unidad = COALESCE(?, unidad),
+                                   en_cl2 = COALESCE(?, en_cl2),
                                    activo = 1
                     WHEN NOT MATCHED THEN
-                        INSERT (id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, activo)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'UN'), 1);
+                        INSERT (id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, en_cl2, activo)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'UN'), COALESCE(?, 0), 1);
                     """,
                     (
                         id_proveedor, id_material,
-                        tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad,
-                        id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad,
+                        tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, cl2_val,
+                        id_proveedor, id_material, tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, cl2_val,
                     ),
                 )
                 cursor.execute(
@@ -743,10 +786,11 @@ class StockRepository:
                         unidad_por_bulto = ?,
                         bultos_por_pallet = ?,
                         doh_sugerido_planta = ?,
-                        unidad = COALESCE(?, unidad)
+                        unidad = COALESCE(?, unidad),
+                        en_cl2 = COALESCE(?, en_cl2)
                     WHERE id_material = ?
                     """,
-                    (tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, id_material),
+                    (tipo_empaque, lote_mts, unidad_por_bulto, bultos_por_pallet, doh_sugerido_planta, unidad, cl2_val, id_material),
                 )
             conn.commit()
         finally:

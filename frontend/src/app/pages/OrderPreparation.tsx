@@ -91,7 +91,7 @@ export function OrderPreparation() {
       setMaterials(
         data.items.map((it) => {
           const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
-          const isPallet = it.tipo_empaque === "pallet" && lotSize > 1;
+          const isPallet = (it.cantidad_pallets != null && it.cantidad_pallets > 0) || (it.tipo_empaque === "pallet" && lotSize > 1 && it.cantidad_pedida >= lotSize);
           const cantPed = it.cantidad_pedida;
           const cantEnt = it.cantidad_entregada || 0;
           const cantPend = it.cantidad_pendiente ?? Math.max(0, cantPed - cantEnt);
@@ -586,7 +586,7 @@ export function OrderPreparation() {
                       </TableRow>
                     ) : (
                       materials.map((material) => {
-                        const isPallet = material.tipo_empaque === "pallet" && material.tamanio_lote > 1;
+                        const isPallet = (material.cantidad_pallets != null && material.cantidad_pallets > 0) || (material.tipo_empaque === "pallet" && material.tamanio_lote > 1 && material.quantityRequested >= material.tamanio_lote);
                         const isFullyDone = material.quantityPending <= 0;
 
                         return (

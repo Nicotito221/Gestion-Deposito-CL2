@@ -11,6 +11,11 @@ SPANISH_MONTHS = {
     7: "jul", 8: "ago", 9: "sept", 10: "oct", 11: "nov", 12: "dic"
 }
 
+SPANISH_FULL_MONTHS = {
+    1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+    7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+}
+
 MONTHS_LOOKUP = {
     "ene": 1, "enero": 1, "jan": 1,
     "feb": 2, "febrero": 2,
@@ -74,17 +79,30 @@ class SupplyRepository:
                 )
                 rows = cursor.fetchall()
 
+                month_dates: Dict[Tuple[int, int], Set[datetime.date]] = {}
+                for r in rows:
+                    f = r[1]
+                    cant = float(r[2] or 0.0)
+                    if isinstance(f, datetime.date) and cant > 0:
+                        k = (f.year, f.month)
+                        month_dates.setdefault(k, set()).add(f)
+
+                if month_dates:
+                    firm_year, firm_month = max(month_dates.keys(), key=lambda k: len(month_dates[k]))
+                else:
+                    firm_year = datetime.date.today().year
+                    firm_month = datetime.date.today().month
+
                 daily_dates: Dict[datetime.date, str] = {}
-                tent_dates: Dict[datetime.date, str] = {}
+                tent_months: Dict[Tuple[int, int], str] = {}
                 grouped: Dict[str, Dict[str, object]] = {}
-                firm_month = 9
 
                 for r in rows:
                     prod_id = str(r[0])
                     fecha_dt: datetime.date = r[1]
-                    cant = float(r[2])
-                    desc = str(r[3])
-                    tasa = str(r[4])
+                    cant = float(r[2] or 0.0)
+                    desc = str(r[3] or "")
+                    tasa = str(r[4] or "")
 
                     if prod_id not in grouped:
                         grouped[prod_id] = {
@@ -97,29 +115,23 @@ class SupplyRepository:
                             "total": 0.0,
                         }
 
-                    if fecha_dt.month == firm_month:
+                    if (fecha_dt.year, fecha_dt.month) == (firm_year, firm_month):
                         col_label = f"{fecha_dt.day}-{SPANISH_MONTHS.get(fecha_dt.month, 'mes')}"
                         daily_dates[fecha_dt] = col_label
                         d_values = grouped[prod_id]["daily_values"]  # type: ignore
                         d_values[col_label] = d_values.get(col_label, 0.0) + cant
-                    else:
-                        month_labels = {
-                            10: "Tentativo mes Octubre",
-                            11: "Tentativo mes Noviembre",
-                            12: "DIC",
-                            1: "ENE",
-                            2: "FEB",
-                        }
-                        col_label = month_labels.get(fecha_dt.month, SPANISH_MONTHS.get(fecha_dt.month, 'mes').upper())
-                        tent_dates[fecha_dt] = col_label
+                    elif cant > 0:
+                        m_key = (fecha_dt.year, fecha_dt.month)
+                        m_label = f"{SPANISH_MONTHS.get(fecha_dt.month, 'mes').capitalize()} {fecha_dt.year}"
+                        tent_months[m_key] = m_label
                         t_values = grouped[prod_id]["tentative_values"]  # type: ignore
-                        t_values[col_label] = t_values.get(col_label, 0.0) + cant
+                        t_values[m_label] = t_values.get(m_label, 0.0) + cant
                         grouped[prod_id]["tentative_total"] = float(grouped[prod_id]["tentative_total"]) + cant
 
                     grouped[prod_id]["total"] = float(grouped[prod_id]["total"]) + cant
 
                 sorted_daily = [daily_dates[d] for d in sorted(daily_dates.keys())]
-                sorted_tent = [tent_dates[d] for d in sorted(tent_dates.keys())]
+                sorted_tent = [tent_months[k] for k in sorted(tent_months.keys())]
 
                 items: List[DemandRowOut] = []
                 for idx, (prod_id, data) in enumerate(grouped.items()):
@@ -142,7 +154,7 @@ class SupplyRepository:
 
                 total_demanda = sum(it.total for it in items)
                 piezas_validadas = sum(1 for it in items if it.status == "validado")
-                periodo_str = f"Importación #{id_importacion} ({nombre_archivo[:28]})"
+                periodo_str = f"{SPANISH_FULL_MONTHS.get(firm_month, '')} {firm_year}"
 
                 return SupplySummaryOut(
                     periodo=periodo_str,
@@ -301,6 +313,19 @@ class SupplyRepository:
 
             planned_dict: Dict[Tuple[str, datetime.date], float] = {}
             tentative_day_map = {10: 19, 11: 19, 12: 14, 1: 18, 2: 15}
+
+            firm_month_detected = 9
+            for it in items:
+                for col_name in it.daily_values.keys():
+                    m_daily = re.match(r"^(\d{1,2})-([a-z]+)", col_name.strip().lower())
+                    if m_daily:
+                        m_val = MONTHS_LOOKUP.get(m_daily.group(2))
+                        if m_val:
+                            firm_month_detected = m_val
+                            break
+                if firm_month_detected != 9:
+                    break
+
             for it in items:
                 has_any_qty = False
                 for col_name, qty in it.daily_values.items():
@@ -310,7 +335,7 @@ class SupplyRepository:
                         if m_daily:
                             day = int(m_daily.group(1))
                             m_str = m_daily.group(2)
-                            month = MONTHS_LOOKUP.get(m_str, 9)
+                            month = MONTHS_LOOKUP.get(m_str, firm_month_detected)
                             fecha_date = datetime.date(plan_year, month, day)
                             key = (it.part_number, fecha_date)
                             planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
@@ -318,7 +343,7 @@ class SupplyRepository:
                             m_num = re.match(r"^(\d{1,2})$", col_name.strip())
                             if m_num:
                                 day = int(m_num.group(1))
-                                fecha_date = datetime.date(plan_year, 9, day)
+                                fecha_date = datetime.date(plan_year, firm_month_detected, day)
                                 key = (it.part_number, fecha_date)
                                 planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
 
@@ -327,10 +352,10 @@ class SupplyRepository:
                         c_clean = col_name.strip().lower()
                         for m_key, m_val in MONTHS_LOOKUP.items():
                             if m_key in c_clean:
-                                if m_val == 9:
+                                if m_val == firm_month_detected:
                                     break
                                 has_any_qty = True
-                                year = plan_year + (1 if m_val < 8 else 0)
+                                year = plan_year + (1 if m_val < firm_month_detected else 0)
                                 day = tentative_day_map.get(m_val, 1)
                                 fecha_date = datetime.date(year, m_val, day)
                                 key = (it.part_number, fecha_date)
@@ -338,7 +363,7 @@ class SupplyRepository:
                                 break
 
                 if not has_any_qty:
-                    key = (it.part_number, datetime.date(plan_year, 9, 1))
+                    key = (it.part_number, datetime.date(plan_year, firm_month_detected, 1))
                     if key not in planned_dict:
                         planned_dict[key] = 0.0
 

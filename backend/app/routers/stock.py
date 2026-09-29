@@ -79,6 +79,7 @@ def get_materiales_configuracion(
     search: Optional[str] = Query(default=None, description="Búsqueda por código o nombre"),
     id_proveedor: Optional[int] = Query(default=None, description="Filtrar por proveedor"),
     tipo_empaque: Optional[str] = Query(default=None, description="Filtrar por empaque: pallet, rollo, unidad"),
+    en_cl2: Optional[bool] = Query(default=None, description="Filtrar por gestión en CL2"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     service: StockService = Depends(get_stock_service),
@@ -88,6 +89,7 @@ def get_materiales_configuracion(
             search=search,
             id_proveedor=id_proveedor,
             tipo_empaque=tipo_empaque,
+            en_cl2=en_cl2,
             page=page,
             page_size=page_size,
         )

@@ -135,6 +135,7 @@ class StockService:
         search: Optional[str] = None,
         id_proveedor: Optional[int] = None,
         tipo_empaque: Optional[str] = None,
+        en_cl2: Optional[bool] = None,
         page: int = 1,
         page_size: int = 50,
     ) -> MaterialConfigListResponse:
@@ -145,6 +146,7 @@ class StockService:
             search=search,
             id_proveedor=id_proveedor,
             tipo_empaque=tipo_empaque,
+            en_cl2=en_cl2,
             page=current_page,
             page_size=current_page_size,
         )
@@ -178,4 +180,5 @@ class StockService:
             bultos_por_pallet=data.bultos_por_pallet if data.tipo_empaque == "rollo" else None,
             doh_sugerido_planta=data.doh_sugerido_planta,
             unidad=data.unidad.strip().upper() if data.unidad and data.unidad.strip() else None,
+            en_cl2=data.en_cl2,
         )

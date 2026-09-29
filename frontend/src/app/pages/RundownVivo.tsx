@@ -76,6 +76,7 @@ import {
   getRundownCalendarioMes,
   saveRundownCalendarioMes,
   searchMaterialesCatalogo,
+  getMaterialCatalogoInfo,
   getProveedorMateriales,
   addProveedorMaterial,
   deleteProveedorMaterial,
@@ -105,7 +106,7 @@ export function RundownVivo() {
   const [selectedSeccionId, setSelectedSeccionId] = useState<number>(0);
   const [selectedSupplierCode, setSelectedSupplierCode] = useState<string>("HOWA");
   const [alcance, setAlcance] = useState<"total" | "planta">("total");
-  const [selectedPeriodo, setSelectedPeriodo] = useState<string>("2026-09");
+  const [selectedPeriodo, setSelectedPeriodo] = useState<string>("");
 
   const [report, setReport] = useState<RundownSupplierReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -205,6 +206,7 @@ export function RundownVivo() {
     factura_numero: "",
     cantidad: 0,
     observacion: "",
+    estado: "planificado",
   });
 
   const [editIngresoModalOpen, setEditIngresoModalOpen] = useState<boolean>(false);
@@ -219,6 +221,7 @@ export function RundownVivo() {
     po_numero: string;
     factura_numero: string;
     observacion: string;
+    estado: "planificado" | "confirmado";
   }>({
     id_material: "",
     fecha_origen: "",
@@ -229,6 +232,7 @@ export function RundownVivo() {
     po_numero: "",
     factura_numero: "",
     observacion: "",
+    estado: "planificado",
   });
 
   const [draggedPedido, setDraggedPedido] = useState<{
@@ -590,6 +594,7 @@ export function RundownVivo() {
       factura_numero: "",
       cantidad: 0,
       observacion: "",
+      estado: "planificado",
     });
     setTransitoModalOpen(true);
   };
@@ -621,7 +626,8 @@ export function RundownVivo() {
     currentVal: number,
     existingPo?: string | null,
     existingFactura?: string | null,
-    existingObs?: string | null
+    existingObs?: string | null,
+    existingEstado?: "planificado" | "confirmado" | null
   ) => {
     setIngresoEditForm({
       id_material: materialId,
@@ -633,6 +639,7 @@ export function RundownVivo() {
       po_numero: existingPo || "",
       factura_numero: existingFactura || "",
       observacion: existingObs || "",
+      estado: existingEstado || "planificado",
     });
     setEditIngresoModalOpen(true);
   };
@@ -690,6 +697,7 @@ export function RundownVivo() {
         factura_numero: ingresoEditForm.factura_numero.trim() || undefined,
         observacion: ingresoEditForm.observacion.trim() || undefined,
         fecha_origen: isShifted ? ingresoEditForm.fecha_origen : undefined,
+        estado: ingresoEditForm.estado,
       });
       toast.success(
         isShifted
@@ -1131,10 +1139,47 @@ export function RundownVivo() {
       id_material: item.id_material,
       descripcion: item.nombre || item.id_material,
       unidad: item.unidad || "MTS",
+      lote_mts: item.tamanio_lote && item.tamanio_lote > 0 ? item.tamanio_lote : prev.lote_mts,
     }));
+    if (item.id_proveedor) {
+      setAdminMaterialProvId(item.id_proveedor);
+      fetchProvMateriales(item.id_proveedor);
+    }
     setCatalogoSearchResults([]);
     setCatalogoSearchQuery(item.id_material);
   };
+
+  const handleMaterialCodeLookup = useCallback(async (code: string) => {
+    const cleanCode = code.trim().toUpperCase();
+    if (!cleanCode) return;
+    try {
+      const mat = await getMaterialCatalogoInfo(cleanCode);
+      if (mat) {
+        setNewMaterialForm((prev) => ({
+          ...prev,
+          id_material: mat.id_material,
+          descripcion: mat.nombre || prev.descripcion,
+          unidad: mat.unidad || prev.unidad || "MTS",
+          lote_mts: mat.tamanio_lote && mat.tamanio_lote > 0 ? mat.tamanio_lote : prev.lote_mts,
+        }));
+        if (mat.id_proveedor) {
+          setAdminMaterialProvId(mat.id_proveedor);
+          fetchProvMateriales(mat.id_proveedor);
+        }
+      }
+    } catch {
+      // Ignorar si no existe
+    }
+  }, [fetchProvMateriales]);
+
+  useEffect(() => {
+    const code = newMaterialForm.id_material.trim();
+    if (!code || code.length < 3) return;
+    const timer = setTimeout(() => {
+      handleMaterialCodeLookup(code);
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [newMaterialForm.id_material, handleMaterialCodeLookup]);
 
   const handleAddMaterialToProveedor = async () => {
     if (!adminMaterialProvId) {
@@ -1666,6 +1711,8 @@ export function RundownVivo() {
                         <span>{p.label}</span>
                         {p.es_firme ? (
                           <Badge className="bg-emerald-600 text-white text-[9px] px-1 py-0 h-4">Firme</Badge>
+                        ) : p.es_finalizado ? (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-slate-300 bg-slate-100 text-slate-500 font-normal">Finalizado</Badge>
                         ) : p.es_proyectado_manual ? (
                           <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-purple-300 bg-purple-50 text-purple-700">Extendido</Badge>
                         ) : (
@@ -1990,6 +2037,7 @@ export function RundownVivo() {
                             const existingPo = viaToUse === "Local" ? d.local_po : (viaToUse === "Aereo" ? d.aereo_po : d.maritimo_po);
                             const existingFactura = viaToUse === "Local" ? d.local_factura : (viaToUse === "Aereo" ? d.aereo_factura : d.maritimo_factura);
                             const existingObs = viaToUse === "Local" ? d.local_obs : (viaToUse === "Aereo" ? d.aereo_obs : d.maritimo_obs);
+                            const existingEstado = viaToUse === "Local" ? d.local_estado : (viaToUse === "Aereo" ? d.aereo_estado : d.maritimo_estado);
                             const isBeingDragged =
                               draggedPedido?.id_material === mat.id_material &&
                               draggedPedido?.fecha_origen === d.fecha;
@@ -2006,7 +2054,7 @@ export function RundownVivo() {
                                 key={d.fecha}
                                 onClick={() => {
                                   if (!draggedPedido) {
-                                    handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal, existingPo, existingFactura, existingObs);
+                                    handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal, existingPo, existingFactura, existingObs, existingEstado);
                                   }
                                 }}
                                 onDragOver={(e) => {
@@ -2066,6 +2114,15 @@ export function RundownVivo() {
                                         #{existingFactura || existingPo}
                                       </span>
                                     )}
+                                    {existingEstado === "confirmado" ? (
+                                      <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
+                                        ✓ Conf
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
+                                        Plan
+                                      </span>
+                                    )}
                                   </span>
                                 ) : (
                                   <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
@@ -2101,7 +2158,7 @@ export function RundownVivo() {
                                   key={d.fecha}
                                   onClick={() => {
                                     if (!draggedPedido) {
-                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo, d.maritimo_po, d.maritimo_factura, d.maritimo_obs);
+                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo, d.maritimo_po, d.maritimo_factura, d.maritimo_obs, d.maritimo_estado);
                                     }
                                   }}
                                   onDragOver={(e) => {
@@ -2165,6 +2222,15 @@ export function RundownVivo() {
                                           #{d.maritimo_factura || d.maritimo_po}
                                         </span>
                                       )}
+                                      {d.maritimo_estado === "confirmado" ? (
+                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
+                                          ✓ Conf
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
+                                          Plan
+                                        </span>
+                                      )}
                                     </span>
                                   ) : (
                                     <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
@@ -2207,7 +2273,8 @@ export function RundownVivo() {
                                         d.pedidos_aereos,
                                         d.aereo_po,
                                         d.aereo_factura,
-                                        d.aereo_obs
+                                        d.aereo_obs,
+                                        d.aereo_estado
                                       );
                                     }
                                   }}
@@ -2272,6 +2339,15 @@ export function RundownVivo() {
                                           #{d.aereo_factura || d.aereo_po}
                                         </span>
                                       )}
+                                      {d.aereo_estado === "confirmado" ? (
+                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
+                                          ✓ Conf
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
+                                          Plan
+                                        </span>
+                                      )}
                                     </span>
                                   ) : (
                                     <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
@@ -2291,6 +2367,15 @@ export function RundownVivo() {
                                   {(d.entregas_locales || 0) > 0 ? (
                                     <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[11px]">
                                       +{(d.entregas_locales || 0).toLocaleString()}
+                                      {d.local_estado === "confirmado" ? (
+                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-200/80 rounded" title="Confirmado">
+                                          ✓ Conf
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] font-normal text-emerald-700/70 ml-0.5 px-1 py-0 bg-white/70 rounded" title="Plan">
+                                          Plan
+                                        </span>
+                                      )}
                                     </span>
                                   ) : (
                                     <span className="text-slate-300 text-[11px]">—</span>
@@ -2489,6 +2574,46 @@ export function RundownVivo() {
                     +7d
                   </Button>
                 </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 p-2.5 rounded-lg border border-slate-200 bg-slate-50/70">
+              <Label className="text-xs font-semibold text-slate-700">Tipo de Arribo</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIngresoEditForm({ ...ingresoEditForm, estado: "planificado" })}
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
+                    ingresoEditForm.estado === "planificado"
+                      ? "border-blue-600 bg-blue-50/80 text-blue-900 font-semibold shadow-xs"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+                    Planificación
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    Proyección (no altera stock físico)
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIngresoEditForm({ ...ingresoEditForm, estado: "confirmado" })}
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
+                    ingresoEditForm.estado === "confirmado"
+                      ? "border-emerald-600 bg-emerald-50/80 text-emerald-900 font-semibold shadow-xs"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Confirmación
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    Físico (suma al stock del depósito)
+                  </span>
+                </button>
               </div>
             </div>
 
@@ -2931,6 +3056,13 @@ export function RundownVivo() {
                         placeholder="ej. PU188-D1800"
                         value={newMaterialForm.id_material}
                         onChange={(e) => setNewMaterialForm({ ...newMaterialForm, id_material: e.target.value })}
+                        onBlur={(e) => handleMaterialCodeLookup(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleMaterialCodeLookup(newMaterialForm.id_material);
+                          }
+                        }}
                         className="text-xs h-8 font-mono bg-white mt-1"
                       />
                     </div>
@@ -3246,6 +3378,46 @@ export function RundownVivo() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-1.5 p-2.5 rounded-lg border border-slate-200 bg-slate-50/70">
+              <Label className="text-xs font-semibold text-slate-700">Tipo de Arribo</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTransitoForm({ ...transitoForm, estado: "planificado" })}
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
+                    transitoForm.estado === "planificado"
+                      ? "border-blue-600 bg-blue-50/80 text-blue-900 font-semibold shadow-xs"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+                    Planificación
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    Proyección (no altera stock físico)
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTransitoForm({ ...transitoForm, estado: "confirmado" })}
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
+                    transitoForm.estado === "confirmado"
+                      ? "border-emerald-600 bg-emerald-50/80 text-emerald-900 font-semibold shadow-xs"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    Confirmación
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    Físico (suma al stock del depósito)
+                  </span>
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
