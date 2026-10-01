@@ -16,6 +16,8 @@ from app.schemas.pedido import (
     PedidosListResponse,
     PreparacionPedidoResponse,
     PreparacionPedidoUpdate,
+    ReglaSugerenciaConfigOut,
+    ReglaSugerenciaConfigUpdate,
     RemitoDetalleOut,
     RemitoItemOut,
     SugerenciaMaterialDetalle,
@@ -143,6 +145,12 @@ class PedidoService:
         items_response: List[SugerenciaMaterialDetalle] = []
         materiales_a_pedir_count = 0
 
+        raw_factor = self._repo.get_config_valor("factor_consumo_siguiente", "0.65")
+        try:
+            factor_consumo_sig = float(raw_factor)
+        except (ValueError, TypeError):
+            factor_consumo_sig = 0.65
+
         for m in materiales:
             mat_id = m["id_material"]
             stock_contado = counts_map.get(mat_id, float(m.get("stock_inicial_planta") or 0.0))
@@ -216,7 +224,7 @@ class PedidoService:
             stock_umbral_doh = round(consumo_diario * doh, 2)
             tiene_deficit_doh = (consumo_diario > 0) and (stock_con_pedidos < stock_umbral_doh)
 
-            stock_objetivo = round(consumo_diario + (0.65 * consumo_sig), 2)
+            stock_objetivo = round(consumo_diario + (factor_consumo_sig * consumo_sig), 2)
             stock_minimo_inicio = stock_umbral_doh
 
             deficit = max(0.0, round(stock_objetivo - stock_con_pedidos, 2)) if tiene_deficit_doh else 0.0
@@ -623,4 +631,23 @@ class PedidoService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
             )
+
+    def get_regla_sugerencia_config(self) -> ReglaSugerenciaConfigOut:
+        val_str = self._repo.get_config_valor("factor_consumo_siguiente", "0.65")
+        try:
+            val = float(val_str)
+        except (ValueError, TypeError):
+            val = 0.65
+        return ReglaSugerenciaConfigOut(
+            factor_consumo_siguiente=val,
+            descripcion="Factor multiplicador para el consumo del día siguiente en la regla de pedido sugerido",
+        )
+
+    def update_regla_sugerencia_config(self, data: ReglaSugerenciaConfigUpdate) -> ReglaSugerenciaConfigOut:
+        self._repo.set_config_valor(
+            clave="factor_consumo_siguiente",
+            valor=str(round(data.factor_consumo_siguiente, 4)),
+            descripcion="Factor multiplicador para el consumo del día siguiente en la regla de pedido sugerido",
+        )
+        return self.get_regla_sugerencia_config()
 

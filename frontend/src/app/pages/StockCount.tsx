@@ -91,6 +91,12 @@ interface SheetRow {
   deposito_en_planta: boolean;
   stock_teorico: number;
   stock_contado: number;
+  pallets_contados?: number;
+  unidades_sueltas?: number;
+  partes_pallets?: number[];
+  partes_unidades?: number[];
+  lote_pallet?: number;
+  tipo_empaque?: string;
   observacion: string;
 }
 
@@ -190,6 +196,10 @@ export function StockCount() {
   } | null>(null);
   const [savingLote, setSavingLote] = useState<boolean>(false);
 
+  const [cancelConfirmModalOpen, setCancelConfirmModalOpen] = useState<boolean>(false);
+  const [palletChunkInput, setPalletChunkInput] = useState<{ [matId: string]: string }>({});
+  const [unidadChunkInput, setUnidadChunkInput] = useState<{ [matId: string]: string }>({});
+
   const currentTimeStr = useMemo(() => {
     return new Intl.DateTimeFormat("es-AR", {
       timeZone: "America/Argentina/Buenos_Aires",
@@ -278,6 +288,10 @@ export function StockCount() {
       setShowDropdown(false);
       return;
     }
+    const lote = item.lote_pallet && item.lote_pallet > 0 ? item.lote_pallet : 1.0;
+    const initialPallets = lote > 1 ? Math.floor(item.stock_teorico / lote) : 0;
+    const initialSueltas = lote > 1 ? Math.round((item.stock_teorico % lote) * 100) / 100 : item.stock_teorico;
+
     setRows((prev) => [
       ...prev,
       {
@@ -289,6 +303,10 @@ export function StockCount() {
         deposito_en_planta: item.deposito_en_planta,
         stock_teorico: item.stock_teorico,
         stock_contado: item.stock_teorico,
+        pallets_contados: initialPallets,
+        unidades_sueltas: initialSueltas,
+        lote_pallet: lote,
+        tipo_empaque: item.tipo_empaque || "pallet",
         observacion: "",
       },
     ]);
@@ -320,6 +338,10 @@ export function StockCount() {
         const newRows = [...prev];
         items.forEach((item) => {
           if (!existingMap.has(item.id_material)) {
+            const lote = item.lote_pallet && item.lote_pallet > 0 ? item.lote_pallet : 1.0;
+            const initialPallets = lote > 1 ? Math.floor(item.stock_teorico / lote) : 0;
+            const initialSueltas = lote > 1 ? Math.round((item.stock_teorico % lote) * 100) / 100 : item.stock_teorico;
+
             newRows.push({
               id_material: item.id_material,
               nombre: item.nombre,
@@ -329,6 +351,10 @@ export function StockCount() {
               deposito_en_planta: item.deposito_en_planta,
               stock_teorico: item.stock_teorico,
               stock_contado: item.stock_teorico,
+              pallets_contados: initialPallets,
+              unidades_sueltas: initialSueltas,
+              lote_pallet: lote,
+              tipo_empaque: item.tipo_empaque || "pallet",
               observacion: "",
             });
             addedCount++;
@@ -351,8 +377,162 @@ export function StockCount() {
   const handleCountChange = (matId: string, val: number) => {
     const safeVal = Math.max(0, isNaN(val) ? 0 : val);
     setRows((prev) =>
-      prev.map((r) => (r.id_material === matId ? { ...r, stock_contado: safeVal } : r))
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const newPal = lote > 1 ? Math.floor(safeVal / lote) : 0;
+        const newSueltas = lote > 1 ? Math.round((safeVal % lote) * 100) / 100 : safeVal;
+        return {
+          ...r,
+          stock_contado: safeVal,
+          pallets_contados: newPal,
+          unidades_sueltas: newSueltas,
+          partes_pallets: newPal > 0 ? [newPal] : [],
+          partes_unidades: newSueltas > 0 ? [newSueltas] : [],
+        };
+      })
     );
+  };
+
+  const handlePalletsChange = (matId: string, palVal: number) => {
+    const safePal = Math.max(0, isNaN(palVal) ? 0 : palVal);
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const sueltas = r.unidades_sueltas ?? 0;
+        const total = Math.round(((safePal * lote) + sueltas) * 100) / 100;
+        return {
+          ...r,
+          pallets_contados: safePal,
+          partes_pallets: safePal > 0 ? [safePal] : [],
+          stock_contado: total,
+        };
+      })
+    );
+  };
+
+  const handleUnidadesChange = (matId: string, unidVal: number) => {
+    const safeUnid = Math.max(0, isNaN(unidVal) ? 0 : unidVal);
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const pal = r.pallets_contados ?? 0;
+        const total = Math.round(((pal * lote) + safeUnid) * 100) / 100;
+        return {
+          ...r,
+          unidades_sueltas: safeUnid,
+          partes_unidades: safeUnid > 0 ? [safeUnid] : [],
+          stock_contado: total,
+        };
+      })
+    );
+  };
+
+  const handleAddPalletChunk = (matId: string, chunkVal: number) => {
+    if (isNaN(chunkVal) || chunkVal <= 0) return;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const currentParts = r.partes_pallets && r.partes_pallets.length > 0 ? [...r.partes_pallets] : (r.pallets_contados && r.pallets_contados > 0 ? [r.pallets_contados] : []);
+        currentParts.push(chunkVal);
+        const newPal = currentParts.reduce((a, b) => a + b, 0);
+        const sueltas = r.unidades_sueltas ?? 0;
+        const total = Math.round(((newPal * lote) + sueltas) * 100) / 100;
+        return {
+          ...r,
+          partes_pallets: currentParts,
+          pallets_contados: newPal,
+          stock_contado: total,
+        };
+      })
+    );
+  };
+
+  const handleRemovePalletChunk = (matId: string, index: number) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const currentParts = (r.partes_pallets || []).filter((_, idx) => idx !== index);
+        const newPal = currentParts.reduce((a, b) => a + b, 0);
+        const sueltas = r.unidades_sueltas ?? 0;
+        const total = Math.round(((newPal * lote) + sueltas) * 100) / 100;
+        return {
+          ...r,
+          partes_pallets: currentParts,
+          pallets_contados: newPal,
+          stock_contado: total,
+        };
+      })
+    );
+  };
+
+  const handleAddUnidadChunk = (matId: string, chunkVal: number) => {
+    if (isNaN(chunkVal) || chunkVal <= 0) return;
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const currentParts = r.partes_unidades && r.partes_unidades.length > 0 ? [...r.partes_unidades] : (r.unidades_sueltas && r.unidades_sueltas > 0 ? [r.unidades_sueltas] : []);
+        currentParts.push(chunkVal);
+        const newSueltas = Math.round(currentParts.reduce((a, b) => a + b, 0) * 100) / 100;
+        const pal = r.pallets_contados ?? 0;
+        const total = Math.round(((pal * lote) + newSueltas) * 100) / 100;
+        return {
+          ...r,
+          partes_unidades: currentParts,
+          unidades_sueltas: newSueltas,
+          stock_contado: total,
+        };
+      })
+    );
+  };
+
+  const handleRemoveUnidadChunk = (matId: string, index: number) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        const lote = r.lote_pallet && r.lote_pallet > 0 ? r.lote_pallet : 1.0;
+        const currentParts = (r.partes_unidades || []).filter((_, idx) => idx !== index);
+        const newSueltas = Math.round(currentParts.reduce((a, b) => a + b, 0) * 100) / 100;
+        const pal = r.pallets_contados ?? 0;
+        const total = Math.round(((pal * lote) + newSueltas) * 100) / 100;
+        return {
+          ...r,
+          partes_unidades: currentParts,
+          unidades_sueltas: newSueltas,
+          stock_contado: total,
+        };
+      })
+    );
+  };
+
+  const handleResetRowCounts = (matId: string) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id_material !== matId) return r;
+        return {
+          ...r,
+          stock_contado: 0,
+          pallets_contados: 0,
+          unidades_sueltas: 0,
+          partes_pallets: [],
+          partes_unidades: [],
+        };
+      })
+    );
+  };
+
+  const handleConfirmCancelConteo = () => {
+    setRows([]);
+    setGeneralObs("");
+    setPalletChunkInput({});
+    setUnidadChunkInput({});
+    setCancelConfirmModalOpen(false);
+    toast.info("Se canceló la planilla de conteo.");
   };
 
   const handleRowObsChange = (matId: string, obs: string) => {
@@ -1001,39 +1181,315 @@ export function StockCount() {
                           </div>
                         </div>
 
-                        {/* Botones Grandes de Conteo Táctil */}
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-slate-500 font-semibold block">
-                            Cantidad Contada en Planta:
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleCountChange(row.id_material, row.stock_contado - 1)}
-                              className="h-11 w-12 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-lg font-bold flex items-center justify-center border border-slate-200 transition-colors flex-shrink-0"
-                            >
-                              −
-                            </button>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="any"
-                              value={row.stock_contado}
-                              onFocus={(e) => e.target.select()}
-                              onChange={(e) =>
-                                handleCountChange(row.id_material, parseFloat(e.target.value) || 0)
-                              }
-                              className="h-11 text-center font-mono font-bold text-lg border-slate-300 focus:ring-2 focus:ring-blue-500 shadow-2xs"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleCountChange(row.id_material, row.stock_contado + 1)}
-                              className="h-11 w-12 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-lg font-bold flex items-center justify-center border border-slate-200 transition-colors flex-shrink-0"
-                            >
-                              +
-                            </button>
+                        {/* Botones de Conteo Táctil (Dual Pallets/Unidades con Acumulador o Simple) */}
+                        {row.lote_pallet && row.lote_pallet > 1 ? (
+                          <div className="space-y-2.5 bg-slate-50 p-2.5 rounded-lg border border-slate-200">
+                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700">
+                              <span>Modo de Carga: Pallets + Unidades</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-blue-700 font-mono bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                                  1 pal = {row.lote_pallet.toLocaleString("es-AR")} {row.unidad}
+                                </span>
+                                <button
+                                  type="button"
+                                  title="Reiniciar conteo de este material a 0"
+                                  onClick={() => handleResetRowCounts(row.id_material)}
+                                  className="text-[10px] text-slate-400 hover:text-red-600 flex items-center gap-0.5"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                              {/* Pallets con Acumulador */}
+                              <div className="bg-white p-2 rounded-md border border-slate-200 space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                                    Pallets ({row.pallets_contados || 0})
+                                  </Label>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePalletsChange(row.id_material, (row.pallets_contados || 0) - 1)}
+                                      className="h-6 w-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-200"
+                                    >
+                                      −
+                                    </button>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      value={row.pallets_contados ?? 0}
+                                      onFocus={(e) => e.target.select()}
+                                      onChange={(e) =>
+                                        handlePalletsChange(row.id_material, parseInt(e.target.value, 10) || 0)
+                                      }
+                                      className="h-6 w-12 text-center font-mono font-bold text-xs px-1 border-slate-300"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePalletsChange(row.id_material, (row.pallets_contados || 0) + 1)}
+                                      className="h-6 w-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-200"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Sumador rápido de pallets */}
+                                <div className="flex items-center gap-1 pt-1">
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    placeholder="+ cant pallets"
+                                    value={palletChunkInput[row.id_material] || ""}
+                                    onChange={(e) =>
+                                      setPalletChunkInput((prev) => ({
+                                        ...prev,
+                                        [row.id_material]: e.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        const val = parseInt(palletChunkInput[row.id_material] || "", 10);
+                                        if (val > 0) {
+                                          handleAddPalletChunk(row.id_material, val);
+                                          setPalletChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                        }
+                                      }
+                                    }}
+                                    className="h-7 text-xs font-mono"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      const val = parseInt(palletChunkInput[row.id_material] || "", 10);
+                                      if (val > 0) {
+                                        handleAddPalletChunk(row.id_material, val);
+                                        setPalletChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                      }
+                                    }}
+                                    className="h-7 px-2 text-xs font-semibold text-blue-700 border-blue-200 hover:bg-blue-50"
+                                  >
+                                    Sumar
+                                  </Button>
+                                </div>
+
+                                {/* Chips de pallets sumados */}
+                                {row.partes_pallets && row.partes_pallets.length > 1 && (
+                                  <div className="flex flex-wrap gap-1 pt-1">
+                                    {row.partes_pallets.map((p, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-800 text-[10px] font-mono border border-blue-200"
+                                      >
+                                        +{p} pal
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemovePalletChunk(row.id_material, idx)}
+                                          className="text-blue-500 hover:text-red-600 font-bold ml-0.5"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Unidades sueltas con Acumulador */}
+                              <div className="bg-white p-2 rounded-md border border-slate-200 space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">
+                                    Sueltas ({row.unidades_sueltas || 0} {row.unidad})
+                                  </Label>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUnidadesChange(row.id_material, (row.unidades_sueltas || 0) - 1)}
+                                      className="h-6 w-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-200"
+                                    >
+                                      −
+                                    </button>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      value={row.unidades_sueltas ?? 0}
+                                      onFocus={(e) => e.target.select()}
+                                      onChange={(e) =>
+                                        handleUnidadesChange(row.id_material, parseFloat(e.target.value) || 0)
+                                      }
+                                      className="h-6 w-14 text-center font-mono font-bold text-xs px-1 border-slate-300"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUnidadesChange(row.id_material, (row.unidades_sueltas || 0) + 1)}
+                                      className="h-6 w-6 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center border border-slate-200"
+                                    >
+                                      +
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Sumador rápido de unidades sueltas */}
+                                <div className="flex items-center gap-1 pt-1">
+                                  <Input
+                                    type="number"
+                                    min="0.1"
+                                    step="any"
+                                    placeholder="+ cant unidades"
+                                    value={unidadChunkInput[row.id_material] || ""}
+                                    onChange={(e) =>
+                                      setUnidadChunkInput((prev) => ({
+                                        ...prev,
+                                        [row.id_material]: e.target.value,
+                                      }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        const val = parseFloat(unidadChunkInput[row.id_material] || "");
+                                        if (val > 0) {
+                                          handleAddUnidadChunk(row.id_material, val);
+                                          setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                        }
+                                      }
+                                    }}
+                                    className="h-7 text-xs font-mono"
+                                  />
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      const val = parseFloat(unidadChunkInput[row.id_material] || "");
+                                      if (val > 0) {
+                                        handleAddUnidadChunk(row.id_material, val);
+                                        setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                      }
+                                    }}
+                                    className="h-7 px-2 text-xs font-semibold text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                                  >
+                                    Sumar
+                                  </Button>
+                                </div>
+
+                                {/* Chips de unidades sumadas */}
+                                {row.partes_unidades && row.partes_unidades.length > 1 && (
+                                  <div className="flex flex-wrap gap-1 pt-1">
+                                    {row.partes_unidades.map((u, idx) => (
+                                      <span
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 text-[10px] font-mono border border-emerald-200"
+                                      >
+                                        +{u} {row.unidad}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveUnidadChunk(row.id_material, idx)}
+                                          className="text-emerald-500 hover:text-red-600 font-bold ml-0.5"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Total resultante */}
+                            <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/80 text-xs font-semibold">
+                              <span className="text-slate-600">Total contado ({row.unidad}):</span>
+                              <div className="flex items-center gap-1.5 font-mono text-blue-700">
+                                <span className="text-base font-bold">{row.stock_contado.toLocaleString("es-AR")}</span>
+                                <span className="text-[10px] text-slate-500">
+                                  ({row.pallets_contados || 0} pal × {row.lote_pallet} + {row.unidades_sueltas || 0})
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-slate-500 font-semibold block">
+                              Cantidad Contada ({row.unidad}):
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleCountChange(row.id_material, row.stock_contado - 1)}
+                                className="h-11 w-12 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-lg font-bold flex items-center justify-center border border-slate-200 transition-colors flex-shrink-0"
+                              >
+                                −
+                              </button>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={row.stock_contado}
+                                onFocus={(e) => e.target.select()}
+                                onChange={(e) =>
+                                  handleCountChange(row.id_material, parseFloat(e.target.value) || 0)
+                                }
+                                className="h-11 text-center font-mono font-bold text-lg border-slate-300 focus:ring-2 focus:ring-blue-500 shadow-2xs"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleCountChange(row.id_material, row.stock_contado + 1)}
+                                className="h-11 w-12 rounded-lg bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 text-lg font-bold flex items-center justify-center border border-slate-200 transition-colors flex-shrink-0"
+                              >
+                                +
+                              </button>
+                            </div>
+                            {/* Sumador rápido para materiales sin factor pallet */}
+                            <div className="flex items-center gap-1 pt-1">
+                              <Input
+                                type="number"
+                                min="0.1"
+                                step="any"
+                                placeholder={`+ sumar a ${row.stock_contado}`}
+                                value={unidadChunkInput[row.id_material] || ""}
+                                onChange={(e) =>
+                                  setUnidadChunkInput((prev) => ({
+                                    ...prev,
+                                    [row.id_material]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    const val = parseFloat(unidadChunkInput[row.id_material] || "");
+                                    if (val > 0) {
+                                      handleCountChange(row.id_material, row.stock_contado + val);
+                                      setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                    }
+                                  }
+                                }}
+                                className="h-8 text-xs font-mono"
+                              />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const val = parseFloat(unidadChunkInput[row.id_material] || "");
+                                  if (val > 0) {
+                                    handleCountChange(row.id_material, row.stock_contado + val);
+                                    setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                  }
+                                }}
+                                className="h-8 px-2.5 text-xs font-semibold text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                              >
+                                Sumar
+                              </Button>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Nota opcional por material */}
                         <Input
@@ -1053,12 +1509,14 @@ export function StockCount() {
                 <Table>
                   <TableHeader className="bg-slate-50">
                     <TableRow>
-                      <TableHead className="w-32 text-xs font-semibold text-slate-700">Código SAP</TableHead>
+                      <TableHead className="w-28 text-xs font-semibold text-slate-700">Código SAP</TableHead>
                       <TableHead className="text-xs font-semibold text-slate-700">Descripción</TableHead>
-                      <TableHead className="w-28 text-xs font-semibold text-slate-700 text-right">Teórico</TableHead>
-                      <TableHead className="w-40 text-xs font-semibold text-blue-700 text-center">Contado</TableHead>
-                      <TableHead className="w-28 text-xs font-semibold text-slate-700 text-center">Desvío</TableHead>
-                      <TableHead className="w-16 text-xs font-semibold text-slate-700 text-center">Unidad</TableHead>
+                      <TableHead className="w-24 text-xs font-semibold text-slate-700 text-right">Teórico</TableHead>
+                      <TableHead className="w-32 text-xs font-semibold text-slate-700 text-center">Pallets</TableHead>
+                      <TableHead className="w-32 text-xs font-semibold text-slate-700 text-center">Sueltas / Resto</TableHead>
+                      <TableHead className="w-36 text-xs font-semibold text-blue-700 text-center">Total Contado</TableHead>
+                      <TableHead className="w-24 text-xs font-semibold text-slate-700 text-center">Desvío</TableHead>
+                      <TableHead className="w-14 text-xs font-semibold text-slate-700 text-center">Unidad</TableHead>
                       <TableHead className="text-xs font-semibold text-slate-700">Observación</TableHead>
                       <TableHead className="w-10 text-center" />
                     </TableRow>
@@ -1066,26 +1524,178 @@ export function StockCount() {
                   <TableBody className="divide-y divide-slate-100">
                     {rows.map((row) => {
                       const desvio = row.stock_contado - row.stock_teorico;
+                      const hasPalletFactor = Boolean(row.lote_pallet && row.lote_pallet > 1);
                       return (
                         <TableRow key={row.id_material} className="hover:bg-slate-50/80">
                           <TableCell className="font-mono text-xs font-bold text-slate-800">
                             {row.id_material}
                           </TableCell>
-                          <TableCell className="text-xs text-slate-700 max-w-[200px] truncate">
+                          <TableCell className="text-xs text-slate-700 max-w-[200px] truncate" title={row.nombre}>
                             {row.nombre}
                           </TableCell>
                           <TableCell className="text-right font-mono text-xs text-slate-600">
                             {row.stock_teorico.toLocaleString("es-AR")}
                           </TableCell>
+
+                          {/* Entrada Pallets */}
+                          <TableCell className="text-center">
+                            {hasPalletFactor ? (
+                              <div className="flex flex-col items-center gap-1 py-0.5">
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePalletsChange(row.id_material, (row.pallets_contados || 0) - 1)}
+                                    className="w-5 h-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold text-xs"
+                                  >
+                                    −
+                                  </button>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={row.pallets_contados ?? 0}
+                                    onFocus={(e) => e.target.select()}
+                                    onChange={(e) =>
+                                      handlePalletsChange(row.id_material, parseInt(e.target.value, 10) || 0)
+                                    }
+                                    className="w-12 text-center font-mono font-bold text-xs h-6 px-0.5 border-slate-300"
+                                    title={`1 pallet = ${row.lote_pallet} ${row.unidad}`}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePalletsChange(row.id_material, (row.pallets_contados || 0) + 1)}
+                                    className="w-5 h-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold text-xs"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                {/* Sumador rápido en tabla */}
+                                <div className="flex items-center gap-0.5">
+                                  <Input
+                                    type="number"
+                                    min="1"
+                                    placeholder="+pal"
+                                    value={palletChunkInput[row.id_material] || ""}
+                                    onChange={(e) =>
+                                      setPalletChunkInput((prev) => ({ ...prev, [row.id_material]: e.target.value }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        const val = parseInt(palletChunkInput[row.id_material] || "", 10);
+                                        if (val > 0) {
+                                          handleAddPalletChunk(row.id_material, val);
+                                          setPalletChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                        }
+                                      }
+                                    }}
+                                    className="w-14 h-5.5 text-[11px] font-mono px-1 border-blue-200 bg-blue-50/40"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const val = parseInt(palletChunkInput[row.id_material] || "", 10);
+                                      if (val > 0) {
+                                        handleAddPalletChunk(row.id_material, val);
+                                        setPalletChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                      }
+                                    }}
+                                    className="h-5.5 px-1 bg-blue-100 hover:bg-blue-200 text-blue-800 text-[10px] font-bold rounded"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 text-xs">-</span>
+                            )}
+                          </TableCell>
+
+                          {/* Entrada Sueltas */}
+                          <TableCell className="text-center">
+                            {hasPalletFactor ? (
+                              <div className="flex flex-col items-center gap-1 py-0.5">
+                                <div className="flex items-center justify-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnidadesChange(row.id_material, (row.unidades_sueltas || 0) - 1)}
+                                    className="w-5 h-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold text-xs"
+                                  >
+                                    −
+                                  </button>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={row.unidades_sueltas ?? 0}
+                                    onFocus={(e) => e.target.select()}
+                                    onChange={(e) =>
+                                      handleUnidadesChange(row.id_material, parseFloat(e.target.value) || 0)
+                                    }
+                                    className="w-14 text-center font-mono font-bold text-xs h-6 px-0.5 border-slate-300"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnidadesChange(row.id_material, (row.unidades_sueltas || 0) + 1)}
+                                    className="w-5 h-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold text-xs"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                                {/* Sumador rápido en tabla */}
+                                <div className="flex items-center gap-0.5">
+                                  <Input
+                                    type="number"
+                                    min="0.1"
+                                    placeholder="+u"
+                                    value={unidadChunkInput[row.id_material] || ""}
+                                    onChange={(e) =>
+                                      setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: e.target.value }))
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        const val = parseFloat(unidadChunkInput[row.id_material] || "");
+                                        if (val > 0) {
+                                          handleAddUnidadChunk(row.id_material, val);
+                                          setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                        }
+                                      }
+                                    }}
+                                    className="w-14 h-5.5 text-[11px] font-mono px-1 border-emerald-200 bg-emerald-50/40"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const val = parseFloat(unidadChunkInput[row.id_material] || "");
+                                      if (val > 0) {
+                                        handleAddUnidadChunk(row.id_material, val);
+                                        setUnidadChunkInput((prev) => ({ ...prev, [row.id_material]: "" }));
+                                      }
+                                    }}
+                                    className="h-5.5 px-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[10px] font-bold rounded"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 text-xs">-</span>
+                            )}
+                          </TableCell>
+
+                          {/* Total Contado */}
                           <TableCell className="text-center">
                             <div className="flex items-center justify-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleCountChange(row.id_material, row.stock_contado - 1)}
-                                className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold"
-                              >
-                                −
-                              </button>
+                              {!hasPalletFactor && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCountChange(row.id_material, row.stock_contado - 1)}
+                                  className="w-6 h-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold text-xs"
+                                >
+                                  −
+                                </button>
+                              )}
                               <Input
                                 type="number"
                                 min="0"
@@ -1095,17 +1705,22 @@ export function StockCount() {
                                 onChange={(e) =>
                                   handleCountChange(row.id_material, parseFloat(e.target.value) || 0)
                                 }
-                                className="w-20 text-center font-mono font-bold text-xs h-7.5 px-1"
+                                className={`w-20 text-center font-mono font-bold text-xs h-7 px-1 ${
+                                  hasPalletFactor ? "bg-blue-50/60 text-blue-900 border-blue-200" : ""
+                                }`}
                               />
-                              <button
-                                type="button"
-                                onClick={() => handleCountChange(row.id_material, row.stock_contado + 1)}
-                                className="w-7 h-7 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold"
-                              >
-                                +
-                              </button>
+                              {!hasPalletFactor && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCountChange(row.id_material, row.stock_contado + 1)}
+                                  className="w-6 h-6 rounded border border-slate-200 flex items-center justify-center hover:bg-slate-100 text-slate-600 font-bold text-xs"
+                                >
+                                  +
+                                </button>
+                              )}
                             </div>
                           </TableCell>
+
                           <TableCell className="text-center font-mono text-xs">
                             {desvio === 0 ? (
                               <span className="text-slate-400">0</span>
@@ -1181,11 +1796,12 @@ export function StockCount() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => handleOpenSugerencia()}
-                    className="h-10 text-xs border-slate-300 gap-1.5 px-3 flex"
+                    disabled={isSubmitting}
+                    onClick={() => setCancelConfirmModalOpen(true)}
+                    className="h-10 px-3.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 font-semibold gap-1.5"
                   >
-                    <Sparkles className="w-4 h-4 text-blue-600" />
-                    <span>Sugerir Pedido</span>
+                    <X className="w-4 h-4" />
+                    <span>Cancelar</span>
                   </Button>
 
                   <Button
@@ -1360,6 +1976,45 @@ export function StockCount() {
             >
               <ExternalLink className="w-3.5 h-3.5" />
               <span>Ver Rundown</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE CONFIRMACIÓN PARA CANCELAR CONTEO */}
+      <Dialog open={cancelConfirmModalOpen} onOpenChange={setCancelConfirmModalOpen}>
+        <DialogContent className="max-w-md w-[92vw] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-red-600">
+              <AlertCircle className="w-5 h-5" />
+              ¿Cancelar conteo actual?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-2 text-xs text-slate-600 space-y-2">
+            <p>
+              Estás a punto de cancelar la planilla con <strong>{rows.length} {rows.length === 1 ? "material" : "materiales"}</strong>.
+            </p>
+            <p className="text-slate-500">
+              Se descartarán todas las cantidades y acumuladores ingresados hasta el momento. Esta acción no se puede deshacer.
+            </p>
+          </div>
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCancelConfirmModalOpen(false)}
+              className="w-full sm:w-auto"
+            >
+              Continuar contando
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleConfirmCancelConteo}
+              className="w-full sm:w-auto bg-red-600 hover:bg-red-700 text-white font-semibold"
+            >
+              Sí, descartar planilla
             </Button>
           </DialogFooter>
         </DialogContent>

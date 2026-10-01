@@ -11,6 +11,9 @@ class ConteoMaterialSearchItem(BaseModel):
     nombre_proveedor: Optional[str] = None
     deposito_en_planta: bool = False
     stock_teorico: float = 0.0
+    tipo_empaque: Optional[str] = "pallet"
+    lote_pallet: Optional[float] = 1.0
+    bultos_por_pallet: Optional[float] = None
 
 
 class MaterialConteoItemInput(BaseModel):

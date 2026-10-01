@@ -1063,6 +1063,9 @@ export interface ConteoMaterialSearchItem {
   nombre_proveedor?: string | null;
   deposito_en_planta: boolean;
   stock_teorico: number;
+  tipo_empaque?: string;
+  lote_pallet?: number;
+  bultos_por_pallet?: number;
 }
 
 export interface MaterialConteoItemInput {
@@ -1353,6 +1356,38 @@ export async function calcularSugerenciaPedido(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al calcular sugerencia de pedido");
+  }
+  return res.json();
+}
+
+export interface ReglaSugerenciaConfigApi {
+  factor_consumo_siguiente: number;
+  descripcion?: string | null;
+  fecha_actualizacion?: string | null;
+}
+
+export async function getReglaSugerenciaConfig(): Promise<ReglaSugerenciaConfigApi> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/regla-sugerencia`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al obtener regla de sugerencia");
+  }
+  return res.json();
+}
+
+export async function updateReglaSugerenciaConfig(data: {
+  factor_consumo_siguiente: number;
+}): Promise<ReglaSugerenciaConfigApi> {
+  const res = await fetch(`${API_BASE_URL}/api/pedidos/regla-sugerencia`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar regla de sugerencia");
   }
   return res.json();
 }

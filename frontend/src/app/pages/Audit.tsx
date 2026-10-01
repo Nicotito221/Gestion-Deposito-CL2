@@ -71,15 +71,12 @@ export function Audit() {
       setError(null);
       const res = await getAuditoriaPedidos();
       setOrders(res.orders);
-      if (res.orders.length > 0 && !expandedOrder) {
-        setExpandedOrder(res.orders[0].id);
-      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error al cargar historial de auditoría");
     } finally {
       setLoading(false);
     }
-  }, [expandedOrder]);
+  }, []);
 
   useEffect(() => {
     loadData();

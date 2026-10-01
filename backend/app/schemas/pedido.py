@@ -58,6 +58,16 @@ class SugerenciaMaterialDetalle(BaseModel):
     sugerido_por_turno: Dict[str, float] = {}
 
 
+class ReglaSugerenciaConfigOut(BaseModel):
+    factor_consumo_siguiente: float = Field(ge=0.0, le=5.0)
+    descripcion: Optional[str] = None
+    fecha_actualizacion: Optional[datetime] = None
+
+
+class ReglaSugerenciaConfigUpdate(BaseModel):
+    factor_consumo_siguiente: float = Field(ge=0.0, le=5.0, description="Factor multiplicador para el consumo del día siguiente")
+
+
 
 class CalcularSugerenciaResponse(BaseModel):
     fecha_requerida: str

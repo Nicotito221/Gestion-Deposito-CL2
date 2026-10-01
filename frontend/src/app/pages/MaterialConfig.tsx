@@ -43,16 +43,21 @@ import {
   Calendar,
   Scale,
   Warehouse,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   getMaterialesConfiguracion,
   updateMaterialConfiguracion,
   getRundownSecciones,
+  getReglaSugerenciaConfig,
+  updateReglaSugerenciaConfig,
   type MaterialConfigItem,
   type MaterialConfigListResponse,
   type RundownSeccionItem,
+  type ReglaSugerenciaConfigApi,
 } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 export function MaterialConfig() {
   const [loading, setLoading] = useState<boolean>(true);
@@ -143,9 +148,45 @@ export function MaterialConfig() {
     }
   }, [activeSearch, selectedProvId, selectedEmpaque, selectedEnCl2, page, pageSize]);
 
+  const { user: currentUser } = useAuth();
+  const canEditRegla = Boolean(
+    currentUser &&
+      ["administrador", "gerente", "jefe", "analista"].includes(currentUser.rol?.toLowerCase() || "")
+  );
+
+  const [reglaFactor, setReglaFactor] = useState<string>("0.65");
+  const [isSavingRegla, setIsSavingRegla] = useState<boolean>(false);
+
+  const fetchReglaConfig = useCallback(async () => {
+    try {
+      const cfg = await getReglaSugerenciaConfig();
+      setReglaFactor(String(cfg.factor_consumo_siguiente ?? 0.65));
+    } catch {
+      // Valor por defecto en caso de error
+    }
+  }, []);
+
+  const handleSaveReglaConfig = async () => {
+    const parsed = parseFloat(reglaFactor);
+    if (isNaN(parsed) || parsed < 0 || parsed > 5.0) {
+      toast.error("El factor debe ser un número entre 0.0 y 5.0");
+      return;
+    }
+    setIsSavingRegla(true);
+    try {
+      await updateReglaSugerenciaConfig({ factor_consumo_siguiente: parsed });
+      toast.success("Regla global de pedido sugerido actualizada exitosamente");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al guardar regla");
+    } finally {
+      setIsSavingRegla(false);
+    }
+  };
+
   useEffect(() => {
     fetchProveedores();
-  }, [fetchProveedores]);
+    fetchReglaConfig();
+  }, [fetchProveedores, fetchReglaConfig]);
 
   useEffect(() => {
     fetchConfigList();
@@ -338,6 +379,61 @@ export function MaterialConfig() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-2 border-indigo-200 bg-gradient-to-r from-indigo-50/60 via-slate-50 to-white shadow-xs">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="p-2.5 bg-indigo-600 text-white rounded-lg flex-shrink-0 shadow-xs">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Regla Global de Pedidos Sugeridos
+                  </h3>
+                  <Badge variant="outline" className="bg-indigo-100 text-indigo-800 border-indigo-300 text-[10px] font-semibold">
+                    Sistema Activo
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-600 max-w-2xl">
+                  Fórmula de stock objetivo: <span className="font-mono font-semibold text-slate-800">Consumo Hoy + (Factor × Consumo Día Siguiente)</span>. 
+                  El consumo de hoy permanece fijo y se redondea según el empaque/lote de cada material.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
+              <div className="space-y-1">
+                <Label htmlFor="reglaFactorInput" className="text-[11px] font-semibold text-slate-600 block">
+                  Factor Día Siguiente
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="reglaFactorInput"
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="5"
+                    disabled={!canEditRegla || isSavingRegla}
+                    value={reglaFactor}
+                    onChange={(e) => setReglaFactor(e.target.value)}
+                    className="w-24 h-8 text-xs font-mono font-bold text-center bg-slate-50 border-slate-300 focus:bg-white"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!canEditRegla || isSavingRegla}
+                    onClick={handleSaveReglaConfig}
+                    className="h-8 px-3 text-xs bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs"
+                  >
+                    {isSavingRegla ? "Guardando..." : "Guardar"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="shadow-xs border-slate-200">
         <CardContent className="p-4 space-y-4">

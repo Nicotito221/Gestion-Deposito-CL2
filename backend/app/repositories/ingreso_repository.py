@@ -4,7 +4,7 @@ import pyodbc
 
 from app.core.config import get_db_connection
 from app.core.time import get_argentina_now, get_argentina_today
-from app.schemas.ingreso import IngresoConfirmarRecepcion, IngresoCreate
+from app.schemas.ingreso import IngresoConfirmarRecepcion, IngresoCreate, IngresoRecepcionItem
 
 
 class IngresoRepository:
