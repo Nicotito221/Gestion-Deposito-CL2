@@ -1,6 +1,6 @@
 from datetime import date
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.core.security import verify_access_token
 from app.schemas.pedido import (
@@ -12,6 +12,8 @@ from app.schemas.pedido import (
     PedidosListResponse,
     PreparacionPedidoResponse,
     PreparacionPedidoUpdate,
+    ReglaSugerenciaConfigOut,
+    ReglaSugerenciaConfigUpdate,
     RemitoDetalleOut,
 )
 from app.services.pedido_service import PedidoService
@@ -37,6 +39,29 @@ def calcular_sugerencia(
     service: PedidoService = Depends(get_pedido_service),
 ) -> CalcularSugerenciaResponse:
     return service.calcular_sugerencia(request)
+
+
+@router.get("/regla-sugerencia", response_model=ReglaSugerenciaConfigOut)
+def obtener_regla_sugerencia(
+    service: PedidoService = Depends(get_pedido_service),
+) -> ReglaSugerenciaConfigOut:
+    return service.get_regla_sugerencia_config()
+
+
+@router.put("/regla-sugerencia", response_model=ReglaSugerenciaConfigOut)
+def actualizar_regla_sugerencia(
+    data: ReglaSugerenciaConfigUpdate,
+    token_data: Optional[dict] = Depends(get_optional_token_payload),
+    service: PedidoService = Depends(get_pedido_service),
+) -> ReglaSugerenciaConfigOut:
+    if token_data:
+        rol = str(token_data.get("rol", "")).lower()
+        if rol not in ("administrador", "gerente", "jefe", "analista"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tiene permisos para modificar la regla global de pedidos sugeridos",
+            )
+    return service.update_regla_sugerencia_config(data)
 
 
 @router.post("", response_model=PedidoOut, status_code=status.HTTP_201_CREATED)

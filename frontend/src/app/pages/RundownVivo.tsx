@@ -286,7 +286,7 @@ export function RundownVivo() {
     title: "",
     description: "",
     actionText: "Eliminar",
-    onConfirm: async () => {},
+    onConfirm: async () => { },
   });
   const [isDeletingItem, setIsDeletingItem] = useState<boolean>(false);
 
@@ -388,7 +388,7 @@ export function RundownVivo() {
         selectedPeriodo || undefined,
         selectedSeccionId || undefined
       );
-      
+
       const currentScrollX = tableContainerRef.current?.scrollLeft || 0;
       const currentScrollY = window.scrollY;
 
@@ -911,8 +911,8 @@ export function RundownVivo() {
     const initialVal = dayCell
       ? Math.round(dayCell.stock_final)
       : alcance === "planta"
-      ? Math.round(mat.stock_inicial_planta)
-      : Math.round(mat.stock_inicial_total);
+        ? Math.round(mat.stock_inicial_planta)
+        : Math.round(mat.stock_inicial_total);
 
     const provId = mat.id_proveedor || report.id_proveedor;
     setStockForm({
@@ -1551,23 +1551,21 @@ export function RundownVivo() {
               <button
                 type="button"
                 onClick={() => setAlcance("planta")}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all ${
-                  alcance === "planta"
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all ${alcance === "planta"
                     ? "bg-white text-slate-900 shadow-xs font-semibold"
                     : "text-slate-600 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <Warehouse className="w-3.5 h-3.5 text-blue-600" />
-                <span>Rundown Warehouse / CL2</span>
+                <span>Rundown Warehouse</span>
               </button>
               <button
                 type="button"
                 onClick={() => setAlcance("total")}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all ${
-                  alcance === "total"
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all ${alcance === "total"
                     ? "bg-white text-slate-900 shadow-xs font-semibold"
                     : "text-slate-600 hover:text-slate-900"
-                }`}
+                  }`}
               >
                 <Globe2 className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Rundown TBAR</span>
@@ -1583,8 +1581,8 @@ export function RundownVivo() {
             {activeSupplier?.deposito_en_planta
               ? "Depósito unificado en Planta: el inventario y consumos aplican directamente en planta sin stock intermedio CL2."
               : alcance === "planta"
-              ? "Rundown Warehouse / CL2: Planificación para abastecimiento y seguimiento de inventario operativo en planta y reposición desde CL2."
-              : "Rundown TBAR: Planificación de suministro y compras al Proveedor (contempla stock total consolidado)."}
+                ? "Rundown Warehouse / CL2: Planificación para abastecimiento y seguimiento de inventario operativo en planta y reposición desde CL2."
+                : "Rundown TBAR: Planificación de suministro y compras al Proveedor (contempla stock total consolidado)."}
           </p>
         </div>
 
@@ -1825,11 +1823,10 @@ export function RundownVivo() {
 
           <Card
             onClick={kpis.quiebresCount > 0 ? handleJumpToRisk : undefined}
-            className={`border shadow-sm transition-all select-none ${
-              kpis.quiebresCount > 0
+            className={`border shadow-sm transition-all select-none ${kpis.quiebresCount > 0
                 ? "border-red-300 bg-red-50/30 hover:bg-red-50/60 cursor-pointer hover:shadow-md"
                 : ""
-            }`}
+              }`}
             title={kpis.quiebresCount > 0 ? "Haz clic para ir a la próxima celda en riesgo" : undefined}
           >
             <CardContent className="p-4 flex items-center justify-between gap-3">
@@ -1889,11 +1886,10 @@ export function RundownVivo() {
                 size="sm"
                 variant={filterSoloRiesgo ? "destructive" : "outline"}
                 onClick={() => setFilterSoloRiesgo(!filterSoloRiesgo)}
-                className={`text-xs h-8 gap-1.5 ${
-                  filterSoloRiesgo
+                className={`text-xs h-8 gap-1.5 ${filterSoloRiesgo
                     ? "bg-red-600 hover:bg-red-700 text-white"
                     : "text-red-700 border-red-300 hover:bg-red-50"
-                }`}
+                  }`}
               >
                 <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
                 <span>Solo en Riesgo ({materialesEnRiesgoCount})</span>
@@ -1990,568 +1986,559 @@ export function RundownVivo() {
               ) : (
                 filteredMaterials.map((mat, idx) => (
                   <div key={mat.id_material} className={`p-0 ${idx > 0 ? "border-t-4 border-[oklch(0.59_0_0)]" : ""}`}>
-                  <div className="bg-[oklch(0.59_0_0)] border-b border-[oklch(0.50_0_0)]">
-                    <div className="sticky left-0 z-20 px-4 py-2 flex items-center gap-3 w-fit bg-[oklch(0.59_0_0)] border-r border-[oklch(0.50_0_0)] shadow-xs">
-                      <span className="font-mono text-base font-bold text-white tracking-wide">
-                        {mat.id_material}
-                      </span>
-                      {mat.nombre_proveedor && (
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-black/30 text-white/95 border border-white/20 tracking-wide uppercase shadow-xs">
-                          {mat.nombre_proveedor}
+                    <div className="bg-[oklch(0.59_0_0)] border-b border-[oklch(0.50_0_0)]">
+                      <div className="sticky left-0 z-20 px-4 py-2 flex items-center gap-3 w-fit bg-[oklch(0.59_0_0)] border-r border-[oklch(0.50_0_0)] shadow-xs">
+                        <span className="font-mono text-base font-bold text-white tracking-wide">
+                          {mat.id_material}
                         </span>
-                      )}
+                        {mat.nombre_proveedor && (
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-black/30 text-white/95 border border-white/20 tracking-wide uppercase shadow-xs">
+                            {mat.nombre_proveedor}
+                          </span>
+                        )}
 
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleOpenTransito(mat.id_material)}
-                        className="h-7 text-xs flex items-center gap-1 text-blue-900 border border-blue-200 bg-white/95 hover:bg-white shadow-xs font-semibold"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-blue-600" />
-                        <span>Arribo</span>
-                      </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenTransito(mat.id_material)}
+                          className="h-7 text-xs flex items-center gap-1 text-blue-900 border border-blue-200 bg-white/95 hover:bg-white shadow-xs font-semibold"
+                        >
+                          <Plus className="w-3.5 h-3.5 text-blue-600" />
+                          <span>Arribo</span>
+                        </Button>
 
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleOpenStockModal(mat)}
-                        className="h-7 text-xs flex items-center gap-1 text-slate-800 border border-slate-300 bg-white/95 hover:bg-white shadow-xs font-medium"
-                        title="Ajustar stock inicial"
-                      >
-                        <Edit3 className="w-3 h-3 text-slate-500" />
-                        <span>Editar Stock</span>
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenStockModal(mat)}
+                          className="h-7 text-xs flex items-center gap-1 text-slate-800 border border-slate-300 bg-white/95 hover:bg-white shadow-xs font-medium"
+                          title="Ajustar stock inicial"
+                        >
+                          <Edit3 className="w-3 h-3 text-slate-500" />
+                          <span>Editar Stock</span>
+                        </Button>
 
-                      <span className="text-xs text-white/90 ml-1">
-                        Lote: <strong className="text-white font-bold">{mat.lote_mts ? `${mat.lote_mts} ${mat.unidad}` : "—"}</strong>
-                      </span>
+                        <span className="text-xs text-white/90 ml-1">
+                          Lote: <strong className="text-white font-bold">{mat.lote_mts ? `${mat.lote_mts} ${mat.unidad}` : "—"}</strong>
+                        </span>
 
-                      <button
-                        type="button"
-                        onClick={() => handleOpenScrapModal(mat)}
-                        className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white/95 hover:bg-white text-slate-800 transition-colors shadow-xs ml-1"
-                        title="Haga clic para editar porcentaje de scrap"
-                      >
-                        <Percent className="w-3 h-3 text-slate-500" />
-                        <span className="text-slate-600">Scrap:</span>
-                        <strong className="text-slate-900 font-mono font-bold">
-                          {(mat.scrap_porcentaje * 100).toFixed(1)}%
-                        </strong>
-                        <Edit3 className="w-3 h-3 text-slate-500 hover:text-slate-700 ml-0.5" />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenScrapModal(mat)}
+                          className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-slate-300 bg-white/95 hover:bg-white text-slate-800 transition-colors shadow-xs ml-1"
+                          title="Haga clic para editar porcentaje de scrap"
+                        >
+                          <Percent className="w-3 h-3 text-slate-500" />
+                          <span className="text-slate-600">Scrap:</span>
+                          <strong className="text-slate-900 font-mono font-bold">
+                            {(mat.scrap_porcentaje * 100).toFixed(1)}%
+                          </strong>
+                          <Edit3 className="w-3 h-3 text-slate-500 hover:text-slate-700 ml-0.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  <table className="w-full border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-[oklch(0.93_0_0)] border-b-2 border-[oklch(0.59_0_0)]">
-                        <th className="sticky left-0 z-10 bg-[oklch(0.93_0_0)] text-left font-bold text-slate-800 px-3 py-2 w-48 border-r border-[oklch(0.80_0_0)]">
-                          Concepto / Fecha
-                        </th>
-                        {mat.dias.map((d) => (
-                          <th key={d.fecha} className="px-2 py-1.5 text-center font-bold text-slate-800 min-w-[90px] border-r border-[oklch(0.85_0_0)] bg-[oklch(0.93_0_0)]">
-                            <div className="text-[11px] font-mono text-slate-900 font-bold">{d.dia_nombre.split(" ")[0]}</div>
-                            <div className="text-[10px] text-slate-600 font-semibold">{d.dia_nombre.split(" ")[1]}</div>
+                    <table className="w-full border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-[oklch(0.93_0_0)] border-b-2 border-[oklch(0.59_0_0)]">
+                          <th className="sticky left-0 z-10 bg-[oklch(0.93_0_0)] text-left font-bold text-slate-800 px-3 py-2 w-48 border-r border-[oklch(0.80_0_0)]">
+                            Concepto / Fecha
                           </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      <tr className="hover:bg-slate-50/50">
-                        <td className="sticky left-0 z-10 bg-white font-medium text-slate-600 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full bg-slate-300" />
-                          <span>Producción</span>
-                        </td>
-                        {mat.dias.map((d) => (
-                          <td key={d.fecha} className="px-2 py-1.5 text-center font-mono text-slate-700 border-r border-slate-100">
-                            {d.produccion_vehiculos > 0 ? d.produccion_vehiculos.toLocaleString() : "—"}
+                          {mat.dias.map((d) => (
+                            <th key={d.fecha} className="px-2 py-1.5 text-center font-bold text-slate-800 min-w-[90px] border-r border-[oklch(0.85_0_0)] bg-[oklch(0.93_0_0)]">
+                              <div className="text-[11px] font-mono text-slate-900 font-bold">{d.dia_nombre.split(" ")[0]}</div>
+                              <div className="text-[10px] text-slate-600 font-semibold">{d.dia_nombre.split(" ")[1]}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        <tr className="hover:bg-slate-50/50">
+                          <td className="sticky left-0 z-10 bg-white font-medium text-slate-600 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-slate-300" />
+                            <span>Producción</span>
                           </td>
-                        ))}
-                      </tr>
+                          {mat.dias.map((d) => (
+                            <td key={d.fecha} className="px-2 py-1.5 text-center font-mono text-slate-700 border-r border-slate-100">
+                              {d.produccion_vehiculos > 0 ? d.produccion_vehiculos.toLocaleString() : "—"}
+                            </td>
+                          ))}
+                        </tr>
 
-                      <tr className="hover:bg-slate-50/50 bg-slate-50/30">
-                        <td className="sticky left-0 z-10 bg-slate-50/90 font-medium text-slate-900 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                          <TrendingDown className="w-3.5 h-3.5 text-red-500" />
-                          <span>Uso Proyectado</span>
-                        </td>
-                        {mat.dias.map((d) => (
-                          <td key={d.fecha} className="px-2 py-1.5 text-center font-mono font-semibold text-red-600 border-r border-slate-100">
-                            {d.uso > 0 ? d.uso.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—"}
+                        <tr className="hover:bg-slate-50/50 bg-slate-50/30">
+                          <td className="sticky left-0 z-10 bg-slate-50/90 font-medium text-slate-900 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                            <TrendingDown className="w-3.5 h-3.5 text-red-500" />
+                            <span>Uso Proyectado</span>
                           </td>
-                        ))}
-                      </tr>
+                          {mat.dias.map((d) => (
+                            <td key={d.fecha} className="px-2 py-1.5 text-center font-mono font-semibold text-red-600 border-r border-slate-100">
+                              {d.uso > 0 ? d.uso.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—"}
+                            </td>
+                          ))}
+                        </tr>
 
-                      {alcance === "planta" ? (
-                        <tr className="hover:bg-blue-50/30">
-                          <td className="sticky left-0 z-10 bg-white font-medium text-blue-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                            <Truck className="w-3.5 h-3.5 text-blue-600" />
-                            <span>Pedido</span>
+                        {alcance === "planta" ? (
+                          <tr className="hover:bg-blue-50/30">
+                            <td className="sticky left-0 z-10 bg-white font-medium text-blue-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                              <Truck className="w-3.5 h-3.5 text-blue-600" />
+                              <span>Pedido</span>
+                            </td>
+                            {mat.dias.map((d) => {
+                              const isPlantaOnly = report.deposito_en_planta;
+                              const pedidoVal = isPlantaOnly
+                                ? ((d.plan_maritimo || 0) + (d.pedidos_aereos || 0) + (d.entregas_locales || 0))
+                                : (d.entregas_locales || 0);
+                              const viaToUse: "Maritimo" | "Aereo" | "Local" = isPlantaOnly
+                                ? ((d.entregas_locales || 0) > 0 ? "Local" : ((d.pedidos_aereos || 0) > 0 ? "Aereo" : "Maritimo"))
+                                : "Local";
+                              const existingPo = viaToUse === "Local" ? d.local_po : (viaToUse === "Aereo" ? d.aereo_po : d.maritimo_po);
+                              const existingFactura = viaToUse === "Local" ? d.local_factura : (viaToUse === "Aereo" ? d.aereo_factura : d.maritimo_factura);
+                              const existingObs = viaToUse === "Local" ? d.local_obs : (viaToUse === "Aereo" ? d.aereo_obs : d.maritimo_obs);
+                              const existingEstado = viaToUse === "Local" ? d.local_estado : (viaToUse === "Aereo" ? d.aereo_estado : d.maritimo_estado);
+                              const isBeingDragged =
+                                draggedPedido?.id_material === mat.id_material &&
+                                draggedPedido?.fecha_origen === d.fecha;
+                              const isDropTarget =
+                                dragOverCell?.id_material === mat.id_material &&
+                                dragOverCell?.fecha === d.fecha;
+                              const isValidDropZone =
+                                draggedPedido &&
+                                draggedPedido.id_material === mat.id_material &&
+                                draggedPedido.fecha_origen !== d.fecha;
+
+                              return (
+                                <td
+                                  key={d.fecha}
+                                  onClick={() => {
+                                    if (!draggedPedido) {
+                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal, existingPo, existingFactura, existingObs, existingEstado);
+                                    }
+                                  }}
+                                  onDragOver={(e) => {
+                                    if (isValidDropZone) {
+                                      e.preventDefault();
+                                      e.dataTransfer.dropEffect = "move";
+                                      if (dragOverCell?.fecha !== d.fecha) {
+                                        setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: viaToUse });
+                                      }
+                                    }
+                                  }}
+                                  onDragLeave={() => {
+                                    if (dragOverCell?.fecha === d.fecha) {
+                                      setDragOverCell(null);
+                                    }
+                                  }}
+                                  onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    handleDropPedido(mat.id_material, d.fecha);
+                                  }}
+                                  className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${isDropTarget
+                                      ? "bg-blue-200 ring-2 ring-blue-500 ring-inset scale-105"
+                                      : isValidDropZone
+                                        ? "hover:bg-blue-100/60"
+                                        : "hover:bg-blue-100/70"
+                                    }`}
+                                  title={pedidoVal > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido"}
+                                >
+                                  {pedidoVal > 0 ? (
+                                    <span
+                                      draggable
+                                      onDragStart={(e) => {
+                                        e.stopPropagation();
+                                        e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
+                                        e.dataTransfer.effectAllowed = "move";
+                                        setDraggedPedido({
+                                          id_material: mat.id_material,
+                                          fecha_origen: d.fecha,
+                                          tipo_via: viaToUse,
+                                          cantidad: pedidoVal,
+                                        });
+                                      }}
+                                      onDragEnd={() => {
+                                        setDraggedPedido(null);
+                                        setDragOverCell(null);
+                                      }}
+                                      className={`inline-flex items-center gap-0.5 bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${isBeingDragged ? "opacity-30 scale-95" : ""
+                                        }`}
+                                    >
+                                      <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
+                                      +{pedidoVal.toLocaleString()}
+                                      {(existingFactura || existingPo) && (
+                                        <span className="text-[9px] font-mono text-blue-950 font-normal ml-0.5 px-1 py-0 bg-blue-200/80 rounded">
+                                          #{existingFactura || existingPo}
+                                        </span>
+                                      )}
+                                      {existingEstado === "confirmado" ? (
+                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
+                                          ✓ Conf
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
+                                          Plan
+                                        </span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ) : (
+                          <>
+                            <tr className="hover:bg-blue-50/30">
+                              <td className="sticky left-0 z-10 bg-white font-medium text-blue-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                                <Ship className="w-3.5 h-3.5 text-blue-600" />
+                                <span>Plan Marítimo</span>
+                              </td>
+                              {mat.dias.map((d) => {
+                                const isBeingDragged =
+                                  draggedPedido?.id_material === mat.id_material &&
+                                  draggedPedido?.fecha_origen === d.fecha &&
+                                  draggedPedido?.tipo_via === "Maritimo";
+                                const isDropTarget =
+                                  dragOverCell?.id_material === mat.id_material &&
+                                  dragOverCell?.fecha === d.fecha &&
+                                  dragOverCell?.tipo_via === "Maritimo";
+                                const isValidDropZone =
+                                  draggedPedido &&
+                                  draggedPedido.id_material === mat.id_material &&
+                                  draggedPedido.tipo_via === "Maritimo" &&
+                                  draggedPedido.fecha_origen !== d.fecha;
+
+                                return (
+                                  <td
+                                    key={d.fecha}
+                                    onClick={() => {
+                                      if (!draggedPedido) {
+                                        handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo, d.maritimo_po, d.maritimo_factura, d.maritimo_obs, d.maritimo_estado);
+                                      }
+                                    }}
+                                    onDragOver={(e) => {
+                                      if (isValidDropZone) {
+                                        e.preventDefault();
+                                        e.dataTransfer.dropEffect = "move";
+                                        if (dragOverCell?.fecha !== d.fecha) {
+                                          setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: "Maritimo" });
+                                        }
+                                      }
+                                    }}
+                                    onDragLeave={() => {
+                                      if (dragOverCell?.fecha === d.fecha) {
+                                        setDragOverCell(null);
+                                      }
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDropPedido(mat.id_material, d.fecha, "Maritimo");
+                                    }}
+                                    className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${isDropTarget
+                                        ? "bg-blue-200 ring-2 ring-blue-500 ring-inset scale-105"
+                                        : isValidDropZone
+                                          ? "hover:bg-blue-100/60"
+                                          : "hover:bg-blue-100/70"
+                                      }`}
+                                    title={
+                                      d.maritimo_factura || d.maritimo_po
+                                        ? `Factura: ${d.maritimo_factura || "—"} | PO: ${d.maritimo_po || "—"}${d.maritimo_obs ? ` (${d.maritimo_obs})` : ""}`
+                                        : d.plan_maritimo > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar arribo marítimo"
+                                    }
+                                  >
+                                    {d.plan_maritimo > 0 ? (
+                                      <span
+                                        draggable
+                                        onDragStart={(e) => {
+                                          e.stopPropagation();
+                                          e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
+                                          e.dataTransfer.effectAllowed = "move";
+                                          setDraggedPedido({
+                                            id_material: mat.id_material,
+                                            fecha_origen: d.fecha,
+                                            tipo_via: "Maritimo",
+                                            cantidad: d.plan_maritimo,
+                                          });
+                                        }}
+                                        onDragEnd={() => {
+                                          setDraggedPedido(null);
+                                          setDragOverCell(null);
+                                        }}
+                                        className={`inline-flex items-center gap-0.5 bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${isBeingDragged ? "opacity-30 scale-95" : ""
+                                          }`}
+                                      >
+                                        <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
+                                        +{d.plan_maritimo.toLocaleString()}
+                                        {(d.maritimo_factura || d.maritimo_po) && (
+                                          <span className="text-[9px] font-mono text-blue-950 font-normal ml-0.5 px-1 py-0 bg-blue-200/80 rounded">
+                                            #{d.maritimo_factura || d.maritimo_po}
+                                          </span>
+                                        )}
+                                        {d.maritimo_estado === "confirmado" ? (
+                                          <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
+                                            ✓ Conf
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
+                                            Plan
+                                          </span>
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+
+                            <tr className="hover:bg-purple-50/30">
+                              <td className="sticky left-0 z-10 bg-white font-medium text-purple-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                                <Plane className="w-3.5 h-3.5 text-purple-600" />
+                                <span>Pedidos Aéreos</span>
+                              </td>
+                              {mat.dias.map((d) => {
+                                const isBeingDragged =
+                                  draggedPedido?.id_material === mat.id_material &&
+                                  draggedPedido?.fecha_origen === d.fecha &&
+                                  draggedPedido?.tipo_via === "Aereo";
+                                const isDropTarget =
+                                  dragOverCell?.id_material === mat.id_material &&
+                                  dragOverCell?.fecha === d.fecha &&
+                                  dragOverCell?.tipo_via === "Aereo";
+                                const isValidDropZone =
+                                  draggedPedido &&
+                                  draggedPedido.id_material === mat.id_material &&
+                                  draggedPedido.tipo_via === "Aereo" &&
+                                  draggedPedido.fecha_origen !== d.fecha;
+
+                                return (
+                                  <td
+                                    key={d.fecha}
+                                    onClick={() => {
+                                      if (!draggedPedido) {
+                                        handleCellClickIngreso(
+                                          mat.id_material,
+                                          d.fecha,
+                                          d.dia_nombre,
+                                          "Aereo",
+                                          d.pedidos_aereos,
+                                          d.aereo_po,
+                                          d.aereo_factura,
+                                          d.aereo_obs,
+                                          d.aereo_estado
+                                        );
+                                      }
+                                    }}
+                                    onDragOver={(e) => {
+                                      if (isValidDropZone) {
+                                        e.preventDefault();
+                                        e.dataTransfer.dropEffect = "move";
+                                        if (dragOverCell?.fecha !== d.fecha) {
+                                          setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: "Aereo" });
+                                        }
+                                      }
+                                    }}
+                                    onDragLeave={() => {
+                                      if (dragOverCell?.fecha === d.fecha) {
+                                        setDragOverCell(null);
+                                      }
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      handleDropPedido(mat.id_material, d.fecha, "Aereo");
+                                    }}
+                                    className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${isDropTarget
+                                        ? "bg-purple-200 ring-2 ring-purple-500 ring-inset scale-105"
+                                        : isValidDropZone
+                                          ? "hover:bg-purple-100/60"
+                                          : "hover:bg-purple-100/70"
+                                      }`}
+                                    title={
+                                      d.aereo_factura || d.aereo_po
+                                        ? `Factura: ${d.aereo_factura || "—"} | PO: ${d.aereo_po || "—"}${d.aereo_obs ? ` (${d.aereo_obs})` : ""}`
+                                        : d.pedidos_aereos > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido aéreo"
+                                    }
+                                  >
+                                    {d.pedidos_aereos > 0 ? (
+                                      <span
+                                        draggable
+                                        onDragStart={(e) => {
+                                          e.stopPropagation();
+                                          e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
+                                          e.dataTransfer.effectAllowed = "move";
+                                          setDraggedPedido({
+                                            id_material: mat.id_material,
+                                            fecha_origen: d.fecha,
+                                            tipo_via: "Aereo",
+                                            cantidad: d.pedidos_aereos,
+                                          });
+                                        }}
+                                        onDragEnd={() => {
+                                          setDraggedPedido(null);
+                                          setDragOverCell(null);
+                                        }}
+                                        className={`inline-flex items-center gap-0.5 bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-purple-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${isBeingDragged ? "opacity-30 scale-95" : ""
+                                          }`}
+                                      >
+                                        <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
+                                        +{d.pedidos_aereos.toLocaleString()}
+                                        {(d.aereo_factura || d.aereo_po) && (
+                                          <span className="text-[9px] font-mono text-purple-950 font-normal ml-0.5 px-1 py-0 bg-purple-200/80 rounded">
+                                            #{d.aereo_factura || d.aereo_po}
+                                          </span>
+                                        )}
+                                        {d.aereo_estado === "confirmado" ? (
+                                          <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
+                                            ✓ Conf
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
+                                            Plan
+                                          </span>
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                            {mat.dias.some((d) => (d.entregas_locales || 0) > 0) && (
+                              <tr className="hover:bg-emerald-50/30">
+                                <td className="sticky left-0 z-10 bg-white font-medium text-emerald-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                                  <Truck className="w-3.5 h-3.5 text-emerald-600" />
+                                  <span>Transf. CL2</span>
+                                </td>
+                                {mat.dias.map((d) => (
+                                  <td key={d.fecha} className="px-2 py-1.5 text-center font-mono border-r border-slate-100">
+                                    {(d.entregas_locales || 0) > 0 ? (
+                                      <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[11px]">
+                                        +{(d.entregas_locales || 0).toLocaleString()}
+                                        {d.local_estado === "confirmado" ? (
+                                          <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-200/80 rounded" title="Confirmado">
+                                            ✓ Conf
+                                          </span>
+                                        ) : (
+                                          <span className="text-[9px] font-normal text-emerald-700/70 ml-0.5 px-1 py-0 bg-white/70 rounded" title="Plan">
+                                            Plan
+                                          </span>
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-300 text-[11px]">—</span>
+                                    )}
+                                  </td>
+                                ))}
+                              </tr>
+                            )}
+                          </>
+                        )}
+
+                        <tr className="hover:bg-amber-50/40">
+                          <td className="sticky left-0 z-10 bg-white font-medium text-slate-600 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
+                            <PackageCheck className="w-3.5 h-3.5 text-amber-600" />
+                            <span>Ajustes</span>
                           </td>
                           {mat.dias.map((d) => {
-                            const isPlantaOnly = report.deposito_en_planta;
-                            const pedidoVal = isPlantaOnly
-                              ? ((d.plan_maritimo || 0) + (d.pedidos_aereos || 0) + (d.entregas_locales || 0))
-                              : (d.entregas_locales || 0);
-                            const viaToUse: "Maritimo" | "Aereo" | "Local" = isPlantaOnly
-                              ? ((d.entregas_locales || 0) > 0 ? "Local" : ((d.pedidos_aereos || 0) > 0 ? "Aereo" : "Maritimo"))
-                              : "Local";
-                            const existingPo = viaToUse === "Local" ? d.local_po : (viaToUse === "Aereo" ? d.aereo_po : d.maritimo_po);
-                            const existingFactura = viaToUse === "Local" ? d.local_factura : (viaToUse === "Aereo" ? d.aereo_factura : d.maritimo_factura);
-                            const existingObs = viaToUse === "Local" ? d.local_obs : (viaToUse === "Aereo" ? d.aereo_obs : d.maritimo_obs);
-                            const existingEstado = viaToUse === "Local" ? d.local_estado : (viaToUse === "Aereo" ? d.aereo_estado : d.maritimo_estado);
-                            const isBeingDragged =
-                              draggedPedido?.id_material === mat.id_material &&
-                              draggedPedido?.fecha_origen === d.fecha;
-                            const isDropTarget =
-                              dragOverCell?.id_material === mat.id_material &&
-                              dragOverCell?.fecha === d.fecha;
-                            const isValidDropZone =
-                              draggedPedido &&
-                              draggedPedido.id_material === mat.id_material &&
-                              draggedPedido.fecha_origen !== d.fecha;
-
+                            const desvio = d.desvio_ajuste !== undefined ? Math.round(d.desvio_ajuste) : 0;
                             return (
                               <td
                                 key={d.fecha}
-                                onClick={() => {
-                                  if (!draggedPedido) {
-                                    handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, viaToUse, pedidoVal, existingPo, existingFactura, existingObs, existingEstado);
-                                  }
-                                }}
-                                onDragOver={(e) => {
-                                  if (isValidDropZone) {
-                                    e.preventDefault();
-                                    e.dataTransfer.dropEffect = "move";
-                                    if (dragOverCell?.fecha !== d.fecha) {
-                                      setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: viaToUse });
-                                    }
-                                  }
-                                }}
-                                onDragLeave={() => {
-                                  if (dragOverCell?.fecha === d.fecha) {
-                                    setDragOverCell(null);
-                                  }
-                                }}
-                                onDrop={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDropPedido(mat.id_material, d.fecha);
-                                }}
-                                className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${
-                                  isDropTarget
-                                    ? "bg-blue-200 ring-2 ring-blue-500 ring-inset scale-105"
-                                    : isValidDropZone
-                                    ? "hover:bg-blue-100/60"
-                                    : "hover:bg-blue-100/70"
-                                }`}
-                                title={pedidoVal > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido"}
+                                onClick={() => handleOpenStockModal(mat, d.fecha)}
+                                className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-amber-100/60 transition-colors"
+                                title="Diferencia entre stock estimado y conteo real físico del día. Haz clic para ajustar stock."
                               >
-                                {pedidoVal > 0 ? (
+                                {desvio !== 0 ? (
                                   <span
-                                    draggable
-                                    onDragStart={(e) => {
-                                      e.stopPropagation();
-                                      e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
-                                      e.dataTransfer.effectAllowed = "move";
-                                      setDraggedPedido({
-                                        id_material: mat.id_material,
-                                        fecha_origen: d.fecha,
-                                        tipo_via: viaToUse,
-                                        cantidad: pedidoVal,
-                                      });
-                                    }}
-                                    onDragEnd={() => {
-                                      setDraggedPedido(null);
-                                      setDragOverCell(null);
-                                    }}
-                                    className={`inline-flex items-center gap-0.5 bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${
-                                      isBeingDragged ? "opacity-30 scale-95" : ""
-                                    }`}
+                                    className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${desvio > 0
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : "bg-amber-100 text-amber-900"
+                                      }`}
                                   >
-                                    <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
-                                    +{pedidoVal.toLocaleString()}
-                                    {(existingFactura || existingPo) && (
-                                      <span className="text-[9px] font-mono text-blue-950 font-normal ml-0.5 px-1 py-0 bg-blue-200/80 rounded">
-                                        #{existingFactura || existingPo}
-                                      </span>
-                                    )}
-                                    {existingEstado === "confirmado" ? (
-                                      <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
-                                        ✓ Conf
-                                      </span>
-                                    ) : (
-                                      <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
-                                        Plan
-                                      </span>
-                                    )}
+                                    {desvio > 0 ? `+${desvio.toLocaleString("es-AR")}` : desvio.toLocaleString("es-AR")}
                                   </span>
                                 ) : (
-                                  <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
+                                  <span className="text-slate-300 hover:text-slate-600 text-[11px]">—</span>
                                 )}
                               </td>
                             );
                           })}
                         </tr>
-                      ) : (
-                        <>
-                          <tr className="hover:bg-blue-50/30">
-                            <td className="sticky left-0 z-10 bg-white font-medium text-blue-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                              <Ship className="w-3.5 h-3.5 text-blue-600" />
-                              <span>Plan Marítimo</span>
-                            </td>
-                            {mat.dias.map((d) => {
-                              const isBeingDragged =
-                                draggedPedido?.id_material === mat.id_material &&
-                                draggedPedido?.fecha_origen === d.fecha &&
-                                draggedPedido?.tipo_via === "Maritimo";
-                              const isDropTarget =
-                                dragOverCell?.id_material === mat.id_material &&
-                                dragOverCell?.fecha === d.fecha &&
-                                dragOverCell?.tipo_via === "Maritimo";
-                              const isValidDropZone =
-                                draggedPedido &&
-                                draggedPedido.id_material === mat.id_material &&
-                                draggedPedido.tipo_via === "Maritimo" &&
-                                draggedPedido.fecha_origen !== d.fecha;
 
-                              return (
-                                <td
-                                  key={d.fecha}
-                                  onClick={() => {
-                                    if (!draggedPedido) {
-                                      handleCellClickIngreso(mat.id_material, d.fecha, d.dia_nombre, "Maritimo", d.plan_maritimo, d.maritimo_po, d.maritimo_factura, d.maritimo_obs, d.maritimo_estado);
-                                    }
-                                  }}
-                                  onDragOver={(e) => {
-                                    if (isValidDropZone) {
-                                      e.preventDefault();
-                                      e.dataTransfer.dropEffect = "move";
-                                      if (dragOverCell?.fecha !== d.fecha) {
-                                        setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: "Maritimo" });
-                                      }
-                                    }
-                                  }}
-                                  onDragLeave={() => {
-                                    if (dragOverCell?.fecha === d.fecha) {
-                                      setDragOverCell(null);
-                                    }
-                                  }}
-                                  onDrop={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleDropPedido(mat.id_material, d.fecha, "Maritimo");
-                                  }}
-                                  className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${
-                                    isDropTarget
-                                      ? "bg-blue-200 ring-2 ring-blue-500 ring-inset scale-105"
-                                      : isValidDropZone
-                                      ? "hover:bg-blue-100/60"
-                                      : "hover:bg-blue-100/70"
-                                  }`}
-                                  title={
-                                    d.maritimo_factura || d.maritimo_po
-                                      ? `Factura: ${d.maritimo_factura || "—"} | PO: ${d.maritimo_po || "—"}${d.maritimo_obs ? ` (${d.maritimo_obs})` : ""}`
-                                      : d.plan_maritimo > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar arribo marítimo"
-                                  }
-                                >
-                                  {d.plan_maritimo > 0 ? (
-                                    <span
-                                      draggable
-                                      onDragStart={(e) => {
-                                        e.stopPropagation();
-                                        e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
-                                        e.dataTransfer.effectAllowed = "move";
-                                        setDraggedPedido({
-                                          id_material: mat.id_material,
-                                          fecha_origen: d.fecha,
-                                          tipo_via: "Maritimo",
-                                          cantidad: d.plan_maritimo,
-                                        });
-                                      }}
-                                      onDragEnd={() => {
-                                        setDraggedPedido(null);
-                                        setDragOverCell(null);
-                                      }}
-                                      className={`inline-flex items-center gap-0.5 bg-blue-100 text-blue-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-blue-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${
-                                        isBeingDragged ? "opacity-30 scale-95" : ""
-                                      }`}
-                                    >
-                                      <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
-                                      +{d.plan_maritimo.toLocaleString()}
-                                      {(d.maritimo_factura || d.maritimo_po) && (
-                                        <span className="text-[9px] font-mono text-blue-950 font-normal ml-0.5 px-1 py-0 bg-blue-200/80 rounded">
-                                          #{d.maritimo_factura || d.maritimo_po}
-                                        </span>
-                                      )}
-                                      {d.maritimo_estado === "confirmado" ? (
-                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
-                                          ✓ Conf
-                                        </span>
-                                      ) : (
-                                        <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
-                                          Plan
-                                        </span>
-                                      )}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-
-                          <tr className="hover:bg-purple-50/30">
-                            <td className="sticky left-0 z-10 bg-white font-medium text-purple-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                              <Plane className="w-3.5 h-3.5 text-purple-600" />
-                              <span>Pedidos Aéreos</span>
-                            </td>
-                            {mat.dias.map((d) => {
-                              const isBeingDragged =
-                                draggedPedido?.id_material === mat.id_material &&
-                                draggedPedido?.fecha_origen === d.fecha &&
-                                draggedPedido?.tipo_via === "Aereo";
-                              const isDropTarget =
-                                dragOverCell?.id_material === mat.id_material &&
-                                dragOverCell?.fecha === d.fecha &&
-                                dragOverCell?.tipo_via === "Aereo";
-                              const isValidDropZone =
-                                draggedPedido &&
-                                draggedPedido.id_material === mat.id_material &&
-                                draggedPedido.tipo_via === "Aereo" &&
-                                draggedPedido.fecha_origen !== d.fecha;
-
-                              return (
-                                <td
-                                  key={d.fecha}
-                                  onClick={() => {
-                                    if (!draggedPedido) {
-                                      handleCellClickIngreso(
-                                        mat.id_material,
-                                        d.fecha,
-                                        d.dia_nombre,
-                                        "Aereo",
-                                        d.pedidos_aereos,
-                                        d.aereo_po,
-                                        d.aereo_factura,
-                                        d.aereo_obs,
-                                        d.aereo_estado
-                                      );
-                                    }
-                                  }}
-                                  onDragOver={(e) => {
-                                    if (isValidDropZone) {
-                                      e.preventDefault();
-                                      e.dataTransfer.dropEffect = "move";
-                                      if (dragOverCell?.fecha !== d.fecha) {
-                                        setDragOverCell({ id_material: mat.id_material, fecha: d.fecha, tipo_via: "Aereo" });
-                                      }
-                                    }
-                                  }}
-                                  onDragLeave={() => {
-                                    if (dragOverCell?.fecha === d.fecha) {
-                                      setDragOverCell(null);
-                                    }
-                                  }}
-                                  onDrop={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    handleDropPedido(mat.id_material, d.fecha, "Aereo");
-                                  }}
-                                  className={`px-2 py-1.5 text-center font-mono border-r border-slate-100 transition-all ${
-                                    isDropTarget
-                                      ? "bg-purple-200 ring-2 ring-purple-500 ring-inset scale-105"
-                                      : isValidDropZone
-                                      ? "hover:bg-purple-100/60"
-                                      : "hover:bg-purple-100/70"
-                                  }`}
-                                  title={
-                                    d.aereo_factura || d.aereo_po
-                                      ? `Factura: ${d.aereo_factura || "—"} | PO: ${d.aereo_po || "—"}${d.aereo_obs ? ` (${d.aereo_obs})` : ""}`
-                                      : d.pedidos_aereos > 0 ? "Arrastra para mover de día o haz clic para editar" : "Haz clic para cargar pedido aéreo"
-                                  }
-                                >
-                                  {d.pedidos_aereos > 0 ? (
-                                    <span
-                                      draggable
-                                      onDragStart={(e) => {
-                                        e.stopPropagation();
-                                        e.dataTransfer.setData("text/plain", `${mat.id_material}:${d.fecha}`);
-                                        e.dataTransfer.effectAllowed = "move";
-                                        setDraggedPedido({
-                                          id_material: mat.id_material,
-                                          fecha_origen: d.fecha,
-                                          tipo_via: "Aereo",
-                                          cantidad: d.pedidos_aereos,
-                                        });
-                                      }}
-                                      onDragEnd={() => {
-                                        setDraggedPedido(null);
-                                        setDragOverCell(null);
-                                      }}
-                                      className={`inline-flex items-center gap-0.5 bg-purple-100 text-purple-800 font-bold px-1.5 py-0.5 rounded text-[11px] hover:bg-purple-200 cursor-grab active:cursor-grabbing select-none transition-all shadow-sm ${
-                                        isBeingDragged ? "opacity-30 scale-95" : ""
-                                      }`}
-                                    >
-                                      <GripVertical className="w-2.5 h-2.5 opacity-50 -ml-0.5" />
-                                      +{d.pedidos_aereos.toLocaleString()}
-                                      {(d.aereo_factura || d.aereo_po) && (
-                                        <span className="text-[9px] font-mono text-purple-950 font-normal ml-0.5 px-1 py-0 bg-purple-200/80 rounded">
-                                          #{d.aereo_factura || d.aereo_po}
-                                        </span>
-                                      )}
-                                      {d.aereo_estado === "confirmado" ? (
-                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-100 border border-emerald-300 rounded" title="Ingreso Confirmado en Stock">
-                                          ✓ Conf
-                                        </span>
-                                      ) : (
-                                        <span className="text-[9px] font-normal text-slate-500 ml-0.5 px-1 py-0 bg-slate-100 rounded" title="Planificación estimada">
-                                          Plan
-                                        </span>
-                                      )}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-300 hover:text-slate-600 text-[11px] pointer-events-none select-none">—</span>
-                                  )}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                          {mat.dias.some((d) => (d.entregas_locales || 0) > 0) && (
-                            <tr className="hover:bg-emerald-50/30">
-                              <td className="sticky left-0 z-10 bg-white font-medium text-emerald-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                                <Truck className="w-3.5 h-3.5 text-emerald-600" />
-                                <span>Transf. CL2</span>
-                              </td>
-                              {mat.dias.map((d) => (
-                                <td key={d.fecha} className="px-2 py-1.5 text-center font-mono border-r border-slate-100">
-                                  {(d.entregas_locales || 0) > 0 ? (
-                                    <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[11px]">
-                                      +{(d.entregas_locales || 0).toLocaleString()}
-                                      {d.local_estado === "confirmado" ? (
-                                        <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-200/80 rounded" title="Confirmado">
-                                          ✓ Conf
-                                        </span>
-                                      ) : (
-                                        <span className="text-[9px] font-normal text-emerald-700/70 ml-0.5 px-1 py-0 bg-white/70 rounded" title="Plan">
-                                          Plan
-                                        </span>
-                                      )}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-300 text-[11px]">—</span>
-                                  )}
-                                </td>
-                              ))}
-                            </tr>
-                          )}
-                        </>
-                      )}
-
-                      <tr className="hover:bg-amber-50/40">
-                        <td className="sticky left-0 z-10 bg-white font-medium text-slate-600 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
-                          <PackageCheck className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Ajustes</span>
-                        </td>
-                        {mat.dias.map((d) => {
-                          const desvio = d.desvio_ajuste !== undefined ? Math.round(d.desvio_ajuste) : 0;
-                          return (
+                        <tr className="bg-slate-100/60 font-semibold border-t border-b border-slate-200">
+                          <td className="sticky left-0 z-10 bg-slate-100 font-bold text-slate-900 px-3 py-2 border-r border-slate-200">
+                            Stock Proyectado
+                          </td>
+                          {mat.dias.map((d) => (
                             <td
                               key={d.fecha}
                               onClick={() => handleOpenStockModal(mat, d.fecha)}
-                              className="px-2 py-1.5 text-center font-mono border-r border-slate-100 cursor-pointer hover:bg-amber-100/60 transition-colors"
-                              title="Diferencia entre stock estimado y conteo real físico del día. Haz clic para ajustar stock."
+                              title={`Clic para editar o cargar conteo físico en ${d.fecha}`}
+                              className={`px-2 py-2 text-center font-mono text-xs border-r border-slate-200 cursor-pointer transition-colors hover:ring-2 hover:ring-blue-500/50 ${d.tiene_ajuste
+                                  ? "ring-1 ring-blue-500 bg-blue-50/60 font-black text-blue-900"
+                                  : d.stock_final <= 0
+                                    ? "bg-red-200 text-red-900 font-black"
+                                    : d.stock_final < 500
+                                      ? "text-amber-800 font-bold"
+                                      : "text-slate-900 font-bold"
+                                }`}
                             >
-                              {desvio !== 0 ? (
-                                <span
-                                  className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${
-                                    desvio > 0
-                                      ? "bg-emerald-100 text-emerald-800"
-                                      : "bg-amber-100 text-amber-900"
-                                  }`}
-                                >
-                                  {desvio > 0 ? `+${desvio.toLocaleString("es-AR")}` : desvio.toLocaleString("es-AR")}
+                              <div className="flex items-center justify-center gap-1">
+                                {d.tiene_ajuste && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block" title="Stock ajustado manualmente / Conteo" />
+                                )}
+                                <span>
+                                  {Math.round(d.stock_final).toLocaleString("es-AR")}
                                 </span>
-                              ) : (
-                                <span className="text-slate-300 hover:text-slate-600 text-[11px]">—</span>
-                              )}
+                              </div>
                             </td>
-                          );
-                        })}
-                      </tr>
+                          ))}
+                        </tr>
 
-                      <tr className="bg-slate-100/60 font-semibold border-t border-b border-slate-200">
-                        <td className="sticky left-0 z-10 bg-slate-100 font-bold text-slate-900 px-3 py-2 border-r border-slate-200">
-                          Stock Proyectado
-                        </td>
-                        {mat.dias.map((d) => (
-                          <td
-                            key={d.fecha}
-                            onClick={() => handleOpenStockModal(mat, d.fecha)}
-                            title={`Clic para editar o cargar conteo físico en ${d.fecha}`}
-                            className={`px-2 py-2 text-center font-mono text-xs border-r border-slate-200 cursor-pointer transition-colors hover:ring-2 hover:ring-blue-500/50 ${
-                              d.tiene_ajuste
-                                ? "ring-1 ring-blue-500 bg-blue-50/60 font-black text-blue-900"
-                                : d.stock_final <= 0
-                                ? "bg-red-200 text-red-900 font-black"
-                                : d.stock_final < 500
-                                ? "text-amber-800 font-bold"
-                                : "text-slate-900 font-bold"
-                            }`}
-                          >
-                            <div className="flex items-center justify-center gap-1">
-                              {d.tiene_ajuste && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block" title="Stock ajustado manualmente / Conteo" />
-                              )}
-                              <span>
-                                {Math.round(d.stock_final).toLocaleString("es-AR")}
-                              </span>
-                            </div>
+                        <tr className="hover:bg-slate-50/50">
+                          <td className="sticky left-0 z-10 bg-white font-semibold text-slate-800 px-3 py-2 border-r border-slate-200">
+                            Días de Cobertura
                           </td>
-                        ))}
-                      </tr>
+                          {mat.dias.map((d) => {
+                            const cellId = `cell-risk-${mat.id_material}-${d.fecha}`;
+                            const isHighlighted = highlightedRiskId === cellId;
+                            const isCritical = d.alerta_quiebre || d.dias_cobertura < diasRojoActual;
 
-                      <tr className="hover:bg-slate-50/50">
-                        <td className="sticky left-0 z-10 bg-white font-semibold text-slate-800 px-3 py-2 border-r border-slate-200">
-                          Días de Cobertura
-                        </td>
-                        {mat.dias.map((d) => {
-                          const cellId = `cell-risk-${mat.id_material}-${d.fecha}`;
-                          const isHighlighted = highlightedRiskId === cellId;
-                          const isCritical = d.alerta_quiebre || d.dias_cobertura < diasRojoActual;
-
-                          let badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-300";
-                          if (isCritical) {
-                            badgeClass = "bg-red-600 text-white font-bold animate-pulse";
-                          } else if (d.dias_cobertura <= diasAmarilloActual) {
-                            badgeClass = "bg-amber-100 text-amber-800 border-amber-300 font-semibold";
-                          }
-                          return (
-                            <td
-                              key={d.fecha}
-                              id={cellId}
-                              className={`px-2 py-1.5 text-center border-r border-slate-100 transition-all duration-300 ${
-                                isHighlighted
-                                  ? "ring-4 ring-red-500 ring-offset-2 z-20 bg-red-100 scale-105 shadow-md"
-                                  : ""
-                              }`}
-                            >
-                              <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono border ${badgeClass}`}>
-                                {d.dias_cobertura >= 900 ? "—" : `${d.dias_cobertura.toFixed(1)}d`}
-                              </span>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              ))
-            )}
+                            let badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-300";
+                            if (isCritical) {
+                              badgeClass = "bg-red-600 text-white font-bold animate-pulse";
+                            } else if (d.dias_cobertura <= diasAmarilloActual) {
+                              badgeClass = "bg-amber-100 text-amber-800 border-amber-300 font-semibold";
+                            }
+                            return (
+                              <td
+                                key={d.fecha}
+                                id={cellId}
+                                className={`px-2 py-1.5 text-center border-r border-slate-100 transition-all duration-300 ${isHighlighted
+                                    ? "ring-4 ring-red-500 ring-offset-2 z-20 bg-red-100 scale-105 shadow-md"
+                                    : ""
+                                  }`}
+                              >
+                                <span className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-mono border ${badgeClass}`}>
+                                  {d.dias_cobertura >= 900 ? "—" : `${d.dias_cobertura.toFixed(1)}d`}
+                                </span>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    )}
+      )}
 
       <Dialog open={editIngresoModalOpen} onOpenChange={setEditIngresoModalOpen}>
         <DialogContent className="sm:max-w-md">
@@ -2643,11 +2630,10 @@ export function RundownVivo() {
                 <button
                   type="button"
                   onClick={() => setIngresoEditForm({ ...ingresoEditForm, estado: "planificado" })}
-                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
-                    ingresoEditForm.estado === "planificado"
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${ingresoEditForm.estado === "planificado"
                       ? "border-blue-600 bg-blue-50/80 text-blue-900 font-semibold shadow-xs"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
@@ -2660,11 +2646,10 @@ export function RundownVivo() {
                 <button
                   type="button"
                   onClick={() => setIngresoEditForm({ ...ingresoEditForm, estado: "confirmado" })}
-                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
-                    ingresoEditForm.estado === "confirmado"
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${ingresoEditForm.estado === "confirmado"
                       ? "border-emerald-600 bg-emerald-50/80 text-emerald-900 font-semibold shadow-xs"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
@@ -2699,7 +2684,7 @@ export function RundownVivo() {
               </div>
 
               <div className="space-y-1">
-                <Label>Cantidad (Metros) *</Label>
+                <Label>Cantidad *</Label>
                 <Input
                   type="number"
                   step="0.1"
@@ -2774,8 +2759,8 @@ export function RundownVivo() {
                 {isSavingIngreso
                   ? "Guardando..."
                   : ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta
-                  ? `Desplazar pedido al ${ingresoEditForm.fecha_eta}`
-                  : "Guardar Cambios"}
+                    ? `Desplazar pedido al ${ingresoEditForm.fecha_eta}`
+                    : "Guardar Cambios"}
               </Button>
             </div>
           </DialogFooter>
@@ -2795,21 +2780,19 @@ export function RundownVivo() {
             <div className="flex border-b">
               <button
                 onClick={() => setAdminTab("secciones")}
-                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${
-                  adminTab === "secciones"
+                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${adminTab === "secciones"
                     ? "border-blue-600 text-blue-600"
                     : "border-transparent text-slate-500 hover:text-slate-700"
-                }`}
+                  }`}
               >
                 Líneas
               </button>
               <button
                 onClick={() => setAdminTab("proveedores")}
-                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${
-                  adminTab === "proveedores"
+                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${adminTab === "proveedores"
                     ? "border-blue-600 text-blue-600"
                     : "border-transparent text-slate-500 hover:text-slate-700"
-                }`}
+                  }`}
               >
                 Proveedores y Asignaciones
               </button>
@@ -2822,11 +2805,10 @@ export function RundownVivo() {
                     fetchProvMateriales(pId);
                   }
                 }}
-                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${
-                  adminTab === "materiales"
+                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${adminTab === "materiales"
                     ? "border-blue-600 text-blue-600"
                     : "border-transparent text-slate-500 hover:text-slate-700"
-                }`}
+                  }`}
               >
                 Materiales en Rundown
               </button>
@@ -3266,11 +3248,10 @@ export function RundownVivo() {
                               <td className="p-2 text-center">
                                 <Badge
                                   variant="outline"
-                                  className={`text-[10px] ${
-                                    m.cant_productos > 0
+                                  className={`text-[10px] ${m.cant_productos > 0
                                       ? "bg-emerald-50 text-emerald-800 border-emerald-200"
                                       : "bg-amber-50 text-amber-800 border-amber-200"
-                                  }`}
+                                    }`}
                                 >
                                   {m.cant_productos} recetas
                                 </Badge>
@@ -3446,11 +3427,10 @@ export function RundownVivo() {
                 <button
                   type="button"
                   onClick={() => setTransitoForm({ ...transitoForm, estado: "planificado" })}
-                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
-                    transitoForm.estado === "planificado"
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${transitoForm.estado === "planificado"
                       ? "border-blue-600 bg-blue-50/80 text-blue-900 font-semibold shadow-xs"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
@@ -3463,11 +3443,10 @@ export function RundownVivo() {
                 <button
                   type="button"
                   onClick={() => setTransitoForm({ ...transitoForm, estado: "confirmado" })}
-                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${
-                    transitoForm.estado === "confirmado"
+                  className={`flex flex-col items-center justify-center p-2 rounded-md border text-xs font-medium transition-all ${transitoForm.estado === "confirmado"
                       ? "border-emerald-600 bg-emerald-50/80 text-emerald-900 font-semibold shadow-xs"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                  }`}
+                    }`}
                 >
                   <span className="flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
@@ -3513,7 +3492,7 @@ export function RundownVivo() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Cantidad (Metros) *</Label>
+                <Label>Cantidad *</Label>
                 <Input
                   type="number"
                   step="0.1"
@@ -3628,7 +3607,7 @@ export function RundownVivo() {
               </div>
 
               <div className="space-y-1">
-                <Label>Stock Real / Revalidado (Metros) *</Label>
+                <Label>Stock Real / Revalidado *</Label>
                 <Input
                   type="number"
                   step="1"
@@ -3890,11 +3869,10 @@ export function RundownVivo() {
                         key={d.fecha}
                         type="button"
                         onClick={() => handleToggleDiaLaboral(d.fecha)}
-                        className={`h-16 p-1.5 rounded-lg border text-left flex flex-col justify-between transition-all select-none ${
-                          d.es_laboral
+                        className={`h-16 p-1.5 rounded-lg border text-left flex flex-col justify-between transition-all select-none ${d.es_laboral
                             ? "border-emerald-400 bg-emerald-50/70 hover:bg-emerald-100/70 text-emerald-950 shadow-xs"
                             : "border-slate-200 bg-slate-100/80 hover:bg-slate-200/60 text-slate-400"
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center justify-between w-full">
                           <span className={`text-xs font-black ${d.es_laboral ? "text-emerald-950" : "text-slate-500"}`}>
@@ -3913,16 +3891,14 @@ export function RundownVivo() {
                         </div>
                         <div className="flex items-center justify-between w-full">
                           <span
-                            className={`text-[10px] font-bold ${
-                              d.es_laboral ? "text-emerald-700" : "text-slate-400"
-                            }`}
+                            className={`text-[10px] font-bold ${d.es_laboral ? "text-emerald-700" : "text-slate-400"
+                              }`}
                           >
                             {d.es_laboral ? "Laboral" : "No lab."}
                           </span>
                           <span
-                            className={`w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-bold ${
-                              d.es_laboral ? "bg-emerald-600 text-white" : "bg-slate-300 text-slate-600"
-                            }`}
+                            className={`w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-bold ${d.es_laboral ? "bg-emerald-600 text-white" : "bg-slate-300 text-slate-600"
+                              }`}
                           >
                             {d.es_laboral ? "✓" : "—"}
                           </span>
@@ -4263,9 +4239,8 @@ export function RundownVivo() {
                             return (
                               <td
                                 key={d.fecha}
-                                className={`p-2 text-right font-mono ${
-                                  val > 0 ? "font-semibold text-slate-900 bg-slate-50/40" : "text-slate-300"
-                                }`}
+                                className={`p-2 text-right font-mono ${val > 0 ? "font-semibold text-slate-900 bg-slate-50/40" : "text-slate-300"
+                                  }`}
                               >
                                 {val > 0 ? Math.round(val).toLocaleString() : "-"}
                               </td>

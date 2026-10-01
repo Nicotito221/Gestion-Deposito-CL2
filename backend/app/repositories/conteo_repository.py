@@ -47,7 +47,10 @@ class ConteoRepository:
                     prov.id_proveedor,
                     prov.nombre AS nombre_proveedor,
                     ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta,
-                    CAST(ISNULL(exact_adj.stock_ajustado, ISNULL(prior_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0))) AS FLOAT) AS stock_teorico
+                    CAST(ISNULL(exact_adj.stock_ajustado, ISNULL(prior_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0))) AS FLOAT) AS stock_teorico,
+                    COALESCE(rpm_cfg.tipo_empaque, m.tipo_empaque, 'pallet') AS tipo_empaque,
+                    CAST(COALESCE(rpm_cfg.lote_mts, m.lote_minimo, 1.0) AS FLOAT) AS lote_pallet,
+                    CAST(rpm_cfg.bultos_por_pallet AS FLOAT) AS bultos_por_pallet
                 FROM dbo.material m
                 OUTER APPLY (
                     SELECT TOP 1 
@@ -86,6 +89,16 @@ class ConteoRepository:
                       AND (prov.id_proveedor IS NULL OR rpm.id_proveedor = prov.id_proveedor)
                     ORDER BY CASE WHEN rpm.id_proveedor = prov.id_proveedor THEN 0 ELSE 1 END, rpm.id_parametro DESC
                 ) rpm
+                OUTER APPLY (
+                    SELECT TOP 1
+                        rpm2.tipo_empaque,
+                        rpm2.lote_mts,
+                        rpm2.bultos_por_pallet
+                    FROM dbo.rundown_parametro_material rpm2
+                    WHERE rpm2.id_material = m.id_material AND rpm2.activo = 1
+                      AND (prov.id_proveedor IS NULL OR rpm2.id_proveedor = prov.id_proveedor)
+                    ORDER BY CASE WHEN rpm2.id_proveedor = prov.id_proveedor THEN 0 ELSE 1 END, rpm2.id_parametro DESC
+                ) rpm_cfg
                 WHERE {where_str}
                 ORDER BY m.id_material ASC
             """
@@ -103,6 +116,9 @@ class ConteoRepository:
                     "nombre_proveedor": str(r[4]) if r[4] else None,
                     "deposito_en_planta": bool(r[5]),
                     "stock_teorico": float(r[6]),
+                    "tipo_empaque": str(r[7]) if r[7] else "pallet",
+                    "lote_pallet": float(r[8]) if r[8] and float(r[8]) > 0 else 1.0,
+                    "bultos_por_pallet": float(r[9]) if r[9] is not None else None,
                 }
                 for r in rows
             ]
@@ -122,7 +138,10 @@ class ConteoRepository:
                     prov.id_proveedor,
                     prov.nombre AS nombre_proveedor,
                     ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta,
-                    CAST(ISNULL(exact_adj.stock_ajustado, ISNULL(prior_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0))) AS FLOAT) AS stock_teorico
+                    CAST(ISNULL(exact_adj.stock_ajustado, ISNULL(prior_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0))) AS FLOAT) AS stock_teorico,
+                    COALESCE(rpm_cfg.tipo_empaque, m.tipo_empaque, 'pallet') AS tipo_empaque,
+                    CAST(COALESCE(rpm_cfg.lote_mts, m.lote_minimo, 1.0) AS FLOAT) AS lote_pallet,
+                    CAST(rpm_cfg.bultos_por_pallet AS FLOAT) AS bultos_por_pallet
                 FROM dbo.material m
                 OUTER APPLY (
                     SELECT TOP 1 
@@ -161,6 +180,16 @@ class ConteoRepository:
                       AND (prov.id_proveedor IS NULL OR rpm.id_proveedor = prov.id_proveedor)
                     ORDER BY CASE WHEN rpm.id_proveedor = prov.id_proveedor THEN 0 ELSE 1 END, rpm.id_parametro DESC
                 ) rpm
+                OUTER APPLY (
+                    SELECT TOP 1
+                        rpm2.tipo_empaque,
+                        rpm2.lote_mts,
+                        rpm2.bultos_por_pallet
+                    FROM dbo.rundown_parametro_material rpm2
+                    WHERE rpm2.id_material = m.id_material AND rpm2.activo = 1
+                      AND (prov.id_proveedor IS NULL OR rpm2.id_proveedor = prov.id_proveedor)
+                    ORDER BY CASE WHEN rpm2.id_proveedor = prov.id_proveedor THEN 0 ELSE 1 END, rpm2.id_parametro DESC
+                ) rpm_cfg
                 WHERE m.id_material = ?
             """
             cursor.execute(query, (target_date, target_date, id_material))
@@ -175,6 +204,9 @@ class ConteoRepository:
                 "nombre_proveedor": str(r[4]) if r[4] else None,
                 "deposito_en_planta": bool(r[5]),
                 "stock_teorico": float(r[6]),
+                "tipo_empaque": str(r[7]) if r[7] else "pallet",
+                "lote_pallet": float(r[8]) if r[8] and float(r[8]) > 0 else 1.0,
+                "bultos_por_pallet": float(r[9]) if r[9] is not None else None,
             }
         finally:
             cursor.close()

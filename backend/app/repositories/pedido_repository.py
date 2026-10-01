@@ -964,3 +964,46 @@ class PedidoRepository:
             cursor.close()
             conn.close()
 
+    def get_config_valor(self, clave: str, default: str = "") -> str:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT valor FROM dbo.configuracion_sistema WHERE clave = ?",
+                (clave,),
+            )
+            row = cursor.fetchone()
+            return str(row[0]) if row and row[0] is not None else default
+        except Exception:
+            return default
+        finally:
+            cursor.close()
+            conn.close()
+
+    def set_config_valor(self, clave: str, valor: str, descripcion: Optional[str] = None) -> None:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                MERGE dbo.configuracion_sistema AS target
+                USING (SELECT ? AS clave, ? AS valor, ? AS descripcion) AS source
+                ON (target.clave = source.clave)
+                WHEN MATCHED THEN
+                    UPDATE SET valor = source.valor, 
+                               descripcion = COALESCE(source.descripcion, target.descripcion),
+                               fecha_actualizacion = SYSDATETIME()
+                WHEN NOT MATCHED THEN
+                    INSERT (clave, valor, descripcion, fecha_actualizacion)
+                    VALUES (source.clave, source.valor, source.descripcion, SYSDATETIME());
+                """,
+                (clave, valor, descripcion),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
