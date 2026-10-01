@@ -1,3 +1,4 @@
+from datetime import date
 import os
 import tempfile
 from typing import List, Optional, Tuple
@@ -13,6 +14,16 @@ class SupplyService:
 
     def get_summary(self) -> SupplySummaryOut:
         return self.repository.get_consolidated_summary()
+
+    def update_produccion_diaria(
+        self, id_producto: str, fecha: "datetime.date", cantidad: float, id_usuario: Optional[int] = None
+    ) -> None:
+        self.repository.update_produccion_diaria(
+            id_producto=id_producto,
+            fecha=fecha,
+            cantidad=cantidad,
+            id_usuario=id_usuario,
+        )
 
     def consolidar_archivos(
         self,

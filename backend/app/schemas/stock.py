@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,6 +34,7 @@ class StockListResponse(BaseModel):
 
 
 class StockAjusteInput(BaseModel):
+    fecha: Optional[date] = None
     nuevo_stock: Optional[float] = Field(default=None, ge=0)
     nuevo_stock_planta: Optional[float] = Field(default=None, ge=0)
     nuevo_stock_cl2: Optional[float] = Field(default=None, ge=0)

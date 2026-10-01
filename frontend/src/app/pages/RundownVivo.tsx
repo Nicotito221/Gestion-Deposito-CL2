@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "../components/ui/dialog";
 import {
@@ -105,19 +106,24 @@ export function RundownVivo() {
   const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
   const [selectedSeccionId, setSelectedSeccionId] = useState<number>(0);
   const [selectedSupplierCode, setSelectedSupplierCode] = useState<string>("HOWA");
-  const [alcance, setAlcance] = useState<"total" | "planta">("total");
+  const [searchParams] = useSearchParams();
+  const initAlcance = searchParams.get("alcance") === "planta" ? "planta" : "total";
+  const [alcance, setAlcance] = useState<"total" | "planta">(initAlcance);
   const [selectedPeriodo, setSelectedPeriodo] = useState<string>("");
 
   const [report, setReport] = useState<RundownSupplierReport | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const [searchParams] = useSearchParams();
   const initRiesgo = searchParams.get("riesgo") === "1" || searchParams.get("filtro") === "riesgo";
   const [activeMaterialTab, setActiveMaterialTab] = useState<string>("todos");
   const [filterSoloRiesgo, setFilterSoloRiesgo] = useState<boolean>(initRiesgo);
 
   useEffect(() => {
+    const urlAlcance = searchParams.get("alcance");
+    if (urlAlcance === "planta" || urlAlcance === "total") {
+      setAlcance(urlAlcance);
+    }
     if (searchParams.get("riesgo") === "1" || searchParams.get("filtro") === "riesgo") {
       setFilterSoloRiesgo(true);
     }
@@ -388,6 +394,19 @@ export function RundownVivo() {
 
       setReport(data);
 
+      if (filterSoloRiesgo) {
+        const diasRojoTarget = alcance === "planta" ? 1.0 : (data.dias_alerta_rojo ?? 5.0);
+        const hasRisk = data.materiales.some((m) =>
+          m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojoTarget)
+        );
+        if (!hasRisk) {
+          toast.info(
+            `No se detectaron alertas de riesgo para ${data.nombre_proveedor} en Rundown ${alcance === "planta" ? "Planta" : "TBAR"}. Mostrando todos los materiales.`
+          );
+          setFilterSoloRiesgo(false);
+        }
+      }
+
       if (!selectedPeriodo || (data.meses_disponibles.length > 0 && !data.meses_disponibles.some((m) => m.periodo === selectedPeriodo))) {
         setSelectedPeriodo(data.periodo_actual);
       }
@@ -449,13 +468,26 @@ export function RundownVivo() {
     }
   };
 
+  const { diasRojoActual, diasAmarilloActual } = useMemo(() => {
+    if (alcance === "planta") {
+      const dohPlanta = report?.doh_sugerido_planta || 1.5;
+      return {
+        diasRojoActual: 1.0,
+        diasAmarilloActual: Math.max(1.5, dohPlanta),
+      };
+    }
+    return {
+      diasRojoActual: report?.dias_alerta_rojo ?? 5.0,
+      diasAmarilloActual: report?.dias_alerta_amarillo ?? 15.0,
+    };
+  }, [alcance, report]);
+
   const riskPoints = useMemo(() => {
     if (!report) return [];
-    const diasRojo = report.dias_alerta_rojo ?? 5.0;
     const items: { materialId: string; fecha: string; diasCob: number; elementId: string }[] = [];
     for (const m of report.materiales) {
       for (const d of m.dias) {
-        if (d.alerta_quiebre || d.dias_cobertura < diasRojo) {
+        if (d.alerta_quiebre || d.dias_cobertura < diasRojoActual) {
           items.push({
             materialId: m.id_material,
             fecha: d.fecha,
@@ -466,22 +498,20 @@ export function RundownVivo() {
       }
     }
     return items.sort((a, b) => a.fecha.localeCompare(b.fecha));
-  }, [report]);
+  }, [report, diasRojoActual]);
 
   const materialesEnRiesgoCount = useMemo(() => {
     if (!report) return 0;
-    const diasRojo = report.dias_alerta_rojo ?? 5.0;
     return report.materiales.filter((m) =>
-      m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojo)
+      m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojoActual)
     ).length;
-  }, [report]);
+  }, [report, diasRojoActual]);
 
   const filteredMaterials = useMemo(() => {
     if (!report) return [];
-    const diasRojo = report.dias_alerta_rojo ?? 5.0;
     let list = report.materiales;
     if (filterSoloRiesgo) {
-      list = list.filter((m) => m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojo));
+      list = list.filter((m) => m.dias.some((d) => d.alerta_quiebre || d.dias_cobertura < diasRojoActual));
       list = [...list].sort((a, b) => {
         const minA = a.dias.length > 0 ? Math.min(...a.dias.map((d) => d.dias_cobertura)) : 999;
         const minB = b.dias.length > 0 ? Math.min(...b.dias.map((d) => d.dias_cobertura)) : 999;
@@ -1528,7 +1558,7 @@ export function RundownVivo() {
                 }`}
               >
                 <Warehouse className="w-3.5 h-3.5 text-blue-600" />
-                <span>Rundown Planta</span>
+                <span>Rundown Warehouse / CL2</span>
               </button>
               <button
                 type="button"
@@ -1553,7 +1583,7 @@ export function RundownVivo() {
             {activeSupplier?.deposito_en_planta
               ? "Depósito unificado en Planta: el inventario y consumos aplican directamente en planta sin stock intermedio CL2."
               : alcance === "planta"
-              ? "Rundown Planta: Planificación para abastecimiento y seguimiento de inventario en planta."
+              ? "Rundown Warehouse / CL2: Planificación para abastecimiento y seguimiento de inventario operativo en planta y reposición desde CL2."
               : "Rundown TBAR: Planificación de suministro y compras al Proveedor (contempla stock total consolidado)."}
           </p>
         </div>
@@ -1814,7 +1844,7 @@ export function RundownVivo() {
                       {kpis.quiebresCount} {kpis.quiebresCount === 1 ? "día en riesgo" : "días en riesgo"}
                     </h3>
                     <Badge className={kpis.quiebresCount > 0 ? "bg-red-600 text-white text-[10px] px-1.5 py-0" : "bg-emerald-600 text-white text-[10px] px-1.5 py-0"}>
-                      {`< ${report.dias_alerta_rojo ?? 5}d`}
+                      {`< ${diasRojoActual}d`}
                     </Badge>
                   </div>
                   <p className="text-[11px] text-slate-400">
@@ -1852,7 +1882,7 @@ export function RundownVivo() {
               }}
               className="text-xs h-8"
             >
-              Todas las espumas ({report.materiales.length})
+              Todas ({report.materiales.length})
             </Button>
             {materialesEnRiesgoCount > 0 && (
               <Button
@@ -1932,8 +1962,34 @@ export function RundownVivo() {
             className="overflow-x-auto border rounded-xl shadow-sm bg-white"
           >
             <div className="min-w-max">
-              {filteredMaterials.map((mat, idx) => (
-                <div key={mat.id_material} className={`p-0 ${idx > 0 ? "border-t-4 border-[oklch(0.59_0_0)]" : ""}`}>
+              {filteredMaterials.length === 0 ? (
+                <div className="p-12 text-center bg-white rounded-xl space-y-3 min-w-[600px] mx-auto">
+                  <AlertTriangle className="w-10 h-10 mx-auto text-amber-500" />
+                  <p className="text-sm font-semibold text-slate-800">
+                    {filterSoloRiesgo
+                      ? `No se detectaron materiales con riesgo de cobertura (menor a ${diasRojoActual} días) para ${activeSupplier?.nombre || selectedSupplierCode} en Rundown ${alcance === "planta" ? "Planta" : "TBAR"}`
+                      : "No hay materiales para mostrar con el filtro actual"}
+                  </p>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    El stock actual se encuentra por encima del umbral de alerta en el período consultado.
+                  </p>
+                  {filterSoloRiesgo && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setFilterSoloRiesgo(false);
+                        setActiveMaterialTab("todos");
+                      }}
+                      className="text-xs mt-2"
+                    >
+                      Ver todos los materiales ({report.materiales.length})
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                filteredMaterials.map((mat, idx) => (
+                  <div key={mat.id_material} className={`p-0 ${idx > 0 ? "border-t-4 border-[oklch(0.59_0_0)]" : ""}`}>
                   <div className="bg-[oklch(0.59_0_0)] border-b border-[oklch(0.50_0_0)]">
                     <div className="sticky left-0 z-20 px-4 py-2 flex items-center gap-3 w-fit bg-[oklch(0.59_0_0)] border-r border-[oklch(0.50_0_0)] shadow-xs">
                       <span className="font-mono text-base font-bold text-white tracking-wide">
@@ -2032,8 +2088,13 @@ export function RundownVivo() {
                             <span>Pedido</span>
                           </td>
                           {mat.dias.map((d) => {
-                            const pedidoVal = (d.plan_maritimo || 0) + (d.pedidos_aereos || 0) + (d.entregas_locales || 0);
-                            const viaToUse: "Maritimo" | "Aereo" | "Local" = (d.entregas_locales || 0) > 0 ? "Local" : ((d.pedidos_aereos || 0) > 0 ? "Aereo" : "Maritimo");
+                            const isPlantaOnly = report.deposito_en_planta;
+                            const pedidoVal = isPlantaOnly
+                              ? ((d.plan_maritimo || 0) + (d.pedidos_aereos || 0) + (d.entregas_locales || 0))
+                              : (d.entregas_locales || 0);
+                            const viaToUse: "Maritimo" | "Aereo" | "Local" = isPlantaOnly
+                              ? ((d.entregas_locales || 0) > 0 ? "Local" : ((d.pedidos_aereos || 0) > 0 ? "Aereo" : "Maritimo"))
+                              : "Local";
                             const existingPo = viaToUse === "Local" ? d.local_po : (viaToUse === "Aereo" ? d.aereo_po : d.maritimo_po);
                             const existingFactura = viaToUse === "Local" ? d.local_factura : (viaToUse === "Aereo" ? d.aereo_factura : d.maritimo_factura);
                             const existingObs = viaToUse === "Local" ? d.local_obs : (viaToUse === "Aereo" ? d.aereo_obs : d.maritimo_obs);
@@ -2455,16 +2516,14 @@ export function RundownVivo() {
                           Días de Cobertura
                         </td>
                         {mat.dias.map((d) => {
-                          const diasRojo = report?.dias_alerta_rojo ?? 5;
-                          const diasAmarillo = report?.dias_alerta_amarillo ?? 15;
                           const cellId = `cell-risk-${mat.id_material}-${d.fecha}`;
                           const isHighlighted = highlightedRiskId === cellId;
-                          const isCritical = d.alerta_quiebre || d.dias_cobertura < diasRojo;
+                          const isCritical = d.alerta_quiebre || d.dias_cobertura < diasRojoActual;
 
                           let badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-300";
                           if (isCritical) {
                             badgeClass = "bg-red-600 text-white font-bold animate-pulse";
-                          } else if (d.dias_cobertura <= diasAmarillo) {
+                          } else if (d.dias_cobertura <= diasAmarilloActual) {
                             badgeClass = "bg-amber-100 text-amber-800 border-amber-300 font-semibold";
                           }
                           return (
@@ -2487,11 +2546,12 @@ export function RundownVivo() {
                     </tbody>
                   </table>
                 </div>
-              ))}
-            </div>
+              ))
+            )}
           </div>
         </div>
-      )}
+      </div>
+    )}
 
       <Dialog open={editIngresoModalOpen} onOpenChange={setEditIngresoModalOpen}>
         <DialogContent className="sm:max-w-md">
@@ -4070,10 +4130,10 @@ export function RundownVivo() {
               <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
               <span>Importar Plan de Producción Semanal por Línea</span>
             </DialogTitle>
-            <p className="text-xs text-slate-500">
+            <DialogDescription className="text-xs text-slate-500">
               Línea seleccionada: <strong className="text-slate-800">{activeSeccion?.nombre || "Headliner"}</strong>.
               Permite cargar la distribución de turnos por código SD, sumar automáticamente los turnos por día e impactar el cálculo de consumos.
-            </p>
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">

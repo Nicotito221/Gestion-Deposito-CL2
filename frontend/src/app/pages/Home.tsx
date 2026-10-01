@@ -25,6 +25,7 @@ import {
   RefreshCw,
   Receipt,
   BarChart2,
+  Globe2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -126,7 +127,7 @@ export function Home() {
       </div>
 
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3 sm:gap-4">
         <Card
           className="transition-all hover:shadow-md hover:border-amber-400 cursor-pointer"
           onClick={() => navigate(isDepositoOrCL2 ? "/deposito" : "/pedidos")}
@@ -197,27 +198,54 @@ export function Home() {
           </CardContent>
         </Card>
 
+        {/* Alerta Stock Planta */}
         <Card
           className="transition-all hover:shadow-md hover:border-rose-400 cursor-pointer border-rose-200 bg-rose-50/20"
           onClick={() => {
             if (isDepositoOrCL2) {
               navigate("/materiales");
             } else {
-              navigate("/rundown?riesgo=1");
+              navigate("/rundown?alcance=planta&riesgo=1");
             }
           }}
-          title="Haz clic para ver materiales con menor DOH"
+          title="Haz clic para ver materiales en riesgo en Rundown Warehouse / CL2"
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-3.5 px-4">
-            <CardTitle className="text-xs font-semibold text-slate-600">Stock crítico</CardTitle>
+            <CardTitle className="text-xs font-semibold text-slate-600">Stock Planta</CardTitle>
             <AlertTriangle className="h-4 w-4 text-rose-500" />
           </CardHeader>
           <CardContent className="px-4 pb-3.5">
             <div className="text-2xl font-bold text-rose-600 font-mono">
-              {loading ? "..." : data?.kpis.materiales_criticos_count ?? 0}
+              {loading ? "..." : (data?.kpis.criticos_planta_count ?? data?.kpis.materiales_criticos_count ?? 0)}
             </div>
             <p className="text-[11px] text-rose-700 mt-0.5 font-medium flex items-center gap-1">
-              Menor DOH <ArrowRight className="w-3 h-3" />
+              Riesgo Planta <ArrowRight className="w-3 h-3" />
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Alerta Stock TBAR */}
+        <Card
+          className="transition-all hover:shadow-md hover:border-amber-400 cursor-pointer border-amber-200 bg-amber-50/20"
+          onClick={() => {
+            if (isDepositoOrCL2) {
+              navigate("/materiales");
+            } else {
+              navigate("/rundown?alcance=total&riesgo=1");
+            }
+          }}
+          title="Haz clic para ver materiales en riesgo en Rundown TBAR"
+        >
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-3.5 px-4">
+            <CardTitle className="text-xs font-semibold text-slate-600">Stock TBAR</CardTitle>
+            <Globe2 className="h-4 w-4 text-amber-600" />
+          </CardHeader>
+          <CardContent className="px-4 pb-3.5">
+            <div className="text-2xl font-bold text-amber-700 font-mono">
+              {loading ? "..." : (data?.kpis.criticos_tbar_count ?? 0)}
+            </div>
+            <p className="text-[11px] text-amber-800 mt-0.5 font-medium flex items-center gap-1">
+              Riesgo TBAR <ArrowRight className="w-3 h-3" />
             </p>
           </CardContent>
         </Card>
@@ -236,7 +264,7 @@ export function Home() {
               {loading ? "..." : `${data?.kpis.fill_rate_porcentaje ?? 100}%`}
             </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              {loading ? "..." : `${data?.kpis.remitos_hoy ?? 0} remitos emitidos`}
+              {loading ? "..." : `${data?.kpis.remitos_hoy ?? 0} remitos`}
             </p>
           </CardContent>
         </Card>

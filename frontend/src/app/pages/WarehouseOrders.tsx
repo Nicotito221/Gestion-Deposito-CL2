@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getPedidos, type PedidoOut } from "../services/api";
-import { formatSoloFechaAR, formatFechaHoraAR } from "../components/ui/format";
+import { formatSoloFechaAR, formatFechaHoraAR, getTodayISODate } from "../components/ui/format";
 import { DeliveryNoteModal } from "../components/DeliveryNoteModal";
 
 const statusConfig: Record<string, { label: string; color: string }> = {
@@ -106,7 +106,7 @@ export function WarehouseOrders() {
     });
   }, [orders, search, statusFilter]);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getTodayISODate();
   const pendingCount = orders.filter((o) => o.estado === "pendiente").length;
   const lateCount = orders.filter((o) => o.es_demorado && o.estado !== "completo" && o.estado !== "cancelado").length;
   const inProgressCount = orders.filter((o) => o.estado === "en_preparacion").length;

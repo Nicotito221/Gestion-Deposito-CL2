@@ -62,6 +62,7 @@ import {
   type RundownSeccionItem,
   type MaterialCatalogoItem,
 } from "../services/api";
+import { getTodayISODate } from "../components/ui/format";
 
 const statusConfig: Record<string, { label: string; color: string; icon: typeof Clock }> = {
   pendiente: { label: "Pendiente de recepción", color: "bg-amber-50 text-amber-800 border-amber-300", icon: Clock },
@@ -97,7 +98,7 @@ export function Remitos() {
     id_proveedor: "",
     numero_factura: "",
     orden_compra: "",
-    fecha_emision: new Date().toISOString().split("T")[0],
+    fecha_emision: getTodayISODate(),
     observacion: "",
     confirmar_inmediato: true,
   });
@@ -111,7 +112,7 @@ export function Remitos() {
   const [recepcionModalOpen, setRecepcionModalOpen] = useState<boolean>(false);
   const [isSubmittingRec, setIsSubmittingRec] = useState<boolean>(false);
   const [targetIngreso, setTargetIngreso] = useState<IngresoOut | null>(null);
-  const [recepcionFecha, setRecepcionFecha] = useState<string>(new Date().toISOString().split("T")[0]);
+  const [recepcionFecha, setRecepcionFecha] = useState<string>(getTodayISODate());
   const [recepcionObs, setRecepcionObs] = useState<string>("");
   const [recepcionItems, setRecepcionItems] = useState<
     { id_material: string; nombre: string; unidad: string; facturada: number; recibida: number; conforme: boolean; observacion: string }[]
@@ -267,7 +268,7 @@ export function Remitos() {
         id_proveedor: "",
         numero_factura: "",
         orden_compra: "",
-        fecha_emision: new Date().toISOString().split("T")[0],
+        fecha_emision: getTodayISODate(),
         observacion: "",
         confirmar_inmediato: true,
       });
@@ -282,7 +283,7 @@ export function Remitos() {
 
   const handleOpenRecepcionModal = (ing: IngresoOut) => {
     setTargetIngreso(ing);
-    setRecepcionFecha(new Date().toISOString().split("T")[0]);
+    setRecepcionFecha(getTodayISODate());
     setRecepcionObs(ing.observacion || "");
     setRecepcionItems(
       ing.items.map((it) => ({

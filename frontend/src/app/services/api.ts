@@ -54,6 +54,7 @@ export interface SupplySummaryApi {
   total_piezas: number;
   columnas_diarias?: string[];
   columnas_tentativas?: string[];
+  columnas_fechas_map?: Record<string, string>;
   items: DemandItemApi[];
 }
 
@@ -62,6 +63,7 @@ export interface SupplyConsolidateResultApi {
   total_unidades: number;
   columnas_diarias: string[];
   columnas_tentativas: string[];
+  columnas_fechas_map?: Record<string, string>;
   items: DemandItemApi[];
   mensaje: string;
 }
@@ -190,6 +192,23 @@ export async function consolidateSupply(files: {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al consolidar orden de suministro");
+  }
+  return res.json();
+}
+
+export async function updateSupplyDailyProduction(data: {
+  id_producto: string;
+  fecha: string;
+  cantidad: number;
+}): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/suministro/produccion-diaria`, {
+    method: "PUT",
+    headers: getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar valor diario");
   }
   return res.json();
 }
@@ -929,6 +948,7 @@ export interface StockListResponse {
 }
 
 export interface StockAjusteInput {
+  fecha?: string;
   nuevo_stock?: number;
   nuevo_stock_planta?: number;
   nuevo_stock_cl2?: number;
@@ -1227,6 +1247,7 @@ export interface CalcularSugerenciaResponse {
   total_materiales: number;
   materiales_a_pedir: number;
   items: SugerenciaMaterialDetalle[];
+  turno_sugerido?: string;
 }
 
 export interface PedidoItemInput {
@@ -1702,6 +1723,8 @@ export interface DashboardKpis {
   pedidos_completados_hoy: number;
   total_pedidos: number;
   materiales_criticos_count: number;
+  criticos_planta_count?: number;
+  criticos_tbar_count?: number;
   remitos_hoy: number;
   fill_rate_porcentaje: number;
   turno_actual: string;
@@ -1732,6 +1755,7 @@ export interface DashboardMaterialCritico {
   alerta_tipo: string;
   alerta_label: string;
   prioridad: "critica" | "alta" | "media";
+  origen_alerta?: "planta" | "tbar" | "ambos";
 }
 
 export interface DashboardResumenResponse {

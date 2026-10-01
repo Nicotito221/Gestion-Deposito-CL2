@@ -599,7 +599,7 @@ class RundownRepository:
 
             tipos_a_guardar = ["planta", "total"] if dep_en_planta else [tipo_stock]
 
-            if fecha_init and fecha <= fecha_init:
+            if fecha_init and fecha == fecha_init:
                 if dep_en_planta:
                     cursor.execute(
                         "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
@@ -975,51 +975,33 @@ class RundownRepository:
             conn.close()
 
     def _get_fecha_inicio_firme_cursor(self, cursor: pyodbc.Cursor) -> date:
+        from app.core.time import get_argentina_today
+        today = get_argentina_today()
+
         cursor.execute(
             """
-            SELECT TOP 1 id_importacion 
-            FROM dbo.importacion_archivo 
-            WHERE tipo = 'produccion_planificada' AND estado = 'procesada' 
-            ORDER BY id_importacion DESC
+            SELECT COUNT(*)
+            FROM dbo.produccion_planificada
+            WHERE YEAR(fecha) = ? AND MONTH(fecha) = ?
+            """,
+            (today.year, today.month),
+        )
+        r = cursor.fetchone()
+        if r and int(r[0]) > 0:
+            return date(today.year, today.month, 1)
+
+        cursor.execute(
+            """
+            SELECT TOP 1 YEAR(fecha) AS anio, MONTH(fecha) AS mes
+            FROM dbo.produccion_planificada
+            GROUP BY YEAR(fecha), MONTH(fecha)
+            ORDER BY YEAR(fecha) DESC, MONTH(fecha) DESC
             """
         )
-        imp_row = cursor.fetchone()
-        latest_imp_id = int(imp_row[0]) if imp_row else None
-
-        firme_tuple: Optional[Tuple[int, int]] = None
-        if latest_imp_id:
-            cursor.execute(
-                """
-                SELECT TOP 1 YEAR(fecha) AS anio, MONTH(fecha) AS mes
-                FROM dbo.produccion_planificada
-                WHERE id_importacion = ?
-                GROUP BY YEAR(fecha), MONTH(fecha)
-                HAVING COUNT(DISTINCT fecha) > 5
-                ORDER BY YEAR(fecha) ASC, MONTH(fecha) ASC
-                """,
-                (latest_imp_id,),
-            )
-            f_row = cursor.fetchone()
-            if f_row:
-                firme_tuple = (int(f_row[0]), int(f_row[1]))
-
-        if not firme_tuple:
-            cursor.execute(
-                """
-                SELECT TOP 1 YEAR(fecha) AS anio, MONTH(fecha) AS mes
-                FROM dbo.produccion_planificada
-                GROUP BY YEAR(fecha), MONTH(fecha)
-                HAVING COUNT(DISTINCT fecha) > 5
-                ORDER BY YEAR(fecha) ASC, MONTH(fecha) ASC
-                """
-            )
-            f_row = cursor.fetchone()
-            if f_row:
-                firme_tuple = (int(f_row[0]), int(f_row[1]))
-
-        if firme_tuple:
-            return date(firme_tuple[0], firme_tuple[1], 1)
-        return date(2026, 10, 1)
+        f_row = cursor.fetchone()
+        if f_row:
+            return date(int(f_row[0]), int(f_row[1]), 1)
+        return date(today.year, today.month, 1)
 
     def get_fecha_inicio_firme(self) -> date:
         conn = self._get_connection()
@@ -1786,7 +1768,17 @@ class RundownRepository:
         cursor = conn.cursor()
         try:
             conn.autocommit = False
-            user_id = id_usuario if id_usuario else 2
+            user_id = id_usuario
+            if not user_id:
+                cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+                u_row = cursor.fetchone()
+                user_id = int(u_row[0]) if u_row else 1
+            else:
+                cursor.execute("SELECT id_usuario FROM dbo.usuario WHERE id_usuario = ?", (user_id,))
+                if not cursor.fetchone():
+                    cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+                    u_row = cursor.fetchone()
+                    user_id = int(u_row[0]) if u_row else 1
 
             cursor.execute(
                 "SELECT nombre FROM dbo.rundown_seccion WHERE id_seccion = ?",

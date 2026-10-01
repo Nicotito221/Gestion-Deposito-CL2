@@ -66,6 +66,7 @@ class CalcularSugerenciaResponse(BaseModel):
     total_materiales: int
     materiales_a_pedir: int
     items: List[SugerenciaMaterialDetalle]
+    turno_sugerido: Optional[str] = None
 
 
 class PedidoItemInput(BaseModel):

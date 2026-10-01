@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 import pyodbc
 
 from app.core.config import get_db_connection
+from app.core.time import get_argentina_today
 from app.schemas.supply import DemandRowOut, SupplySummaryOut
 
 SPANISH_MONTHS = {
@@ -40,59 +41,61 @@ class SupplyRepository:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            today_ar = get_argentina_today()
+
             cursor.execute(
                 """
-                SELECT TOP 1 id_importacion, fecha_importacion, nombre_archivo
-                FROM dbo.importacion_archivo
-                WHERE tipo = 'produccion_planificada' AND estado = 'procesada'
-                ORDER BY id_importacion DESC
-                """
+                SELECT COUNT(*) FROM dbo.produccion_planificada
+                WHERE YEAR(fecha) = ? AND MONTH(fecha) = ?
+                """,
+                (today_ar.year, today_ar.month),
             )
-            last_import = cursor.fetchone()
-
-            if last_import:
-                id_importacion = int(last_import[0])
-                fecha_imp: Optional[datetime.datetime] = last_import[1]
-                nombre_archivo = str(last_import[2] or "")
-
+            r = cursor.fetchone()
+            if r and int(r[0]) > 0:
+                firm_year = today_ar.year
+                firm_month = today_ar.month
+            else:
                 cursor.execute(
                     """
-                    SELECT 
-                        p.id_producto,
-                        p.fecha,
-                        p.cantidad_planificada,
-                        COALESCE(pr.nombre, m.nombre, p.id_producto) AS descripcion,
-                        COALESCE(sc.codigo_tasa, p.id_producto) AS tasa_code,
-                        COALESCE(m.unidad, 'UN') AS unidad
-                    FROM dbo.produccion_planificada p
-                    LEFT JOIN dbo.producto pr ON p.id_producto = pr.id_producto
-                    LEFT JOIN dbo.material m ON p.id_producto = m.id_material
-                    LEFT JOIN (
-                        SELECT codigo_sap_padre, MIN(codigo_tasa) AS codigo_tasa 
-                        FROM dbo.set_componente 
-                        GROUP BY codigo_sap_padre
-                    ) sc ON p.id_producto = sc.codigo_sap_padre
-                    WHERE p.id_importacion = ?
-                    ORDER BY p.id_producto, p.fecha
-                    """,
-                    id_importacion,
+                    SELECT TOP 1 YEAR(fecha) AS anio, MONTH(fecha) AS mes
+                    FROM dbo.produccion_planificada
+                    GROUP BY YEAR(fecha), MONTH(fecha)
+                    ORDER BY YEAR(fecha) DESC, MONTH(fecha) DESC
+                    """
                 )
-                rows = cursor.fetchall()
-
-                month_dates: Dict[Tuple[int, int], Set[datetime.date]] = {}
-                for r in rows:
-                    f = r[1]
-                    cant = float(r[2] or 0.0)
-                    if isinstance(f, datetime.date) and cant > 0:
-                        k = (f.year, f.month)
-                        month_dates.setdefault(k, set()).add(f)
-
-                if month_dates:
-                    firm_year, firm_month = max(month_dates.keys(), key=lambda k: len(month_dates[k]))
+                f_row = cursor.fetchone()
+                if f_row:
+                    firm_year, firm_month = int(f_row[0]), int(f_row[1])
                 else:
-                    firm_year = datetime.date.today().year
-                    firm_month = datetime.date.today().month
+                    firm_year, firm_month = today_ar.year, today_ar.month
 
+            firm_start_date = datetime.date(firm_year, firm_month, 1)
+
+            cursor.execute(
+                """
+                SELECT 
+                    p.id_producto,
+                    p.fecha,
+                    p.cantidad_planificada,
+                    COALESCE(pr.nombre, m.nombre, p.id_producto) AS descripcion,
+                    COALESCE(sc.codigo_tasa, p.id_producto) AS tasa_code,
+                    COALESCE(m.unidad, 'UN') AS unidad
+                FROM dbo.produccion_planificada p
+                LEFT JOIN dbo.producto pr ON p.id_producto = pr.id_producto
+                LEFT JOIN dbo.material m ON p.id_producto = m.id_material
+                LEFT JOIN (
+                    SELECT codigo_sap_padre, MIN(codigo_tasa) AS codigo_tasa 
+                    FROM dbo.set_componente 
+                    GROUP BY codigo_sap_padre
+                ) sc ON p.id_producto = sc.codigo_sap_padre
+                WHERE p.fecha >= ?
+                ORDER BY p.id_producto, p.fecha
+                """,
+                (firm_start_date,),
+            )
+            rows = cursor.fetchall()
+
+            if rows:
                 daily_dates: Dict[datetime.date, str] = {}
                 tent_months: Dict[Tuple[int, int], str] = {}
                 grouped: Dict[str, Dict[str, object]] = {}
@@ -132,6 +135,7 @@ class SupplyRepository:
 
                 sorted_daily = [daily_dates[d] for d in sorted(daily_dates.keys())]
                 sorted_tent = [tent_months[k] for k in sorted(tent_months.keys())]
+                columnas_fechas_map = {daily_dates[d]: d.strftime("%Y-%m-%d") for d in sorted(daily_dates.keys())}
 
                 items: List[DemandRowOut] = []
                 for idx, (prod_id, data) in enumerate(grouped.items()):
@@ -163,6 +167,7 @@ class SupplyRepository:
                     total_piezas=len(items),
                     columnas_diarias=sorted_daily,
                     columnas_tentativas=sorted_tent,
+                    columnas_fechas_map=columnas_fechas_map,
                     items=items,
                 )
 
@@ -214,20 +219,43 @@ class SupplyRepository:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            today_ar = get_argentina_today()
             cursor.execute(
                 """
-                SELECT TOP 1 id_importacion, nombre_archivo
+                SELECT COUNT(*) FROM dbo.produccion_planificada
+                WHERE YEAR(fecha) = ? AND MONTH(fecha) = ?
+                """,
+                (today_ar.year, today_ar.month),
+            )
+            r = cursor.fetchone()
+            if r and int(r[0]) > 0:
+                firm_year = today_ar.year
+                firm_month = today_ar.month
+            else:
+                cursor.execute(
+                    """
+                    SELECT TOP 1 YEAR(fecha) AS anio, MONTH(fecha) AS mes
+                    FROM dbo.produccion_planificada
+                    GROUP BY YEAR(fecha), MONTH(fecha)
+                    ORDER BY YEAR(fecha) DESC, MONTH(fecha) DESC
+                    """
+                )
+                f_row = cursor.fetchone()
+                firm_year = int(f_row[0]) if f_row else today_ar.year
+                firm_month = int(f_row[1]) if f_row else today_ar.month
+
+            firm_start_date = datetime.date(firm_year, firm_month, 1)
+
+            cursor.execute(
+                """
+                SELECT TOP 1 nombre_archivo
                 FROM dbo.importacion_archivo
-                WHERE tipo = 'produccion_planificada' AND estado = 'procesada'
+                WHERE tipo = 'produccion_planificada' AND nombre_archivo NOT LIKE 'Plan Semanal%' AND estado = 'procesada'
                 ORDER BY id_importacion DESC
                 """
             )
-            last_import = cursor.fetchone()
-            if not last_import:
-                return "", []
-
-            id_importacion = int(last_import[0])
-            nombre_archivo = str(last_import[1] or "demanda.xlsx")
+            imp_row = cursor.fetchone()
+            nombre_archivo = str(imp_row[0]) if imp_row and imp_row[0] else "demanda_consolidada.xlsx"
 
             cursor.execute(
                 """
@@ -246,13 +274,56 @@ class SupplyRepository:
                     FROM dbo.set_componente 
                     GROUP BY codigo_sap_padre
                 ) sc ON p.id_producto = sc.codigo_sap_padre
-                WHERE p.id_importacion = ?
+                WHERE p.fecha >= ?
                 ORDER BY p.id_producto, p.fecha
                 """,
-                id_importacion,
+                (firm_start_date,),
             )
             rows = cursor.fetchall()
             return nombre_archivo, rows
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_produccion_diaria(
+        self, id_producto: str, fecha: datetime.date, cantidad: float, id_usuario: Optional[int] = None
+    ) -> None:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            user_id = id_usuario
+            if not user_id:
+                cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+                u_row = cursor.fetchone()
+                user_id = int(u_row[0]) if u_row else 1
+
+            cursor.execute("SELECT 1 FROM dbo.producto WHERE id_producto = ?", (id_producto,))
+            if not cursor.fetchone():
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.producto (id_producto, nombre, descripcion, sector, activo)
+                    VALUES (?, ?, ?, 'Seat', 1)
+                    """,
+                    (id_producto, id_producto, id_producto),
+                )
+
+            cursor.execute(
+                """
+                MERGE dbo.produccion_planificada WITH (HOLDLOCK) AS target
+                USING (SELECT ? AS id_producto, ? AS fecha, ? AS cantidad_planificada, ? AS id_usuario) AS src
+                ON target.id_producto = src.id_producto AND target.fecha = src.fecha
+                WHEN MATCHED THEN
+                    UPDATE SET 
+                        target.cantidad_planificada = src.cantidad_planificada,
+                        target.id_usuario = src.id_usuario,
+                        target.fecha_carga = SYSDATETIME()
+                WHEN NOT MATCHED BY TARGET THEN
+                    INSERT (id_producto, fecha, cantidad_planificada, id_importacion, id_usuario, fecha_carga)
+                    VALUES (src.id_producto, src.fecha, src.cantidad_planificada, 1, src.id_usuario, SYSDATETIME());
+                """,
+                (id_producto, fecha, float(cantidad), user_id),
+            )
+            conn.commit()
         finally:
             cursor.close()
             conn.close()

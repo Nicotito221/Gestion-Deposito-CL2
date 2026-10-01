@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,6 +29,7 @@ class SupplySummaryOut(BaseModel):
     total_piezas: int
     columnas_diarias: List[str] = Field(default_factory=list)
     columnas_tentativas: List[str] = Field(default_factory=list)
+    columnas_fechas_map: Dict[str, str] = Field(default_factory=dict)
     items: List[DemandRowOut]
 
 
@@ -36,5 +38,12 @@ class SupplyConsolidateResult(BaseModel):
     total_unidades: float
     columnas_diarias: List[str]
     columnas_tentativas: List[str]
+    columnas_fechas_map: Dict[str, str] = Field(default_factory=dict)
     items: List[DemandRowOut]
     mensaje: str
+
+
+class SupplyItemUpdate(BaseModel):
+    id_producto: str
+    fecha: date
+    cantidad: float

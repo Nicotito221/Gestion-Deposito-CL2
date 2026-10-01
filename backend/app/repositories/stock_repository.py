@@ -53,7 +53,7 @@ class StockRepository:
                     SELECT TOP 1 
                         CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado
                     FROM dbo.rundown_stock_ajuste rsa
-                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
+                    WHERE rsa.id_material = m.id_material
                     ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
                 ) latest_adj
                 OUTER APPLY (
@@ -115,7 +115,7 @@ class StockRepository:
                         CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado,
                         rsa.fecha_creacion
                     FROM dbo.rundown_stock_ajuste rsa
-                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
+                    WHERE rsa.id_material = m.id_material
                     ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
                 ) latest_adj
                 OUTER APPLY (
@@ -206,7 +206,7 @@ class StockRepository:
                     SELECT TOP 1 
                         CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado
                     FROM dbo.rundown_stock_ajuste rsa
-                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
+                    WHERE rsa.id_material = m.id_material
                     ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
                 ) latest_adj
                 OUTER APPLY (
@@ -261,6 +261,7 @@ class StockRepository:
         observacion: Optional[str] = None,
         id_usuario: Optional[int] = None,
         stock_planta_actual: Optional[float] = None,
+        fecha: Optional[date] = None,
     ) -> Dict[str, Any]:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -283,7 +284,7 @@ class StockRepository:
                 u_row = cursor.fetchone()
                 user_id = int(u_row[0]) if u_row else 2
 
-            today_dt = get_argentina_today()
+            target_date = fecha or get_argentina_today()
             now_ba = get_argentina_now()
 
             target_cl2: Optional[float] = None
@@ -308,8 +309,8 @@ class StockRepository:
                         WHEN MATCHED THEN
                             UPDATE SET stock_actual = source.stock_actual, fecha_actualizacion = SYSUTCDATETIME()
                         WHEN NOT MATCHED THEN
-                            INSERT (id_material, stock_actual, fecha_actualizacion)
-                            VALUES (source.id_material, source.stock_actual, SYSUTCDATETIME());
+                            INSERT (id_material, stock_actual, stock_warehouse, fecha_actualizacion)
+                            VALUES (source.id_material, source.stock_actual, 0.0, SYSUTCDATETIME());
                         """,
                         (id_material, target_cl2),
                     )
@@ -365,9 +366,9 @@ class StockRepository:
                                     VALUES (?, ?, ?, ?, ?, ?, ?);
                                 """,
                                 (
-                                    rpm_id, today_dt, t_stk,
+                                    rpm_id, target_date, t_stk,
                                     target_planta, observacion or "Ajuste manual desde Gestión de Stock",
-                                    rpm_id, p_id, id_material, today_dt, t_stk, target_planta, observacion or "Ajuste manual desde Gestión de Stock",
+                                    rpm_id, p_id, id_material, target_date, t_stk, target_planta, observacion or "Ajuste manual desde Gestión de Stock",
                                 ),
                             )
 
@@ -402,30 +403,41 @@ class StockRepository:
                 cur_total = mat_info["stock_total"]
 
                 cursor.execute(
-                    """
-                    SELECT TOP 1 YEAR(p.fecha), MONTH(p.fecha)
-                    FROM dbo.produccion_planificada p
-                    JOIN dbo.importacion_archivo i ON p.id_importacion = i.id_importacion
-                    WHERE i.tipo = 'produccion_planificada' AND i.estado = 'procesada'
-                    GROUP BY i.id_importacion, YEAR(p.fecha), MONTH(p.fecha)
-                    HAVING COUNT(DISTINCT p.fecha) > 5
-                    ORDER BY i.id_importacion DESC, YEAR(p.fecha) ASC, MONTH(p.fecha) ASC
-                    """
+                    "SELECT id_parametro, id_proveedor, fecha_stock_inicial FROM dbo.rundown_parametro_material WHERE id_material = ?",
+                    (id_material,),
                 )
-                row_f = cursor.fetchone()
-                f_date = date(int(row_f[0]), int(row_f[1]), 1) if row_f else date(2026, 10, 1)
-
-                cursor.execute(
-                    """
-                    UPDATE dbo.rundown_parametro_material
-                    SET stock_inicial_planta = ?,
-                        stock_inicial_total = ?,
-                        stock_inicial_referencia = ?,
-                        fecha_stock_inicial = ?
-                    WHERE id_material = ?
-                    """,
-                    (cur_planta, cur_total, cur_total, f_date, id_material),
-                )
+                rpm_info = cursor.fetchall()
+                for r in rpm_info:
+                    rpm_id = int(r[0])
+                    p_id = int(r[1])
+                    cursor.execute(
+                        """
+                        MERGE dbo.rundown_stock_ajuste AS target
+                        USING (SELECT ? AS id_parametro, ? AS fecha, 'total' AS tipo_stock) AS source
+                        ON (target.id_parametro = source.id_parametro AND target.fecha = source.fecha AND target.tipo_stock = source.tipo_stock)
+                        WHEN MATCHED THEN
+                            UPDATE SET stock_ajustado = ?, observacion = ?, fecha_creacion = SYSUTCDATETIME()
+                        WHEN NOT MATCHED THEN
+                            INSERT (id_parametro, id_proveedor, id_material, fecha, tipo_stock, stock_ajustado, observacion)
+                            VALUES (?, ?, ?, ?, 'total', ?, ?);
+                        """,
+                        (
+                            rpm_id, target_date,
+                            cur_total, observacion or "Ajuste manual desde Gestión de Stock",
+                            rpm_id, p_id, id_material, target_date, cur_total, observacion or "Ajuste manual desde Gestión de Stock",
+                        ),
+                    )
+                    if r[2] and r[2] == target_date:
+                        cursor.execute(
+                            """
+                            UPDATE dbo.rundown_parametro_material
+                            SET stock_inicial_planta = ?,
+                                stock_inicial_total = ?,
+                                stock_inicial_referencia = ?
+                            WHERE id_parametro = ?
+                            """,
+                            (cur_planta, cur_total, cur_total, rpm_id),
+                        )
 
             conn.commit()
             return {
@@ -515,7 +527,7 @@ class StockRepository:
                     "stock_posterior": float(r[7]),
                     "id_usuario": int(r[8]),
                     "nombre_usuario": str(r[9]) if r[9] else None,
-                    "fecha": r[10] if isinstance(r[10], datetime) else datetime.now(),
+                    "fecha": r[10] if isinstance(r[10], datetime) else get_argentina_now(),
                     "observacion": str(r[11]) if r[11] else None,
                     "id_pedido": int(r[12]) if r[12] is not None else None,
                     "id_remito": str(r[13]) if r[13] else None,

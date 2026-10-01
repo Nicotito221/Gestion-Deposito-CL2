@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 import pyodbc
 
 from app.core.config import get_db_connection
-from app.core.time import get_argentina_now
+from app.core.time import get_argentina_now, get_turno_sugerido_actual
 from app.schemas.dashboard import (
     DashboardKpis,
     DashboardMaterialCritico,
@@ -19,12 +19,7 @@ class DashboardService:
         self._stock_service = StockService()
 
     def _get_turno_actual(self, now: datetime) -> str:
-        hour = now.hour
-        if 6 <= hour < 14:
-            return "Turno Mañana"
-        elif 14 <= hour < 22:
-            return "Turno Tarde"
-        return "Turno Noche"
+        return get_turno_sugerido_actual(now)
 
     def get_resumen(self) -> DashboardResumenResponse:
         conn: pyodbc.Connection = self._get_connection()
@@ -145,7 +140,7 @@ class DashboardService:
             stock_cl2 = float(m.stock_cl2 or 0.0)
             stock_total = float(m.stock_total or (stock_planta + stock_cl2))
 
-            if stock_planta < 0 and stock_cl2 <= 0:
+            if stock_planta <= 0 and stock_cl2 <= 0:
                 materiales_criticos.append(
                     DashboardMaterialCritico(
                         id_material=m.id_material,
@@ -158,9 +153,10 @@ class DashboardService:
                         alerta_tipo="quiebre_total",
                         alerta_label="Quiebre Total (Sin stock)",
                         prioridad="critica",
+                        origen_alerta="ambos",
                     )
                 )
-            elif stock_planta < 0 and stock_cl2 > 0:
+            elif stock_planta <= 0 and stock_cl2 > 0:
                 materiales_criticos.append(
                     DashboardMaterialCritico(
                         id_material=m.id_material,
@@ -173,9 +169,10 @@ class DashboardService:
                         alerta_tipo="quiebre_planta",
                         alerta_label="Quiebre Planta (Pedir a CL2)",
                         prioridad="alta",
+                        origen_alerta="planta",
                     )
                 )
-            elif stock_planta >= 0 and stock_cl2 <= 0:
+            elif stock_planta > 0 and stock_cl2 <= 0:
                 materiales_criticos.append(
                     DashboardMaterialCritico(
                         id_material=m.id_material,
@@ -188,11 +185,15 @@ class DashboardService:
                         alerta_tipo="sin_stock_cl2",
                         alerta_label="CL2 Agotado",
                         prioridad="media",
+                        origen_alerta="tbar",
                     )
                 )
 
         priority_order = {"critica": 0, "alta": 1, "media": 2}
         materiales_criticos.sort(key=lambda x: (priority_order.get(x.prioridad, 3), x.stock_planta))
+
+        criticos_planta = [m for m in materiales_criticos if m.origen_alerta in ("planta", "ambos")]
+        criticos_tbar = [m for m in materiales_criticos if m.origen_alerta in ("tbar", "ambos")]
 
         kpis = DashboardKpis(
             pedidos_pendientes=pendientes,
@@ -201,6 +202,8 @@ class DashboardService:
             pedidos_completados_hoy=completados_hoy,
             total_pedidos=total_pedidos,
             materiales_criticos_count=len(materiales_criticos),
+            criticos_planta_count=len(criticos_planta),
+            criticos_tbar_count=len(criticos_tbar),
             remitos_hoy=remitos_hoy,
             fill_rate_porcentaje=fill_rate,
             turno_actual=turno_actual,
