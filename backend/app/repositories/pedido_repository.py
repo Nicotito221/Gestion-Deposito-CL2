@@ -766,7 +766,7 @@ class PedidoRepository:
                 cursor.execute(
                     """
                     INSERT INTO dbo.auditoria (entidad, id_entidad, tipo_evento, id_usuario, fecha, detalle)
-                    VALUES ('pedido', ?, 'entrega', ?, GETDATE(), ?)
+                    VALUES ('pedido', ?, 'despacho', ?, GETDATE(), ?)
                     """,
                     (str(id_pedido), user_id_final, f"Remito {id_remito_generado} emitido — {obs_remito}"),
                 )

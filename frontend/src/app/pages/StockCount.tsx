@@ -61,7 +61,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
-import { getTodayISODate } from "../components/ui/format";
+import { getTodayISODate, getTurnoSugeridoActual } from "../components/ui/format";
 import {
   searchMaterialesConteo,
   createConteo,
@@ -384,7 +384,7 @@ export function StockCount() {
       setRows([]);
       setGeneralObs("");
       toast.success(
-        `Conteo #${res.id_conteo} guardado. Sincronizado con Rundown Planta para el ${formatSoloFechaAR(res.fecha_impacto)}.`
+        `Conteo #${res.id_conteo} guardado. Sincronizado con Rundown Warehouse / CL2 para el ${formatSoloFechaAR(res.fecha_impacto)}.`
       );
       handleOpenSugerencia(res.id_conteo);
     } catch (err) {
@@ -544,9 +544,11 @@ export function StockCount() {
         let totalNet = 0;
         if (isSpecificTurno) {
           totalNet = editedQuantities[it.id_material]?.[selectedTurno!] ?? (it.sugerido_por_turno[selectedTurno!] ?? 0);
+        } else if (sugerenciaModalidad === "completo") {
+          totalNet = editedQuantities[it.id_material]?.["Completo"] ?? it.cantidad_sugerida_neta;
         } else {
-          totalNet = Object.values(editedQuantities[it.id_material] || {}).reduce(
-            (a, b) => a + b,
+          totalNet = (sugerenciaData.turnos || []).reduce(
+            (acc, tName) => acc + (editedQuantities[it.id_material]?.[tName] ?? it.sugerido_por_turno[tName] ?? 0),
             0
           );
         }
@@ -589,7 +591,7 @@ export function StockCount() {
         id_conteo: sugerenciaTargetConteoId,
         fecha_requerida: targetFecha,
         modalidad_turnos: sugerenciaModalidad,
-        turno: isSpecificTurno ? selectedTurno : (sugerenciaModalidad === "2_turnos" ? "Turno Mañana" : "Turno Mañana"),
+        turno: isSpecificTurno ? selectedTurno : getTurnoSugeridoActual(),
         suggestedMaterials: suggestedMats,
         sector: orderSector,
       },
@@ -639,7 +641,7 @@ export function StockCount() {
                 Conteo en Planta
               </h1>
               <p className="text-[11px] sm:text-xs text-slate-500">
-                Verificación física y sincronización con Rundown Planta
+                Verificación física y sincronización con Rundown Warehouse / CL2
               </p>
             </div>
           </div>

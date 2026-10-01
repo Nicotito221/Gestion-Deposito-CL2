@@ -3,7 +3,7 @@ import math
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 
-from app.core.time import get_argentina_today
+from app.core.time import get_argentina_today, get_turno_sugerido_actual
 from app.repositories.conteo_repository import ConteoRepository
 from app.repositories.pedido_repository import PedidoRepository
 from app.schemas.pedido import (
@@ -241,36 +241,26 @@ class PedidoService:
             pallets_por_turno: Dict[str, int] = {}
 
             if modalidad == "completo":
-                pallets_por_turno = {
-                    "Completo": cant_pallets,
-                    "Turno Mañana": cant_pallets,
-                    "Turno Tarde": cant_pallets,
-                    "Turno Noche": cant_pallets,
-                }
-                sugerido_por_turno = {
-                    "Completo": cantidad_neta,
-                    "Turno Mañana": cantidad_neta,
-                    "Turno Tarde": cantidad_neta,
-                    "Turno Noche": cantidad_neta,
-                }
+                pallets_por_turno = {"Completo": cant_pallets}
+                sugerido_por_turno = {"Completo": cantidad_neta}
                 desglose_turnos = {"Completo": sugerido_bruto}
             elif modalidad == "2_turnos":
                 if es_pallet:
                     p1 = math.ceil(cant_pallets / 2.0)
                     p2 = cant_pallets - p1
-                    pallets_por_turno = {"Turno Mañana": p1, "Turno Tarde": p2, "Completo": cant_pallets}
-                    sugerido_por_turno = {"Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size), "Completo": cantidad_neta}
+                    pallets_por_turno = {"Turno Mañana": p1, "Turno Tarde": p2}
+                    sugerido_por_turno = {"Turno Mañana": float(p1 * lot_size), "Turno Tarde": float(p2 * lot_size)}
                     bruto_p1 = math.ceil((sugerido_bruto / lot_size) / 2.0)
                     bruto_p2 = int(round(sugerido_bruto / lot_size)) - bruto_p1
-                    desglose_turnos = {"Turno Mañana": float(bruto_p1 * lot_size), "Turno Tarde": float(bruto_p2 * lot_size), "Completo": sugerido_bruto}
+                    desglose_turnos = {"Turno Mañana": float(bruto_p1 * lot_size), "Turno Tarde": float(bruto_p2 * lot_size)}
                 else:
                     u1 = math.ceil(cantidad_neta / 2.0)
                     u2 = int(cantidad_neta - u1)
-                    pallets_por_turno = {"Turno Mañana": u1, "Turno Tarde": u2, "Completo": cant_pallets}
-                    sugerido_por_turno = {"Turno Mañana": float(u1), "Turno Tarde": float(u2), "Completo": cantidad_neta}
+                    pallets_por_turno = {"Turno Mañana": u1, "Turno Tarde": u2}
+                    sugerido_por_turno = {"Turno Mañana": float(u1), "Turno Tarde": float(u2)}
                     b1 = math.ceil(sugerido_bruto / 2.0)
                     b2 = int(sugerido_bruto - b1)
-                    desglose_turnos = {"Turno Mañana": float(b1), "Turno Tarde": float(b2), "Completo": sugerido_bruto}
+                    desglose_turnos = {"Turno Mañana": float(b1), "Turno Tarde": float(b2)}
             else:
                 if es_pallet:
                     p1 = math.ceil(cant_pallets / 3.0)
@@ -341,6 +331,7 @@ class PedidoService:
                 )
             )
 
+        turno_sugerido = request.turno or get_turno_sugerido_actual()
         return CalcularSugerenciaResponse(
             fecha_requerida=fecha_req.strftime("%Y-%m-%d"),
             modalidad_turnos=modalidad,
@@ -348,6 +339,7 @@ class PedidoService:
             total_materiales=len(items_response),
             materiales_a_pedir=materiales_a_pedir_count,
             items=items_response,
+            turno_sugerido=turno_sugerido,
         )
 
     def crear_pedido(self, data: PedidoCreate) -> PedidoOut:

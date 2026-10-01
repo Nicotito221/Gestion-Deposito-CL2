@@ -3,11 +3,11 @@ import shutil
 import tempfile
 from typing import List, Optional
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from app.schemas.supply import SupplyConsolidateResult, SupplySummaryOut
+from app.schemas.supply import SupplyConsolidateResult, SupplyItemUpdate, SupplySummaryOut
 from app.services.supply_service import SupplyService
 
 router = APIRouter(prefix="/api/suministro", tags=["Orden de Suministro"])
@@ -22,6 +22,39 @@ def get_supply_summary() -> SupplySummaryOut:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener resumen de suministro: {err}",
+        )
+
+
+@router.put("/produccion-diaria")
+def update_produccion_diaria(
+    data: SupplyItemUpdate,
+    authorization: Optional[str] = Header(None),
+):
+    user_id = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        try:
+            from app.core.security import decode_token
+            payload = decode_token(token)
+            rol = str(payload.get("rol", "")).lower()
+            if rol not in ["administrador", "gerente", "jefe", "analista"]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="No tiene permisos para modificar la orden de suministro. Roles permitidos: analista, jefe, gerente, administrador.",
+                )
+            user_id = payload.get("id_usuario")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+    try:
+        _service.update_produccion_diaria(data.id_producto, data.fecha, data.cantidad, id_usuario=user_id)
+        return {"mensaje": f"Producción de {data.id_producto} para {data.fecha} actualizada a {data.cantidad}"}
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al actualizar valor diario: {err}",
         )
 
 

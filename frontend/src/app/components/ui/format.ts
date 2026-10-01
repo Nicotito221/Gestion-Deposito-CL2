@@ -1,4 +1,26 @@
+export const TIMEZONE_AR = "America/Argentina/Buenos_Aires";
+
 const MONTHS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+
+export function getTodayISODate(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE_AR,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+export function getYesterdayISODate(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIMEZONE_AR,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
 
 export function formatDate(dateStr: string): string {
   if (!dateStr) return "—";
@@ -12,17 +34,26 @@ export function formatDate(dateStr: string): string {
 }
 
 export function formatNow(): string {
-  const now = new Date();
-  const day = now.getDate();
-  const month = MONTHS[now.getMonth()];
-  const h = String(now.getHours()).padStart(2, "0");
-  const m = String(now.getMinutes()).padStart(2, "0");
-  return `${day} ${month} · ${h}:${m}`;
+  const parts = new Intl.DateTimeFormat("es-AR", {
+    timeZone: TIMEZONE_AR,
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const day = parts.find((p) => p.type === "day")?.value || "";
+  const month = parts.find((p) => p.type === "month")?.value || "";
+  const hour = parts.find((p) => p.type === "hour")?.value || "00";
+  const minute = parts.find((p) => p.type === "minute")?.value || "00";
+
+  return `${day} ${month} · ${hour}:${minute}`;
 }
 
 export function formatDateLong(): string {
-  const now = new Date();
-  return now.toLocaleDateString("es-AR", {
+  return new Date().toLocaleDateString("es-AR", {
+    timeZone: TIMEZONE_AR,
     weekday: "long",
     day: "2-digit",
     month: "long",
@@ -47,18 +78,32 @@ export function formatFechaHoraAR(dateStr?: string | null): string {
   if (!dateStr) return "—";
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return dateStr;
-  const day = d.getDate();
-  const month = MONTHS[d.getMonth()] ?? "";
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  return `${day} ${month} · ${h}:${m}`;
+  return d.toLocaleString("es-AR", {
+    timeZone: TIMEZONE_AR,
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
-export function getTodayISODate(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
+export function getTurnoSugeridoActual(): "Turno Mañana" | "Turno Tarde" | "Completo" {
+  const parts = new Intl.DateTimeFormat("es-AR", {
+    timeZone: TIMEZONE_AR,
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(new Date());
 
+  const hour = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+  const minute = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
+  const totalMinutes = hour * 60 + minute;
+
+  if (totalMinutes >= 360 && totalMinutes <= 840) {
+    return "Turno Mañana";
+  } else if (totalMinutes > 840 && totalMinutes < 1380) {
+    return "Turno Tarde";
+  }
+  return "Completo";
+}

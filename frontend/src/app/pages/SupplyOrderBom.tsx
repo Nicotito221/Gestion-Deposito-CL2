@@ -45,8 +45,6 @@ import {
   GitFork,
   AlertCircle,
   X,
-  ChevronLeft,
-  ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -60,16 +58,27 @@ import {
   consolidateSupply,
   downloadExcelConsolidado,
   downloadSapPirTxt,
+  updateSupplyDailyProduction,
   type BomVersionItem,
   type SetComponenteItem,
   type DemandItemApi,
 } from "../services/api";
+import { useAuth } from "../context/AuthContext";
 
 export function SupplyOrderBom() {
+  const { user: currentUser } = useAuth();
+  const canEdit = Boolean(
+    currentUser &&
+      ["administrador", "gerente", "jefe", "analista"].includes(currentUser.rol?.toLowerCase() || "")
+  );
+
   const [demandItems, setDemandItems] = useState<DemandItemApi[]>([]);
   const [dailyColumns, setDailyColumns] = useState<string[]>([]);
   const [tentativeColumns, setTentativeColumns] = useState<string[]>([]);
-  const [periodo, setPeriodo] = useState<string>("Septiembre 2026");
+  const [dateMap, setDateMap] = useState<Record<string, string>>({});
+  const [editingCell, setEditingCell] = useState<{ partNumber: string; col: string; value: string } | null>(null);
+  const [savingCell, setSavingCell] = useState<boolean>(false);
+  const [periodo, setPeriodo] = useState<string>("Octubre 2026");
   const [relations, setRelations] = useState<SetComponenteItem[]>([]);
   const [versions, setVersions] = useState<BomVersionItem[]>([]);
 
@@ -129,6 +138,7 @@ export function SupplyOrderBom() {
       setPeriodo(supplyData.periodo);
       setDailyColumns(supplyData.columnas_diarias || []);
       setTentativeColumns(supplyData.columnas_tentativas || []);
+      setDateMap(supplyData.columnas_fechas_map || {});
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al conectar con el servidor";
       setErrorMsg(msg);
@@ -202,39 +212,6 @@ export function SupplyOrderBom() {
   }, [filteredDemand]);
 
   const tableContainerRef = useRef<HTMLDivElement>(null);
-  const topScrollRef = useRef<HTMLDivElement>(null);
-  const [scrollWidth, setScrollWidth] = useState<number>(0);
-
-  const updateScrollWidth = useCallback(() => {
-    if (tableContainerRef.current) {
-      setScrollWidth(tableContainerRef.current.scrollWidth);
-    }
-  }, []);
-
-  useEffect(() => {
-    updateScrollWidth();
-    const handleResize = () => updateScrollWidth();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [updateScrollWidth, filteredDemand, extractedDaily, tentativeColumns]);
-
-  const handleTopScroll = () => {
-    if (topScrollRef.current && tableContainerRef.current) {
-      tableContainerRef.current.scrollLeft = topScrollRef.current.scrollLeft;
-    }
-  };
-
-  const handleTableScroll = () => {
-    if (topScrollRef.current && tableContainerRef.current) {
-      topScrollRef.current.scrollLeft = tableContainerRef.current.scrollLeft;
-    }
-  };
-
-  const scrollHorizontal = (offset: number) => {
-    if (tableContainerRef.current) {
-      tableContainerRef.current.scrollBy({ left: offset, behavior: "smooth" });
-    }
-  };
 
   const filteredRelations = useMemo(() => {
     return relations.filter((rel) => {
@@ -269,6 +246,7 @@ export function SupplyOrderBom() {
       setDemandItems(result.items);
       setDailyColumns(result.columnas_diarias || []);
       setTentativeColumns(result.columnas_tentativas || []);
+      setDateMap(result.columnas_fechas_map || {});
       setF1Files([]);
       setF2Files([]);
       toast.success(result.mensaje);
@@ -277,6 +255,51 @@ export function SupplyOrderBom() {
       toast.error(msg);
     } finally {
       setIsProcessingDemand(false);
+    }
+  };
+
+  const handleSaveCell = async (partNumber: string, col: string, newValStr: string) => {
+    const parsed = parseFloat(newValStr);
+    const newQty = isNaN(parsed) || parsed < 0 ? 0 : Math.round(parsed);
+    const isoDate = dateMap[col];
+
+    if (!isoDate) {
+      toast.error(`No se encontró fecha mapeada para la columna ${col}`);
+      setEditingCell(null);
+      return;
+    }
+
+    setSavingCell(true);
+    try {
+      await updateSupplyDailyProduction({
+        id_producto: partNumber,
+        fecha: isoDate,
+        cantidad: newQty,
+      });
+
+      setDemandItems((prev) =>
+        prev.map((item) => {
+          if (item.part_number !== partNumber) return item;
+          const oldVal = item.daily_values?.[col] || 0;
+          const diff = newQty - oldVal;
+          const updatedDaily = {
+            ...(item.daily_values || {}),
+            [col]: newQty,
+          };
+          return {
+            ...item,
+            daily_values: updatedDaily,
+            total: Math.max(0, (item.total || 0) + diff),
+          };
+        })
+      );
+      toast.success(`Actualizado ${partNumber} (${col}): ${newQty}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al guardar valor";
+      toast.error(msg);
+    } finally {
+      setSavingCell(false);
+      setEditingCell(null);
     }
   };
 
@@ -752,93 +775,55 @@ export function SupplyOrderBom() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-2 mb-2">
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-                  <span>Desplazamiento horizontal:</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs flex items-center gap-1 bg-white hover:bg-slate-50 border-slate-300"
-                    onClick={() => scrollHorizontal(-350)}
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                    Anterior
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs flex items-center gap-1 bg-white hover:bg-slate-50 border-slate-300"
-                    onClick={() => scrollHorizontal(350)}
-                  >
-                    Siguiente
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-                <div className="text-[11px] text-slate-400 hidden sm:block">
-                  Shift + rueda del mouse para desplazamiento continuo
-                </div>
-              </div>
-
-              <div
-                ref={topScrollRef}
-                onScroll={handleTopScroll}
-                className="overflow-x-auto overflow-y-hidden border border-slate-200 rounded-t-lg bg-slate-100/90 h-3 sticky top-0 z-30 mb-[-1px]"
-              >
-                <div style={{ width: `${scrollWidth}px`, height: "1px" }} />
-              </div>
-
               <div
                 ref={tableContainerRef}
-                onScroll={handleTableScroll}
-                className="border border-slate-200 rounded-b-lg overflow-x-auto max-h-[calc(100vh-300px)] min-h-[420px] overflow-y-auto"
+                className="border border-slate-200 rounded-lg overflow-x-auto max-h-[calc(100vh-280px)] min-h-[420px] overflow-y-auto bg-white shadow-xs"
               >
-                <Table className="min-w-full border-collapse text-xs">
-                  <TableHeader className="bg-slate-50 sticky top-0 z-20 shadow-sm">
-                    <TableRow className="border-b border-slate-200">
-                      <TableHead className="sticky left-0 bg-slate-100 z-30 font-bold border-r border-slate-300 min-w-[140px] px-3 py-2 text-slate-800">
+                <table className="min-w-full border-separate border-spacing-0 text-xs">
+                  <thead className="sticky top-0 z-30 shadow-xs">
+                    <tr className="border-b border-slate-300">
+                      <th className="sticky left-0 bg-slate-200 z-40 font-bold border-b border-r border-slate-300 min-w-[140px] px-3 py-2 text-left text-slate-900 select-none">
                         Nº Parte
-                      </TableHead>
-                      <TableHead className="font-semibold border-r border-slate-200 min-w-[130px] px-3 py-2 text-slate-700">
+                      </th>
+                      <th className="font-semibold bg-slate-100 border-b border-r border-slate-200 min-w-[130px] px-3 py-2 text-left text-slate-700 whitespace-nowrap">
                         Código TASA
-                      </TableHead>
-                      <TableHead className="font-semibold border-r border-slate-200 min-w-[200px] px-3 py-2 text-slate-700">
+                      </th>
+                      <th className="font-semibold bg-slate-100 border-b border-r border-slate-200 min-w-[200px] px-3 py-2 text-left text-slate-700 whitespace-nowrap">
                         Descripción
-                      </TableHead>
-                      <TableHead className="font-semibold border-r border-slate-200 min-w-[65px] px-2 py-2 text-center text-slate-700">
+                      </th>
+                      <th className="font-semibold bg-slate-100 border-b border-r border-slate-200 min-w-[65px] px-2 py-2 text-center text-slate-700 whitespace-nowrap">
                         Dock
-                      </TableHead>
-                      <TableHead className="font-semibold border-r border-slate-200 min-w-[75px] px-2 py-2 text-center text-slate-700">
+                      </th>
+                      <th className="font-semibold bg-slate-100 border-b border-r border-slate-200 min-w-[75px] px-2 py-2 text-center text-slate-700 whitespace-nowrap">
                         Empaque
-                      </TableHead>
+                      </th>
 
                       {extractedDaily.map((col) => (
-                        <TableHead
+                        <th
                           key={col}
-                          className="font-mono font-semibold border-r border-slate-200 min-w-[65px] px-2.5 py-2 text-right text-slate-700 bg-slate-50/90 whitespace-nowrap"
+                          className="font-mono font-semibold bg-slate-100 border-b border-r border-slate-200 min-w-[65px] px-2.5 py-2 text-right text-slate-700 whitespace-nowrap"
                         >
                           {col}
-                        </TableHead>
+                        </th>
                       ))}
 
                       {tentativeColumns.map((col) => (
-                        <TableHead
+                        <th
                           key={col}
-                          className="font-mono font-semibold border-r border-slate-200 min-w-[85px] px-2.5 py-2 text-right text-slate-700 bg-slate-50/90 whitespace-nowrap"
+                          className="font-mono font-semibold bg-slate-100 border-b border-r border-slate-200 min-w-[85px] px-2.5 py-2 text-right text-slate-700 whitespace-nowrap"
                         >
                           {col}
-                        </TableHead>
+                        </th>
                       ))}
 
-                      <TableHead className="sticky right-0 bg-slate-200/80 font-mono font-bold border-l border-slate-300 min-w-[90px] px-3 py-2 text-right text-slate-900 z-20 shadow-sm">
+                      <th className="sticky right-0 bg-slate-200 font-mono font-bold border-b border-l border-slate-300 min-w-[90px] px-3 py-2 text-right text-slate-900 z-35 shadow-xs whitespace-nowrap">
                         Total
-                      </TableHead>
-                      <TableHead className="font-semibold min-w-[85px] px-2 py-2 text-center text-slate-700">
+                      </th>
+                      <th className="font-semibold bg-slate-100 border-b min-w-[85px] px-2 py-2 text-center text-slate-700 whitespace-nowrap">
                         Estado
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
+                      </th>
+                    </tr>
+                  </thead>
                   <TableBody>
                     {filteredDemand.length === 0 ? (
                       <TableRow>
@@ -870,12 +855,56 @@ export function SupplyOrderBom() {
 
                           {extractedDaily.map((col) => {
                             const val = d.daily_values?.[col] || 0;
+                            const isEditing =
+                              editingCell?.partNumber === d.part_number && editingCell?.col === col;
+
+                            if (isEditing) {
+                              return (
+                                <TableCell
+                                  key={col}
+                                  className="p-0 border-r border-slate-100 bg-amber-50/80 min-w-[65px]"
+                                >
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    autoFocus
+                                    disabled={savingCell}
+                                    defaultValue={val === 0 ? "" : val}
+                                    className="w-full h-8 text-right font-mono text-xs px-2 bg-transparent border-0 outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                                    onBlur={(e) =>
+                                      handleSaveCell(d.part_number, col, e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        (e.target as HTMLInputElement).blur();
+                                      } else if (e.key === "Escape") {
+                                        setEditingCell(null);
+                                      }
+                                    }}
+                                  />
+                                </TableCell>
+                              );
+                            }
+
                             return (
                               <TableCell
                                 key={col}
-                                className={`text-right font-mono text-xs px-2.5 py-1.5 border-r border-slate-100 whitespace-nowrap ${
+                                onClick={() => {
+                                  if (canEdit && !savingCell) {
+                                    setEditingCell({
+                                      partNumber: d.part_number,
+                                      col,
+                                      value: String(val),
+                                    });
+                                  }
+                                }}
+                                className={`text-right font-mono text-xs px-2.5 py-1.5 border-r border-slate-100 whitespace-nowrap select-none ${
+                                  canEdit ? "cursor-pointer hover:bg-amber-50/50" : ""
+                                } ${
                                   val > 0 ? "text-slate-900 font-semibold bg-slate-50/40" : "text-slate-300"
                                 }`}
+                                title={canEdit ? `Click para editar ${d.part_number} (${col})` : undefined}
                               >
                                 {val > 0 ? val.toLocaleString() : "-"}
                               </TableCell>
@@ -960,7 +989,7 @@ export function SupplyOrderBom() {
                       </TableRow>
                     </TableFooter>
                   )}
-                </Table>
+                </table>
               </div>
             </CardContent>
           </Card>

@@ -51,7 +51,7 @@ import {
   type CalcularSugerenciaResponse,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
-import { formatSoloFechaAR, getTodayISODate } from "../components/ui/format";
+import { formatSoloFechaAR, getTodayISODate, getTurnoSugeridoActual } from "../components/ui/format";
 
 interface Material {
   id: string;
@@ -101,7 +101,7 @@ export function NewOrder() {
     location.state?.fecha_requerida && location.state.fecha_requerida >= todayStr
       ? location.state.fecha_requerida
       : todayStr;
-  const initialTurno = location.state?.turno || "Turno Mañana";
+  const initialTurno = location.state?.turno || getTurnoSugeridoActual();
 
   const isSectorLocked = Boolean(currentUser?.sector && currentUser.sector !== "TODOS");
   const initialSector = isSectorLocked
@@ -200,6 +200,7 @@ export function NewOrder() {
           fecha_requerida: fechaRequerida,
           turno: turno,
           modalidad_turnos: "completo",
+          id_conteo: idConteo,
         });
         if (!isCancelled) {
           setSuggestionPreview(res);
@@ -387,6 +388,7 @@ export function NewOrder() {
   };
 
   const currentDate = new Date().toLocaleDateString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
     day: "2-digit",
     month: "2-digit",
     year: "numeric",

@@ -270,8 +270,13 @@ class AuditoriaRepository:
 
                 for a_log in audit_logs:
                     dt_a: Optional[datetime] = a_log["fecha"]
-                    t_ev = a_log["tipo_evento"]
-                    mapped_type = t_ev if t_ev in ("solicitud", "aprobacion", "preparacion", "entrega", "ajuste", "sistema") else "sistema"
+                    t_ev = str(a_log["tipo_evento"]).lower()
+                    if t_ev in ("despacho", "entrega"):
+                        mapped_type = "entrega"
+                    elif t_ev in ("solicitud", "aprobacion", "preparacion", "ajuste", "sistema"):
+                        mapped_type = t_ev
+                    else:
+                        mapped_type = "sistema"
                     events.append({
                         "timestamp": dt_a.strftime("%d/%m/%Y %H:%M") if dt_a else "",
                         "action": a_log["detalle"].split("—")[0].strip() if "—" in a_log["detalle"] else f"Evento: {t_ev}",

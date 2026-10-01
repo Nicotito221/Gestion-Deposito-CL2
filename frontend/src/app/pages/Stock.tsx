@@ -58,6 +58,9 @@ import {
   type RundownSeccionItem,
 } from "../services/api";
 
+const getTodayBA = (): string =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
+
 export function Stock() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<string>("stock");
@@ -97,10 +100,12 @@ export function Stock() {
   const [isSavingAdjust, setIsSavingAdjust] = useState<boolean>(false);
   const [selectedMaterial, setSelectedMaterial] = useState<StockMaterialItem | null>(null);
   const [adjustForm, setAdjustForm] = useState<{
+    fecha: string;
     nuevo_stock_planta: string;
     nuevo_stock_cl2: string;
     observacion: string;
   }>({
+    fecha: getTodayBA(),
     nuevo_stock_planta: "",
     nuevo_stock_cl2: "",
     observacion: "",
@@ -192,6 +197,7 @@ export function Stock() {
   const handleOpenAdjust = (mat: StockMaterialItem) => {
     setSelectedMaterial(mat);
     setAdjustForm({
+      fecha: getTodayBA(),
       nuevo_stock_planta: String(Math.max(0, mat.stock_planta)),
       nuevo_stock_cl2: String(Math.max(0, mat.stock_cl2)),
       observacion: "",
@@ -201,6 +207,10 @@ export function Stock() {
 
   const handleSaveAdjust = async () => {
     if (!selectedMaterial) return;
+    if (!adjustForm.fecha) {
+      toast.error("Seleccione una fecha válida para el ajuste");
+      return;
+    }
     const valPlanta = parseFloat(adjustForm.nuevo_stock_planta);
     const valCl2 = selectedMaterial.deposito_en_planta ? 0 : parseFloat(adjustForm.nuevo_stock_cl2);
 
@@ -216,6 +226,7 @@ export function Stock() {
     setIsSavingAdjust(true);
     try {
       await updateStockDeposito(selectedMaterial.id_material, {
+        fecha: adjustForm.fecha,
         nuevo_stock_planta: valPlanta,
         nuevo_stock_cl2: selectedMaterial.deposito_en_planta ? 0 : valCl2,
         observacion: adjustForm.observacion.trim() || undefined,
@@ -468,9 +479,9 @@ export function Stock() {
                       <TableHead className="w-32 text-xs font-semibold text-slate-700">Código SAP</TableHead>
                       <TableHead className="text-xs font-semibold text-slate-700">Descripción</TableHead>
                       <TableHead className="w-36 text-xs font-semibold text-slate-700">Proveedor</TableHead>
-                      <TableHead className="w-28 text-xs font-semibold text-blue-700 text-right">Stock Planta</TableHead>
-                      <TableHead className="w-28 text-xs font-semibold text-amber-700 text-right">Stock CL2</TableHead>
-                      <TableHead className="w-28 text-xs font-semibold text-slate-900 text-right">Stock Total</TableHead>
+                      <TableHead className="w-24 text-xs font-semibold text-blue-700 text-right">Stock Planta</TableHead>
+                      <TableHead className="w-24 text-xs font-semibold text-amber-700 text-right">Stock CL2</TableHead>
+                      <TableHead className="w-24 text-xs font-semibold text-slate-900 text-right">Stock Total</TableHead>
                       <TableHead className="w-20 text-xs font-semibold text-slate-700 text-center">Unidad</TableHead>
                       <TableHead className="w-28 text-xs font-semibold text-slate-700 text-center">Empaque / Lote</TableHead>
                       <TableHead className="w-36 text-xs font-semibold text-slate-700 text-center">Acciones</TableHead>
@@ -850,9 +861,23 @@ export function Stock() {
 
               <div className="space-y-3">
                 <div className="space-y-1.5">
+                  <Label htmlFor="stock-fecha-val" className="text-xs font-semibold text-slate-700 flex justify-between">
+                    <span>Fecha del Ajuste / Conteo</span>
+                    <span className="text-[10px] text-slate-500 font-normal">Día al cual aplica</span>
+                  </Label>
+                  <Input
+                    id="stock-fecha-val"
+                    type="date"
+                    value={adjustForm.fecha}
+                    onChange={(e) => setAdjustForm({ ...adjustForm, fecha: e.target.value })}
+                    className="font-mono text-xs h-9 bg-white"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
                   <Label htmlFor="stock-planta-val" className="text-xs font-semibold text-slate-700 flex justify-between">
                     <span>Nuevo Stock en Planta ({selectedMaterial.unidad})</span>
-                    <span className="text-[10px] text-blue-600 font-normal">Sincroniza con Rundown Planta</span>
+                    <span className="text-[10px] text-blue-600 font-normal">Sincroniza con Rundown Warehouse / CL2</span>
                   </Label>
                   <Input
                     id="stock-planta-val"

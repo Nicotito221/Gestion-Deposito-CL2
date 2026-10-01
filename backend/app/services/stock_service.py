@@ -62,8 +62,13 @@ class StockService:
             stock_cl2 = 0.0 if is_dep_planta else float(it.get("stock_cl2", 0.0))
             stock_planta = float(it.get("stock_planta", 0.0))
             it["stock_cl2"] = stock_cl2
-            it["stock_total"] = stock_planta if is_dep_planta else (stock_planta + stock_cl2)
-            it["stock_actual"] = stock_cl2 if tipo_almacen == "cl2" else it["stock_total"]
+            it["stock_total"] = stock_planta + (0.0 if is_dep_planta else stock_cl2)
+            if tipo_almacen == "cl2":
+                it["stock_actual"] = stock_cl2
+            elif tipo_almacen == "planta":
+                it["stock_actual"] = stock_planta
+            else:
+                it["stock_actual"] = it["stock_total"]
 
         total_pages = ceil(total / current_page_size) if total > 0 else 1
         items = [StockMaterialItem.model_validate(it) for it in items_raw]
@@ -80,7 +85,7 @@ class StockService:
         self, id_material: str, data: StockAjusteInput
     ) -> StockAjusteResponse:
         rs = self._get_rundown_service()
-        planta_stocks = rs.get_planta_stocks_map()
+        planta_stocks = rs.get_planta_stocks_map(target_date=data.fecha)
         current_planta = planta_stocks.get(id_material.strip())
 
         res = self._repo.ajustar_stock_deposito(
@@ -91,6 +96,7 @@ class StockService:
             observacion=data.observacion,
             id_usuario=data.id_usuario,
             stock_planta_actual=current_planta,
+            fecha=data.fecha,
         )
         return StockAjusteResponse(
             id_material=id_material.strip(),

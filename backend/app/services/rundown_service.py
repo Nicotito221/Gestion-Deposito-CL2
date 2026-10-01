@@ -149,15 +149,15 @@ class RundownService:
         ]
         cant_laborales = len(dias_laborales)
 
-        if es_mes_firme:
-            raw_prod_map = self._repo.get_produccion_planificada(all_products, d_start, d_end)
-            prod_map = {p: {} for p in all_products}
+        raw_prod_map = self._repo.get_produccion_planificada(all_products, d_start, d_end)
+        prod_map = {p: {} for p in all_products}
 
-            dias_con_prod = [
-                d for d in dias_laborales
-                if sum(raw_prod_map.get(p, {}).get(d, 0.0) for p in all_products) > 0
-            ]
-            
+        dias_con_prod = [
+            d for d in dias_laborales
+            if sum(raw_prod_map.get(p, {}).get(d, 0.0) for p in all_products) > 0
+        ]
+
+        if dias_con_prod or es_mes_firme:
             avg_per_prod = {}
             if dias_con_prod:
                 for p in all_products:
@@ -232,12 +232,11 @@ class RundownService:
             s_planta = float(round(self._compute_carryover_stock(param, all_products, d_start, "planta", meses_raw)))
             s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw)))
             if es_dep_en_planta:
-                s_unificado = s_planta
-                s_total = s_unificado
-                stock_corriente = s_unificado
+                s_total = s_planta
+                s_inicial_periodo = s_planta
             else:
-                s_total = s_planta + stock_cl2
-                stock_corriente = s_planta if alcance == "planta" else s_total
+                s_inicial_periodo = s_planta if alcance == "planta" else s_total
+            stock_corriente = s_inicial_periodo
             cells: List[RundownDayCell] = []
             total_uso = 0.0
             total_ingresos = 0.0
@@ -253,9 +252,12 @@ class RundownService:
                     if planta_key in ajustes_map:
                         tiene_ajuste = True
                         stock_real = float(round(ajustes_map[planta_key]))
-                    elif es_dep_en_planta and total_key in ajustes_map:
+                    elif total_key in ajustes_map:
                         tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[total_key]))
+                        if es_dep_en_planta:
+                            stock_real = float(round(ajustes_map[total_key]))
+                        else:
+                            stock_real = float(round(max(0.0, ajustes_map[total_key] - stock_cl2)))
                 else:
                     if total_key in ajustes_map:
                         tiene_ajuste = True
@@ -263,9 +265,6 @@ class RundownService:
                     elif es_dep_en_planta and planta_key in ajustes_map:
                         tiene_ajuste = True
                         stock_real = float(round(ajustes_map[planta_key]))
-                    elif not es_dep_en_planta and planta_key in ajustes_map:
-                        tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[planta_key] + stock_cl2))
 
                 veh_prod = sum(
                     prod_map.get(p["id_producto"], {}).get(d, 0.0) * p["factor_uso"]
@@ -279,11 +278,16 @@ class RundownService:
                     2,
                 )
 
-                maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
-                aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
-                local = transito_map.get((param["id_material"], d, "Local"), 0.0)
-                if alcance == "planta":
-                    local += pedidos_planta_map.get((param["id_material"], d), 0.0)
+                if alcance == "planta" and not es_dep_en_planta:
+                    maritimo = 0.0
+                    aereo = 0.0
+                    local = pedidos_planta_map.get((param["id_material"], d), 0.0)
+                else:
+                    maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
+                    aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
+                    local = transito_map.get((param["id_material"], d, "Local"), 0.0)
+                    if alcance == "planta":
+                        local += pedidos_planta_map.get((param["id_material"], d), 0.0)
                 scrap = transito_map.get((param["id_material"], d, "AjusteScrap"), 0.0)
 
                 ingresos_dia = maritimo + aereo + local
@@ -368,7 +372,7 @@ class RundownService:
                     lote_mts=param["lote_mts"],
                     tipo_empaque=param.get("tipo_empaque", "pallet"),
                     scrap_porcentaje=param["scrap_porcentaje"],
-                    stock_inicial=stock_corriente,
+                    stock_inicial=s_inicial_periodo,
                     stock_inicial_planta=s_planta,
                     stock_inicial_total=s_total,
                     dias=cells,
@@ -728,48 +732,76 @@ class RundownService:
         alcance: str,
         meses_raw: List[Dict[str, Any]],
     ) -> float:
+        end_prev = target_start - timedelta(days=1)
+        pid = int(param["id_parametro"])
+        dep_planta = bool(param.get("deposito_en_planta", False))
+        stock_cl2_val = float(param.get("stock_cl2", 0.0))
+
         init_date = param.get("fecha_stock_inicial") or self._repo.get_fecha_inicio_firme()
         init_stock_field = "stock_inicial_planta" if alcance == "planta" else "stock_inicial_total"
         raw_val = param.get(init_stock_field)
-        if raw_val is not None:
-            s_val = float(raw_val)
-        elif param.get("stock_inicial_referencia") is not None:
-            s_val = float(param.get("stock_inicial_referencia"))
+        s_base = float(raw_val) if raw_val is not None else float(param.get("stock_inicial_referencia") or 0.0)
+
+        query_min = min(init_date, target_start - timedelta(days=90))
+        prev_ajustes = self._repo.get_stock_ajustes(param["id_proveedor"], query_min, end_prev)
+
+        applicable_adj_dates: List[date] = []
+        for (adj_pid, adj_d, adj_tipo), val in prev_ajustes.items():
+            if adj_pid != pid or adj_d > end_prev:
+                continue
+            if alcance == "planta":
+                if adj_tipo == "planta" or (dep_planta and adj_tipo == "total"):
+                    applicable_adj_dates.append(adj_d)
+            else:
+                if adj_tipo == "total" or (dep_planta and adj_tipo == "planta"):
+                    applicable_adj_dates.append(adj_d)
+
+        if applicable_adj_dates:
+            d_anchor = max(applicable_adj_dates)
+            pl_key = (pid, d_anchor, "planta")
+            tot_key = (pid, d_anchor, "total")
+            if alcance == "planta":
+                if pl_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[pl_key]))
+                elif dep_planta and tot_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[tot_key]))
+                else:
+                    s_val = float(round(max(0.0, prev_ajustes[tot_key] - stock_cl2_val)))
+            else:
+                if tot_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[tot_key]))
+                elif dep_planta and pl_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[pl_key]))
+                else:
+                    s_val = s_base
+
+            start_sim = d_anchor + timedelta(days=1)
         else:
-            s_val = 0.0
+            if target_start <= init_date:
+                return float(round(s_base))
+            s_val = s_base
+            start_sim = init_date
 
-        if alcance == "total" and not param.get("deposito_en_planta", False):
-            stock_cl2 = float(param.get("stock_cl2", 0.0))
-            p_val = param.get("stock_inicial_planta")
-            s_planta_init = float(p_val) if p_val is not None else 0.0
-            s_val = s_planta_init + stock_cl2
+        if start_sim > end_prev:
+            return float(round(s_val))
 
-        if target_start == init_date:
-            return s_val
-
-        if target_start < init_date:
-            past_ajustes = self._repo.get_stock_ajustes(param["id_proveedor"], target_start, target_start)
-            pl_key = (param["id_parametro"], target_start, "planta")
-            tot_key = (param["id_parametro"], target_start, "total")
-            if alcance == "planta" and pl_key in past_ajustes:
-                return float(past_ajustes[pl_key])
-            elif alcance == "total" and tot_key in past_ajustes:
-                return float(past_ajustes[tot_key])
-            return 0.0
-
-        end_prev = target_start - timedelta(days=1)
-        prev_ajustes = self._repo.get_stock_ajustes(param["id_proveedor"], init_date, end_prev)
-        prev_transitos = self._repo.get_transitos(param["id_proveedor"], init_date, end_prev)
+        prev_transitos = self._repo.get_transitos(param["id_proveedor"], start_sim, end_prev)
         transito_map: Dict[Tuple[str, date, str], float] = {}
         for t in prev_transitos:
             t_date = date.fromisoformat(t.fecha_eta)
             transito_map[(t.id_material, t_date, t.tipo_via)] = transito_map.get((t.id_material, t_date, t.tipo_via), 0.0) + t.cantidad
 
-        firm_prod_map = self._repo.get_produccion_planificada(all_products, init_date, end_prev)
+        pedidos_planta_map = (
+            self._repo.get_entregas_pedidos_planta(param["id_proveedor"], start_sim, end_prev)
+            if alcance == "planta"
+            else {}
+        )
+
+        firm_prod_map = self._repo.get_produccion_planificada(all_products, start_sim, end_prev)
         forecast_cache: Dict[Tuple[int, int], Dict[date, float]] = {}
         cal_overrides_cache: Dict[Tuple[int, int], Dict[date, Tuple[bool, Optional[str]]]] = {}
 
-        curr = init_date
+        curr = start_sim
         while curr <= end_prev:
             m_key = (curr.year, curr.month)
             m_info = next((m for m in meses_raw if m["anio"] == curr.year and m["mes"] == curr.month), None)
@@ -814,32 +846,21 @@ class RundownService:
                 veh_prod = forecast_cache[m_key].get(curr, 0.0)
 
             uso = round(veh_prod * param["factor_conversion"] * (1.0 + param["scrap_porcentaje"]), 2)
-            maritimo = transito_map.get((param["id_material"], curr, "Maritimo"), 0.0)
-            aereo = transito_map.get((param["id_material"], curr, "Aereo"), 0.0)
-            local = transito_map.get((param["id_material"], curr, "Local"), 0.0)
-            scrap = transito_map.get((param["id_material"], curr, "AjusteScrap"), 0.0)
-            stock_teorico = float(round(s_val - uso + (maritimo + aereo + local) - scrap))
-
-            pl_key = (param["id_parametro"], curr, "planta")
-            tot_key = (param["id_parametro"], curr, "total")
-            if alcance == "planta":
-                if pl_key in prev_ajustes:
-                    s_val = float(round(prev_ajustes[pl_key]))
-                elif param.get("deposito_en_planta") and tot_key in prev_ajustes:
-                    s_val = float(round(prev_ajustes[tot_key]))
-                else:
-                    s_val = stock_teorico
+            if alcance == "planta" and not dep_planta:
+                maritimo = 0.0
+                aereo = 0.0
+                local = pedidos_planta_map.get((param["id_material"], curr), 0.0)
             else:
-                if tot_key in prev_ajustes:
-                    s_val = float(round(prev_ajustes[tot_key]))
-                elif param.get("deposito_en_planta") and pl_key in prev_ajustes:
-                    s_val = float(round(prev_ajustes[pl_key]))
-                elif not param.get("deposito_en_planta") and pl_key in prev_ajustes:
-                    stock_cl2_val = float(param.get("stock_cl2", 0.0))
-                    s_val = float(round(prev_ajustes[pl_key] + stock_cl2_val))
-                else:
-                    s_val = stock_teorico
+                maritimo = transito_map.get((param["id_material"], curr, "Maritimo"), 0.0)
+                aereo = transito_map.get((param["id_material"], curr, "Aereo"), 0.0)
+                local = transito_map.get((param["id_material"], curr, "Local"), 0.0)
+                if alcance == "planta":
+                    local += pedidos_planta_map.get((param["id_material"], curr), 0.0)
+            scrap = transito_map.get((param["id_material"], curr, "AjusteScrap"), 0.0)
+            ingresos_dia = maritimo + aereo + local
 
+            stock_teorico = float(round(s_val - uso + ingresos_dia - scrap))
+            s_val = stock_teorico
             curr += timedelta(days=1)
 
         return float(round(s_val))

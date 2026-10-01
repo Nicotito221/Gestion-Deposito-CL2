@@ -12,6 +12,8 @@ class DashboardKpis(BaseModel):
     pedidos_completados_hoy: int
     total_pedidos: int
     materiales_criticos_count: int
+    criticos_planta_count: int = 0
+    criticos_tbar_count: int = 0
     remitos_hoy: int
     fill_rate_porcentaje: float
     turno_actual: str
@@ -46,6 +48,7 @@ class DashboardMaterialCritico(BaseModel):
     alerta_tipo: str
     alerta_label: str
     prioridad: str
+    origen_alerta: str = "ambos"
 
 
 class DashboardResumenResponse(BaseModel):
