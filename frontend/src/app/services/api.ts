@@ -1232,7 +1232,10 @@ export interface SugerenciaMaterialDetalle {
   lote_minimo?: number | null;
   tipo_empaque: string;
   tamanio_lote?: number | null;
+  unidad_por_bulto?: number | null;
+  bultos_por_pallet?: number | null;
   cantidad_pallets_sugerida: number;
+  cantidad_bultos_sugerida?: number | null;
   pallets_por_turno: Record<string, number>;
   pedidos_existentes: PedidoExistenteItem[];
   cantidad_ya_pedida_total: number;
@@ -1297,6 +1300,8 @@ export interface RemitoItemOut {
   tipo_empaque?: string;
   tamanio_lote?: number;
   cantidad_pallets?: number | null;
+  bultos_por_pallet?: number | null;
+  cantidad_bultos?: number | null;
 }
 
 export interface RemitoDetalleOut {

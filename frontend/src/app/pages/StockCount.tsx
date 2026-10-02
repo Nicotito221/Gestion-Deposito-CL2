@@ -289,8 +289,6 @@ export function StockCount() {
       return;
     }
     const lote = item.lote_pallet && item.lote_pallet > 0 ? item.lote_pallet : 1.0;
-    const initialPallets = lote > 1 ? Math.floor(item.stock_teorico / lote) : 0;
-    const initialSueltas = lote > 1 ? Math.round((item.stock_teorico % lote) * 100) / 100 : item.stock_teorico;
 
     setRows((prev) => [
       ...prev,
@@ -302,9 +300,11 @@ export function StockCount() {
         nombre_proveedor: item.nombre_proveedor,
         deposito_en_planta: item.deposito_en_planta,
         stock_teorico: item.stock_teorico,
-        stock_contado: item.stock_teorico,
-        pallets_contados: initialPallets,
-        unidades_sueltas: initialSueltas,
+        stock_contado: 0,
+        pallets_contados: 0,
+        unidades_sueltas: 0,
+        partes_pallets: [],
+        partes_unidades: [],
         lote_pallet: lote,
         tipo_empaque: item.tipo_empaque || "pallet",
         observacion: "",
@@ -339,8 +339,6 @@ export function StockCount() {
         items.forEach((item) => {
           if (!existingMap.has(item.id_material)) {
             const lote = item.lote_pallet && item.lote_pallet > 0 ? item.lote_pallet : 1.0;
-            const initialPallets = lote > 1 ? Math.floor(item.stock_teorico / lote) : 0;
-            const initialSueltas = lote > 1 ? Math.round((item.stock_teorico % lote) * 100) / 100 : item.stock_teorico;
 
             newRows.push({
               id_material: item.id_material,
@@ -350,9 +348,11 @@ export function StockCount() {
               nombre_proveedor: item.nombre_proveedor,
               deposito_en_planta: item.deposito_en_planta,
               stock_teorico: item.stock_teorico,
-              stock_contado: item.stock_teorico,
-              pallets_contados: initialPallets,
-              unidades_sueltas: initialSueltas,
+              stock_contado: 0,
+              pallets_contados: 0,
+              unidades_sueltas: 0,
+              partes_pallets: [],
+              partes_unidades: [],
               lote_pallet: lote,
               tipo_empaque: item.tipo_empaque || "pallet",
               observacion: "",
@@ -734,11 +734,14 @@ export function StockCount() {
         }
 
         const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
-        const isPallet = it.tipo_empaque === "pallet" && lotSize > 1;
-        const palletsCount = isPallet
+        const isPackagingLot = (it.tipo_empaque === "pallet" || it.tipo_empaque === "rollo") && lotSize > 1;
+        const palletsCount = isPackagingLot
           ? (isSpecificTurno && it.pallets_por_turno?.[selectedTurno!]
               ? it.pallets_por_turno[selectedTurno!]
               : Math.ceil(totalNet / lotSize))
+          : undefined;
+        const bultosCount = (it.tipo_empaque === "rollo" && palletsCount && it.bultos_por_pallet)
+          ? palletsCount * it.bultos_por_pallet
           : undefined;
 
         return {
@@ -748,10 +751,14 @@ export function StockCount() {
           unit: it.unidad,
           suggestedQuantity: totalNet,
           suggestedPallets: palletsCount,
+          suggestedBultos: bultosCount,
           quantity: totalNet,
           pallets: palletsCount,
-          tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
+          bultos: bultosCount,
+          tipo_empaque: it.tipo_empaque || (isPackagingLot ? "pallet" : "unidad"),
           tamanio_lote: lotSize,
+          unidad_por_bulto: it.unidad_por_bulto,
+          bultos_por_pallet: it.bultos_por_pallet,
           observations: `Consumo día: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
         };
       })
@@ -2367,7 +2374,12 @@ export function StockCount() {
                         <div className="text-xs text-slate-500">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span>Sugerencia neta: </span>
-                            {item.tipo_empaque === "pallet" && item.tamanio_lote && item.tamanio_lote > 1 ? (
+                            {item.tipo_empaque === "rollo" && item.tamanio_lote && item.tamanio_lote > 1 ? (
+                              <Badge className="bg-amber-100 text-amber-900 border-amber-200 text-xs font-bold py-0.5">
+                                {item.cantidad_pallets_sugerida} {item.cantidad_pallets_sugerida === 1 ? "Pallet" : "Pallets"}
+                                {item.cantidad_bultos_sugerida ? ` (${item.cantidad_bultos_sugerida} Rollos)` : ""}
+                              </Badge>
+                            ) : item.tipo_empaque === "pallet" && item.tamanio_lote && item.tamanio_lote > 1 ? (
                               <Badge className="bg-blue-100 text-blue-900 border-blue-200 text-xs font-bold py-0.5">
                                 {item.cantidad_pallets_sugerida} {item.cantidad_pallets_sugerida === 1 ? "Pallet" : "Pallets"} ({item.cantidad_sugerida_neta} {item.unidad})
                               </Badge>
@@ -2385,10 +2397,10 @@ export function StockCount() {
 
                         <div className="flex items-center gap-3 flex-wrap justify-end">
                           {sugerenciaData.turnos.map((turno) => {
-                            const isPalletMat = item.tipo_empaque === "pallet" && item.tamanio_lote && item.tamanio_lote > 1;
+                            const isPackagingLot = (item.tipo_empaque === "pallet" || item.tipo_empaque === "rollo") && item.tamanio_lote && item.tamanio_lote > 1;
                             const currentVal = editedQuantities[item.id_material]?.[turno] ?? 0;
-                            const currentPallets = isPalletMat ? Math.round(currentVal / item.tamanio_lote!) : 0;
-                            const pedidosTurno = item.pedidos_por_turno[turno] ?? 0;
+                            const currentPallets = isPackagingLot ? Math.round(currentVal / item.tamanio_lote!) : 0;
+                            const currentRollos = (item.tipo_empaque === "rollo" && item.bultos_por_pallet) ? currentPallets * item.bultos_por_pallet : 0;
 
                             return (
                               <div key={turno} className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-slate-200 shadow-2xs">
@@ -2398,7 +2410,7 @@ export function StockCount() {
                                   {(turno === "Turno Noche" || turno === "T3") && <Lock className="w-3 h-3 text-slate-400" />}
                                   {turno}:
                                 </Label>
-                                {isPalletMat ? (
+                                {isPackagingLot ? (
                                   <div className="flex items-center gap-1">
                                     <Input
                                       type="number"
@@ -2419,7 +2431,7 @@ export function StockCount() {
                                       className="h-7 w-16 font-mono font-bold text-right text-xs bg-white border-slate-300 focus:border-blue-500"
                                     />
                                     <span className="text-[11px] text-indigo-700 font-semibold pr-1">
-                                      pal ({currentVal} {item.unidad})
+                                      pal {item.tipo_empaque === "rollo" && currentRollos > 0 ? `(${currentRollos} rol)` : `(${currentVal} ${item.unidad})`}
                                     </span>
                                   </div>
                                 ) : (
