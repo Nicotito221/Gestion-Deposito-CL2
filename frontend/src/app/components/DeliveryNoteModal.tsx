@@ -301,7 +301,6 @@ export function DeliveryNoteModal({
                       <TableRow>
                         <TableHead className="text-xs">Código SAP</TableHead>
                         <TableHead className="text-xs">Descripción</TableHead>
-                        <TableHead className="text-xs text-center">Tipo Empaque</TableHead>
                         <TableHead className="text-xs text-center">Cant. Despachada</TableHead>
                         <TableHead className="text-xs text-center">Estado</TableHead>
                       </TableRow>
@@ -309,13 +308,17 @@ export function DeliveryNoteModal({
                     <TableBody>
                       {remito.items.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="py-6 text-center text-slate-400 text-xs">
+                          <TableCell colSpan={4} className="py-6 text-center text-slate-400 text-xs">
                             No hay materiales registrados en este remito.
                           </TableCell>
                         </TableRow>
                       ) : (
                         remito.items.map((it) => {
-                          const isPallet = it.tipo_empaque === "pallet" && (it.tamanio_lote || 1) > 1;
+                          const isPallet = (it.tipo_empaque === "pallet" || it.tipo_empaque === "rollo") && (it.tamanio_lote || 1) > 1;
+                          const palletsCount = (isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined)
+                            ? it.cantidad_pallets
+                            : (isPallet && (it.tamanio_lote || 1) > 1 ? Math.ceil(it.cantidad / (it.tamanio_lote || 1)) : null);
+
                           return (
                             <TableRow key={it.id_material} className="hover:bg-slate-50/50">
                               <TableCell className="font-mono text-xs font-bold text-slate-900">
@@ -324,31 +327,25 @@ export function DeliveryNoteModal({
                               <TableCell className="text-xs font-medium text-slate-800">
                                 {it.nombre_material || it.id_material}
                               </TableCell>
-                              <TableCell className="text-center">
-                                {isPallet ? (
-                                  <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px] gap-1">
-                                    <Layers className="w-3 h-3 text-indigo-500" />
-                                    Pallet ({it.tamanio_lote} {it.unidad})
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="bg-slate-50 text-slate-600 border-slate-200 text-[10px]">
-                                    Suelto
-                                  </Badge>
-                                )}
-                              </TableCell>
                               <TableCell className="text-center text-xs">
-                                {isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined ? (
+                                {isPallet && palletsCount !== null ? (
                                   <div>
                                     <span className="font-mono font-bold text-indigo-950 block">
-                                      {it.cantidad_pallets} {it.cantidad_pallets === 1 ? "Pallet" : "Pallets"}
+                                      {palletsCount} {palletsCount === 1 ? "Pallet" : "Pallets"}
                                     </span>
-                                    <span className="text-[10px] text-slate-500 font-mono block">
-                                      ({it.cantidad} {it.unidad})
-                                    </span>
+                                    {it.tipo_empaque === "rollo" && it.bultos_por_pallet ? (
+                                      <span className="text-[11px] font-semibold text-amber-700 block">
+                                        ({palletsCount * it.bultos_por_pallet} Rollos)
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-500 font-mono block">
+                                        ({it.cantidad} {it.unidad || "UN"})
+                                      </span>
+                                    )}
                                   </div>
                                 ) : (
                                   <span className="font-mono font-bold text-slate-900">
-                                    {it.cantidad} {it.unidad}
+                                    {it.cantidad} {it.unidad || "UN"}
                                   </span>
                                 )}
                               </TableCell>
@@ -393,8 +390,7 @@ export function DeliveryNoteModal({
             <div className="border-b-2 border-black pb-3 mb-3">
               <div className="flex justify-between items-start">
                 <div>
-                  <h2 className="font-extrabold text-base tracking-wider">TBAR S.A.</h2>
-                  <p className="text-[10px] text-gray-700">Depósito Central CL2</p>
+                  <h2 className="font-extrabold text-base tracking-wider">CL2</h2>
                   <p className="text-[10px] text-gray-700">Destino: {remito.sector_destino || "Planta"}</p>
                 </div>
                 <div className="text-right space-y-0.5">
@@ -418,32 +414,36 @@ export function DeliveryNoteModal({
               <table className="w-full text-left text-[11px] border-collapse">
                 <thead>
                   <tr className="border-b border-black">
-                    <th className="py-1 px-1 font-bold w-[25%]">CODIGO</th>
+                    <th className="py-1 px-1 font-bold w-[30%]">CODIGO</th>
                     <th className="py-1 px-1 font-bold w-[45%]">DESCRIPCION</th>
-                    <th className="py-1 px-1 font-bold text-right w-[15%]">CANTIDAD</th>
-                    <th className="py-1 px-1 font-bold text-right w-[15%]">EMPAQUE</th>
+                    <th className="py-1 px-1 font-bold text-right w-[25%]">CANTIDAD</th>
                   </tr>
                 </thead>
                 <tbody>
                   {remito.items.map((it) => {
-                    const isPallet = it.tipo_empaque === "pallet" && (it.tamanio_lote || 1) > 1;
-                    const displayCant = isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined
-                      ? `${it.cantidad_pallets}.00`
-                      : `${it.cantidad}.00`;
-                    const displayUnit = isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined
-                      ? (it.cantidad_pallets === 1 ? "PALLET" : "PALLETS")
-                      : it.unidad.toUpperCase();
+                    const isPallet = (it.tipo_empaque === "pallet" || it.tipo_empaque === "rollo") && (it.tamanio_lote || 1) > 1;
+                    const palletsCount = (isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined)
+                      ? it.cantidad_pallets
+                      : (isPallet && (it.tamanio_lote || 1) > 1 ? Math.ceil(it.cantidad / (it.tamanio_lote || 1)) : null);
+
+                    let displayCantText = `${it.cantidad} ${it.unidad || "UN"}`;
+                    if (isPallet && palletsCount !== null) {
+                      const pLabel = palletsCount === 1 ? "PALLET" : "PALLETS";
+                      if (it.tipo_empaque === "rollo" && it.bultos_por_pallet) {
+                        const rollosTotal = palletsCount * it.bultos_por_pallet;
+                        displayCantText = `${palletsCount} ${pLabel} (${rollosTotal} ROLLOS)`;
+                      } else {
+                        displayCantText = `${palletsCount} ${pLabel} (${it.cantidad} ${it.unidad || "UN"})`;
+                      }
+                    }
 
                     return (
                       <tr key={it.id_material} className="align-top border-b border-gray-200">
-                        <td colSpan={4} className="py-1 px-1">
+                        <td colSpan={3} className="py-1 px-1">
                           <div className="flex justify-between items-baseline font-mono">
-                            <span className="w-[25%] font-bold">{it.id_material}</span>
+                            <span className="w-[30%] font-bold">{it.id_material}</span>
                             <span className="w-[45%] truncate font-medium">{it.nombre_material || it.id_material}</span>
-                            <span className="w-[15%] text-right font-bold">{displayCant} {displayUnit}</span>
-                            <span className="w-[15%] text-right text-gray-600">
-                              {isPallet ? `(${it.cantidad} ${it.unidad})` : "SUELTO"}
-                            </span>
+                            <span className="w-[25%] text-right font-bold">{displayCantText}</span>
                           </div>
                         </td>
                       </tr>

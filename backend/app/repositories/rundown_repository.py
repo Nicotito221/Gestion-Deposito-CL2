@@ -274,7 +274,7 @@ class RundownRepository:
 
     def get_entregas_pedidos_planta(
         self, id_proveedor: Union[int, List[int]], fecha_desde: date, fecha_hasta: date
-    ) -> Dict[Tuple[str, date], float]:
+    ) -> Dict[Tuple[str, date], Dict[str, Any]]:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
@@ -290,7 +290,8 @@ class RundownRepository:
 
             cursor.execute(
                 f"""
-                SELECT mr.id_material, CAST(r.fecha_entrega AS DATE), CAST(SUM(mr.cantidad) AS FLOAT)
+                SELECT mr.id_material, CAST(r.fecha_entrega AS DATE), CAST(SUM(mr.cantidad) AS FLOAT),
+                       MAX(r.id_remito), MAX(r.id_pedido)
                 FROM dbo.material_remito mr
                 INNER JOIN dbo.remito r ON mr.id_remito = r.id_remito
                 INNER JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
@@ -303,7 +304,15 @@ class RundownRepository:
                 query_params,
             )
             rows = cursor.fetchall()
-            return {(str(r[0]), r[1]): float(r[2]) for r in rows if r[0] and r[1]}
+            return {
+                (str(r[0]), r[1]): {
+                    "cantidad": float(r[2]),
+                    "id_remito": str(r[3]) if r[3] else None,
+                    "id_pedido": int(r[4]) if r[4] is not None else None,
+                }
+                for r in rows
+                if r[0] and r[1]
+            }
         finally:
             cursor.close()
             conn.close()

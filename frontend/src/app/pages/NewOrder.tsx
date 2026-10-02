@@ -64,7 +64,11 @@ interface Material {
   observations: string;
   tipo_empaque?: string;
   tamanio_lote?: number;
+  unidad_por_bulto?: number;
+  bultos_por_pallet?: number;
   pallets?: number;
+  suggestedBultos?: number;
+  bultos?: number;
 }
 
 const SECTORES_PLANTA = [
@@ -116,15 +120,19 @@ export function NewOrder() {
     if (suggestedMaterials.length > 0) {
       return suggestedMaterials.map((m) => {
         const lotSize = m.tamanio_lote && m.tamanio_lote > 1 ? m.tamanio_lote : 1;
-        const isPallet = (m.tipo_empaque === "pallet" || (!m.tipo_empaque && lotSize > 1)) && lotSize > 1;
-        const pCount = isPallet ? (m.pallets ?? Math.ceil(m.quantity / lotSize)) : undefined;
-        const suggPCount = isPallet ? (m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / lotSize)) : undefined;
+        const isPackagingLot = (m.tipo_empaque === "pallet" || m.tipo_empaque === "rollo" || (!m.tipo_empaque && lotSize > 1)) && lotSize > 1;
+        const pCount = isPackagingLot ? (m.pallets ?? Math.ceil(m.quantity / lotSize)) : undefined;
+        const suggPCount = isPackagingLot ? (m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / lotSize)) : undefined;
+        const bCount = (m.tipo_empaque === "rollo" && pCount && m.bultos_por_pallet) ? pCount * m.bultos_por_pallet : m.bultos;
+        const suggBCount = (m.tipo_empaque === "rollo" && suggPCount && m.bultos_por_pallet) ? suggPCount * m.bultos_por_pallet : m.suggestedBultos;
         return {
           ...m,
-          tipo_empaque: isPallet ? "pallet" : "unidad",
+          tipo_empaque: m.tipo_empaque || (isPackagingLot ? "pallet" : "unidad"),
           tamanio_lote: lotSize,
           pallets: pCount,
           suggestedPallets: suggPCount,
+          bultos: bCount,
+          suggestedBultos: suggBCount,
         };
       });
     }
@@ -325,13 +333,17 @@ export function NewOrder() {
       prev.map((m) => {
         if (m.id === id) {
           const lotSize = (m.tamanio_lote && m.tamanio_lote > 1) ? m.tamanio_lote : 1;
-          const isPallet = m.tipo_empaque === "pallet" && lotSize > 1;
-          if (isPallet) {
+          const isPackagingLot = (m.tipo_empaque === "pallet" || m.tipo_empaque === "rollo") && lotSize > 1;
+          if (isPackagingLot) {
             const currentPallets = m.pallets ?? Math.ceil(m.quantity / lotSize);
             const updatedPallets = Math.max(1, currentPallets + delta);
+            const updatedBultos = (m.tipo_empaque === "rollo" && m.bultos_por_pallet)
+              ? updatedPallets * m.bultos_por_pallet
+              : undefined;
             return {
               ...m,
               pallets: updatedPallets,
+              bultos: updatedBultos,
               quantity: updatedPallets * lotSize,
             };
           }
@@ -397,7 +409,7 @@ export function NewOrder() {
   const rolCfg = currentUser?.rol ? ROLES_BADGES[currentUser.rol] : undefined;
 
   return (
-    <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto space-y-6">
       {/* Header & Back Button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -633,9 +645,9 @@ export function NewOrder() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        {/* Columna Izquierda: Formulario y Materiales */}
-        <div className="lg:col-span-2 space-y-6">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 items-start">
+        {/* Columna Izquierda: Formulario y Materiales (más ancha) */}
+        <div className="xl:col-span-3 space-y-6">
           {/* Parámetros Operativos del Pedido */}
           <Card className="shadow-2xs">
             <CardHeader className="py-3 px-5 border-b border-slate-100 bg-slate-50/50">
@@ -911,7 +923,12 @@ export function NewOrder() {
                           </TableCell>
 
                           <TableCell className="text-center">
-                            {m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
+                            {m.tipo_empaque === "rollo" && (m.tamanio_lote || 1) > 1 ? (
+                              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-800 border-amber-200 font-semibold gap-1 whitespace-nowrap">
+                                <Layers className="w-2.5 h-2.5 text-amber-600" />
+                                {m.bultos_por_pallet ? `${m.bultos_por_pallet} Rollos / Pallet` : `Rollo (${m.tamanio_lote} ${m.unit})`}
+                              </Badge>
+                            ) : m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
                               <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold gap-1 whitespace-nowrap">
                                 <Layers className="w-2.5 h-2.5 text-indigo-500" />
                                 Pallet ({m.tamanio_lote} {m.unit})
@@ -925,14 +942,20 @@ export function NewOrder() {
 
                           {fromConteo && (
                             <TableCell className="text-center whitespace-nowrap">
-                              {m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
+                              {(m.tipo_empaque === "pallet" || m.tipo_empaque === "rollo") && (m.tamanio_lote || 1) > 1 ? (
                                 <div className="flex flex-col items-center justify-center">
                                   <span className="font-mono font-bold text-slate-800 text-xs">
                                     {m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / (m.tamanio_lote || 1))} {((m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / (m.tamanio_lote || 1))) === 1) ? "Pallet" : "Pallets"}
                                   </span>
-                                  <span className="text-[10px] text-slate-400 font-mono block">
-                                    ({(m.suggestedQuantity ?? m.quantity).toLocaleString("es-AR")} {m.unit})
-                                  </span>
+                                  {m.tipo_empaque === "rollo" && m.bultos_por_pallet ? (
+                                    <span className="text-[11px] text-amber-700 font-semibold block">
+                                      ({(m.suggestedBultos ?? ((m.suggestedPallets ?? Math.ceil((m.suggestedQuantity ?? m.quantity) / (m.tamanio_lote || 1))) * m.bultos_por_pallet))} Rollos)
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-slate-400 font-mono block">
+                                      ({(m.suggestedQuantity ?? m.quantity).toLocaleString("es-AR")} {m.unit})
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="flex items-center justify-center">
@@ -946,7 +969,7 @@ export function NewOrder() {
                           )}
 
                           <TableCell>
-                            {m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1 ? (
+                            {(m.tipo_empaque === "pallet" || m.tipo_empaque === "rollo") && (m.tamanio_lote || 1) > 1 ? (
                               <div className="flex flex-col items-center justify-center gap-0.5">
                                 <div className="flex items-center justify-center gap-1">
                                   <button
@@ -965,10 +988,11 @@ export function NewOrder() {
                                       onChange={(e) => {
                                         const p = Math.max(1, parseInt(e.target.value, 10) || 1);
                                         const lot = m.tamanio_lote || 1;
+                                        const bCount = (m.tipo_empaque === "rollo" && m.bultos_por_pallet) ? p * m.bultos_por_pallet : undefined;
                                         setMaterials((prev) =>
                                           prev.map((item) =>
                                             item.id === m.id
-                                              ? { ...item, pallets: p, quantity: p * lot }
+                                              ? { ...item, pallets: p, bultos: bCount, quantity: p * lot }
                                               : item
                                           )
                                         );
@@ -986,9 +1010,15 @@ export function NewOrder() {
                                     <Plus className="w-3 h-3" />
                                   </button>
                                 </div>
-                                <span className="text-[10px] text-slate-500 font-mono block">
-                                  ({m.quantity.toLocaleString("es-AR")} {m.unit})
-                                </span>
+                                {m.tipo_empaque === "rollo" && m.bultos_por_pallet ? (
+                                  <span className="text-[11px] text-amber-800 font-bold block">
+                                    ={(m.pallets ?? Math.ceil(m.quantity / (m.tamanio_lote || 1))) * m.bultos_por_pallet} Rollos
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-slate-500 font-mono block">
+                                    ({m.quantity.toLocaleString("es-AR")} {m.unit})
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <div className="flex items-center justify-center gap-1">

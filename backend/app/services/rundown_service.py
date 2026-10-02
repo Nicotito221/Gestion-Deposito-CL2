@@ -278,16 +278,17 @@ class RundownService:
                     2,
                 )
 
+                ped_info = pedidos_planta_map.get((param["id_material"], d))
                 if alcance == "planta" and not es_dep_en_planta:
                     maritimo = 0.0
                     aereo = 0.0
-                    local = pedidos_planta_map.get((param["id_material"], d), 0.0)
+                    local = ped_info["cantidad"] if ped_info else 0.0
                 else:
                     maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
                     aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
                     local = transito_map.get((param["id_material"], d, "Local"), 0.0)
-                    if alcance == "planta":
-                        local += pedidos_planta_map.get((param["id_material"], d), 0.0)
+                    if alcance == "planta" and ped_info:
+                        local += ped_info["cantidad"]
                 scrap = transito_map.get((param["id_material"], d, "AjusteScrap"), 0.0)
 
                 ingresos_dia = maritimo + aereo + local
@@ -329,6 +330,17 @@ class RundownService:
                 a_meta = transito_meta_map.get((param["id_material"], d, "Aereo"), {})
                 l_meta = transito_meta_map.get((param["id_material"], d, "Local"), {})
 
+                if alcance == "planta" and not es_dep_en_planta:
+                    local_po = f"Ped #{ped_info['id_pedido']}" if (ped_info and ped_info.get("id_pedido")) else None
+                    local_factura = ped_info.get("id_remito") if ped_info else None
+                    local_obs = f"Remito {ped_info['id_remito']}" if (ped_info and ped_info.get("id_remito")) else None
+                    local_estado = "confirmado" if local > 0 else None
+                else:
+                    local_po = l_meta.get("po_numero")
+                    local_factura = l_meta.get("factura_numero")
+                    local_obs = l_meta.get("observacion")
+                    local_estado = l_meta.get("estado")
+
                 cells.append(
                     RundownDayCell(
                         fecha=d.strftime("%Y-%m-%d"),
@@ -346,10 +358,10 @@ class RundownService:
                         aereo_obs=a_meta.get("observacion"),
                         aereo_estado=a_meta.get("estado"),
                         entregas_locales=local,
-                        local_po=l_meta.get("po_numero"),
-                        local_factura=l_meta.get("factura_numero"),
-                        local_obs=l_meta.get("observacion"),
-                        local_estado=l_meta.get("estado"),
+                        local_po=local_po,
+                        local_factura=local_factura,
+                        local_obs=local_obs,
+                        local_estado=local_estado,
                         ajuste_scrap=scrap,
                         stock_final=stock_corriente,
                         dias_cobertura=dias_cobertura,
@@ -846,16 +858,17 @@ class RundownService:
                 veh_prod = forecast_cache[m_key].get(curr, 0.0)
 
             uso = round(veh_prod * param["factor_conversion"] * (1.0 + param["scrap_porcentaje"]), 2)
+            ped_info = pedidos_planta_map.get((param["id_material"], curr))
             if alcance == "planta" and not dep_planta:
                 maritimo = 0.0
                 aereo = 0.0
-                local = pedidos_planta_map.get((param["id_material"], curr), 0.0)
+                local = ped_info["cantidad"] if ped_info else 0.0
             else:
                 maritimo = transito_map.get((param["id_material"], curr, "Maritimo"), 0.0)
                 aereo = transito_map.get((param["id_material"], curr, "Aereo"), 0.0)
                 local = transito_map.get((param["id_material"], curr, "Local"), 0.0)
-                if alcance == "planta":
-                    local += pedidos_planta_map.get((param["id_material"], curr), 0.0)
+                if alcance == "planta" and ped_info:
+                    local += ped_info["cantidad"]
             scrap = transito_map.get((param["id_material"], curr, "AjusteScrap"), 0.0)
             ingresos_dia = maritimo + aereo + local
 

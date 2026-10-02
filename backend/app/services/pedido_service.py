@@ -110,11 +110,13 @@ class PedidoService:
                     fecha_req.year, fecha_req.month, all_products
                 )
 
+        prod_map_prom_mes = self._repo.get_promedio_diario_produccion(
+            fecha_req.year, fecha_req.month, all_products
+        )
+
         prod_map_sig = self._repo.get_produccion_planificada_dia(fecha_sig, all_products)
         if sum(prod_map_sig.values()) == 0:
-            prod_map_sig = self._repo.get_promedio_diario_produccion(
-                fecha_sig.year, fecha_sig.month, all_products
-            )
+            prod_map_sig = prod_map_prom_mes
 
         mat_ids = [m["id_material"] for m in materiales]
         pedidos_raw_req = self._repo.get_pedidos_existentes_fecha(fecha_req, mat_ids)
@@ -186,6 +188,15 @@ class PedidoService:
             if consumo_sig == 0 and consumo_diario > 0:
                 consumo_sig = consumo_diario
 
+            veh_prod_prom = sum(
+                prod_map_prom_mes.get(p["id_producto"], 0.0) * p["factor_uso"]
+                for p in m["productos"]
+            )
+            consumo_prom_mes = round(
+                veh_prod_prom * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                2,
+            )
+
             if fecha_req <= today:
                 stock_proyectado_inicio = stock_contado
             else:
@@ -227,7 +238,15 @@ class PedidoService:
             stock_objetivo = round(consumo_diario + (factor_consumo_sig * consumo_sig), 2)
             stock_minimo_inicio = stock_umbral_doh
 
-            deficit = max(0.0, round(stock_objetivo - stock_con_pedidos, 2)) if tiene_deficit_doh else 0.0
+            deficit_operativo = max(0.0, round(stock_objetivo - stock_con_pedidos, 2)) if tiene_deficit_doh else 0.0
+
+            piso_seguridad_1doh = consumo_prom_mes if consumo_prom_mes > 0 else (consumo_diario if consumo_diario > 0 else consumo_hoy)
+            deficit_seguridad_mes = 0.0
+            if piso_seguridad_1doh > 0 and stock_con_pedidos < piso_seguridad_1doh:
+                deficit_seguridad_mes = max(0.0, round(piso_seguridad_1doh - stock_con_pedidos, 2))
+
+            deficit = max(deficit_operativo, deficit_seguridad_mes)
+            tiene_deficit = (deficit > 0)
 
             tipo_empaque = m.get("tipo_empaque") or "pallet"
             lote_mts = m.get("lote_mts")
@@ -237,12 +256,12 @@ class PedidoService:
             if es_pallet:
                 cant_pallets = math.ceil(deficit / lot_size) if deficit > 0 else 0
                 cantidad_neta = float(cant_pallets * lot_size)
-                bruto_def = max(0.0, stock_objetivo - stock_proyectado_inicio)
-                sugerido_bruto = float(math.ceil(bruto_def / lot_size) * lot_size) if tiene_deficit_doh else 0.0
+                bruto_def = max(0.0, max(stock_objetivo, piso_seguridad_1doh) - stock_proyectado_inicio)
+                sugerido_bruto = float(math.ceil(bruto_def / lot_size) * lot_size) if tiene_deficit else 0.0
             else:
                 cant_pallets = int(math.ceil(deficit)) if deficit > 0 else 0
                 cantidad_neta = float(cant_pallets)
-                sugerido_bruto = float(int(math.ceil(max(0.0, stock_objetivo - stock_proyectado_inicio)))) if tiene_deficit_doh else 0.0
+                sugerido_bruto = float(int(math.ceil(max(0.0, max(stock_objetivo, piso_seguridad_1doh) - stock_proyectado_inicio)))) if tiene_deficit else 0.0
 
             desglose_turnos: Dict[str, float] = {}
             sugerido_por_turno: Dict[str, float] = {}
@@ -327,7 +346,14 @@ class PedidoService:
                     lote_minimo=m["lote_mts"],
                     tipo_empaque=tipo_empaque,
                     tamanio_lote=lot_size if es_pallet else None,
+                    unidad_por_bulto=m.get("unidad_por_bulto"),
+                    bultos_por_pallet=m.get("bultos_por_pallet"),
                     cantidad_pallets_sugerida=cant_pallets if es_pallet else 0,
+                    cantidad_bultos_sugerida=(
+                        int(cant_pallets * m["bultos_por_pallet"])
+                        if (es_pallet and m.get("bultos_por_pallet") and m["bultos_por_pallet"] > 0)
+                        else None
+                    ),
                     pallets_por_turno=pallets_por_turno if es_pallet else {},
                     pedidos_existentes=pedidos_items,
                     cantidad_ya_pedida_total=total_ya_pedido,
@@ -467,6 +493,8 @@ class PedidoService:
                         tipo_empaque=m.get("tipo_empaque", "unidad"),
                         tamanio_lote=float(m.get("tamanio_lote", 1.0)),
                         cantidad_pallets=m.get("cantidad_pallets"),
+                        bultos_por_pallet=m.get("bultos_por_pallet"),
+                        cantidad_bultos=m.get("cantidad_bultos"),
                     )
                     for m in r.get("items", [])
                 ],
@@ -528,6 +556,8 @@ class PedidoService:
                         tipo_empaque=m.get("tipo_empaque", "unidad"),
                         tamanio_lote=float(m.get("tamanio_lote", 1.0)),
                         cantidad_pallets=m.get("cantidad_pallets"),
+                        bultos_por_pallet=m.get("bultos_por_pallet"),
+                        cantidad_bultos=m.get("cantidad_bultos"),
                     )
                     for m in r.get("items", [])
                 ],
@@ -567,6 +597,8 @@ class PedidoService:
                     tipo_empaque=m.get("tipo_empaque", "unidad"),
                     tamanio_lote=float(m.get("tamanio_lote", 1.0)),
                     cantidad_pallets=m.get("cantidad_pallets"),
+                    bultos_por_pallet=m.get("bultos_por_pallet"),
+                    cantidad_bultos=m.get("cantidad_bultos"),
                 )
                 for m in data.get("items", [])
             ],

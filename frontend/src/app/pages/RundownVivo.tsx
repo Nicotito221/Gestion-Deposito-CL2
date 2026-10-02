@@ -2411,13 +2411,43 @@ export function RundownVivo() {
                               <tr className="hover:bg-emerald-50/30">
                                 <td className="sticky left-0 z-10 bg-white font-medium text-emerald-700 px-3 py-1.5 border-r border-slate-200 flex items-center gap-1.5">
                                   <Truck className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>Transf. CL2</span>
+                                  <span>Arribo Prov. Local</span>
                                 </td>
                                 {mat.dias.map((d) => (
-                                  <td key={d.fecha} className="px-2 py-1.5 text-center font-mono border-r border-slate-100">
+                                  <td
+                                    key={d.fecha}
+                                    onClick={() => {
+                                      if (!draggedPedido) {
+                                        handleCellClickIngreso(
+                                          mat.id_material,
+                                          d.fecha,
+                                          d.dia_nombre,
+                                          "Local",
+                                          d.entregas_locales,
+                                          d.local_po,
+                                          d.local_factura,
+                                          d.local_obs,
+                                          d.local_estado
+                                        );
+                                      }
+                                    }}
+                                    className="px-2 py-1.5 text-center font-mono border-r border-slate-100 hover:bg-emerald-100/60 cursor-pointer"
+                                    title={
+                                      d.local_factura || d.local_po
+                                        ? `Factura: ${d.local_factura || "—"} | PO: ${d.local_po || "—"}${d.local_obs ? ` (${d.local_obs})` : ""}`
+                                        : (d.entregas_locales || 0) > 0
+                                          ? "Haz clic para ver/editar ingreso local"
+                                          : "Haz clic para cargar ingreso local"
+                                    }
+                                  >
                                     {(d.entregas_locales || 0) > 0 ? (
                                       <span className="inline-flex items-center gap-0.5 bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded text-[11px]">
                                         +{(d.entregas_locales || 0).toLocaleString()}
+                                        {(d.local_factura || d.local_po) && (
+                                          <span className="text-[9px] font-mono text-emerald-950 font-normal ml-0.5 px-1 py-0 bg-emerald-200/80 rounded">
+                                            #{d.local_factura || d.local_po}
+                                          </span>
+                                        )}
                                         {d.local_estado === "confirmado" ? (
                                           <span className="text-[9px] font-semibold text-emerald-700 ml-0.5 px-1 py-0 bg-emerald-200/80 rounded" title="Confirmado">
                                             ✓ Conf

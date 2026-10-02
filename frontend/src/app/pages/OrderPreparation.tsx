@@ -535,7 +535,18 @@ export function OrderPreparation() {
                               </span>
                               <span className="font-mono font-bold text-xs text-slate-900">
                                 {m.cantidad_pallets !== null && m.cantidad_pallets !== undefined ? (
-                                  <>{m.cantidad_pallets} {m.cantidad_pallets === 1 ? "Pallet" : "Pallets"} ({m.cantidad} {m.unidad})</>
+                                  <>
+                                    {m.cantidad_pallets} {m.cantidad_pallets === 1 ? "Pallet" : "Pallets"}
+                                    {m.tipo_empaque === "rollo" && m.bultos_por_pallet ? (
+                                      <span className="text-amber-800 font-sans font-semibold ml-1">
+                                        ({m.cantidad_pallets * m.bultos_por_pallet} Rollos)
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-500 font-normal font-sans ml-1">
+                                        ({m.cantidad} {m.unidad})
+                                      </span>
+                                    )}
+                                  </>
                                 ) : (
                                   <>{m.cantidad} {m.unidad}</>
                                 )}

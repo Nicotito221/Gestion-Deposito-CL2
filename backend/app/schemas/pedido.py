@@ -47,7 +47,10 @@ class SugerenciaMaterialDetalle(BaseModel):
     lote_minimo: Optional[float] = None
     tipo_empaque: str = "pallet"
     tamanio_lote: Optional[float] = None
+    unidad_por_bulto: Optional[float] = None
+    bultos_por_pallet: Optional[int] = None
     cantidad_pallets_sugerida: int = 0
+    cantidad_bultos_sugerida: Optional[int] = None
     pallets_por_turno: Dict[str, int] = {}
     pedidos_existentes: List[PedidoExistenteItem] = []
     cantidad_ya_pedida_total: float = 0.0
@@ -130,6 +133,8 @@ class RemitoItemOut(BaseModel):
     tipo_empaque: Optional[str] = "unidad"
     tamanio_lote: Optional[float] = 1.0
     cantidad_pallets: Optional[int] = None
+    bultos_por_pallet: Optional[int] = None
+    cantidad_bultos: Optional[int] = None
 
 
 class RemitoDetalleOut(BaseModel):

@@ -483,7 +483,8 @@ class PedidoRepository:
                     SELECT mr.id_material, m.nombre, mr.cantidad,
                            ISNULL(m.unidad, 'UN') AS unidad,
                            COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
-                           COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
+                           COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote,
+                           COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet
                     FROM dbo.material_remito mr
                     LEFT JOIN dbo.material m ON mr.id_material = m.id_material
                     LEFT JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
@@ -500,10 +501,12 @@ class PedidoRepository:
                     cant = float(mr[2] or 0.0)
                     tipo_emp = str(mr[4] or "unidad").lower()
                     tam_lote = float(mr[5] or 1.0)
-                    if tipo_emp == "pallet" and tam_lote > 1 and cant >= tam_lote:
+                    bultos_pp = int(mr[6]) if mr[6] is not None and int(mr[6]) > 0 else None
+                    if tipo_emp in ("pallet", "rollo") and tam_lote > 1 and cant >= tam_lote:
                         cp = int(round(cant / tam_lote)) if cant > 0 else 0
                     else:
                         cp = None
+                    cb = (cp * bultos_pp) if (tipo_emp == "rollo" and cp and bultos_pp) else None
                     if cp:
                         tot_pallets += cp
                     tot_unidades += cant
@@ -515,6 +518,8 @@ class PedidoRepository:
                         "tipo_empaque": tipo_emp,
                         "tamanio_lote": tam_lote,
                         "cantidad_pallets": cp,
+                        "bultos_por_pallet": bultos_pp,
+                        "cantidad_bultos": cb,
                     })
 
                 remitos.append({
@@ -579,7 +584,8 @@ class PedidoRepository:
                 SELECT mr.id_material, m.nombre, mr.cantidad,
                        ISNULL(m.unidad, 'UN') AS unidad,
                        COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
-                       COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
+                       COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote,
+                       COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet
                 FROM dbo.material_remito mr
                 LEFT JOIN dbo.material m ON mr.id_material = m.id_material
                 LEFT JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
@@ -596,10 +602,12 @@ class PedidoRepository:
                 cant = float(mr[2] or 0.0)
                 tipo_emp = str(mr[4] or "unidad").lower()
                 tam_lote = float(mr[5] or 1.0)
-                if tipo_emp == "pallet" and tam_lote > 1 and cant >= tam_lote:
+                bultos_pp = int(mr[6]) if mr[6] is not None and int(mr[6]) > 0 else None
+                if tipo_emp in ("pallet", "rollo") and tam_lote > 1 and cant >= tam_lote:
                     cp = int(round(cant / tam_lote)) if cant > 0 else 0
                 else:
                     cp = None
+                cb = (cp * bultos_pp) if (tipo_emp == "rollo" and cp and bultos_pp) else None
                 if cp:
                     tot_pallets += cp
                 tot_unidades += cant
@@ -611,6 +619,8 @@ class PedidoRepository:
                     "tipo_empaque": tipo_emp,
                     "tamanio_lote": tam_lote,
                     "cantidad_pallets": cp,
+                    "bultos_por_pallet": bultos_pp,
+                    "cantidad_bultos": cb,
                 })
 
             return {
