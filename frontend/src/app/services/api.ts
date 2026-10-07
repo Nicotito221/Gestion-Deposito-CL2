@@ -1686,8 +1686,11 @@ export async function loginUser(username: string, password: string): Promise<Log
     });
 
     if (!res.ok) {
-      throw new Error("Usuario o contraseña incorrectos en nodo CL2.");
+      const errBody = await res.json().catch(() => ({}));
+      const msg = errBody.msg || errBody.error_description || errBody.message || "Usuario o contraseña incorrectos en nodo CL2.";
+      throw new Error(msg);
     }
+
 
     const authData = await res.json();
     const token = authData.access_token;
