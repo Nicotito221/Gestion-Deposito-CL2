@@ -373,6 +373,20 @@ class ConteoRepository:
                             ),
                         )
 
+                cursor.execute(
+                    """
+                    MERGE dbo.stock_deposito AS target
+                    USING (SELECT ? AS id_material, ? AS stock_planta) AS source
+                    ON (target.id_material = source.id_material)
+                    WHEN MATCHED THEN
+                        UPDATE SET stock_planta = source.stock_planta, fecha_actualizacion = ?
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                        VALUES (source.id_material, 0.0, source.stock_planta, 0.0, ?);
+                    """,
+                    (mat_id, stock_contado, now_ba, now_ba),
+                )
+
                 if desvio != 0:
                     cursor.execute(
                         """

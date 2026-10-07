@@ -38,3 +38,22 @@ def get_turno_sugerido_actual(dt: Optional[datetime] = None) -> str:
     elif 840 < total_minutes < 1380:
         return "Turno Tarde"
     return "Completo"
+
+
+HORAS_JORNADA_DIARIA = 21.38
+HORA_INICIO_JORNADA = 6.0
+
+
+def get_avance_jornada_produccion(dt: Optional[datetime] = None) -> tuple[float, float]:
+    if dt is None:
+        dt = get_argentina_now()
+    hora_actual = dt.hour + (dt.minute / 60.0) + (dt.second / 3600.0)
+    if hora_actual < HORA_INICIO_JORNADA:
+        return 0.0, 1.0
+    horas_transcurridas = hora_actual - HORA_INICIO_JORNADA
+    if horas_transcurridas >= HORAS_JORNADA_DIARIA:
+        return 1.0, 0.0
+    fraccion_transcurrida = min(1.0, max(0.0, horas_transcurridas / HORAS_JORNADA_DIARIA))
+    fraccion_restante = 1.0 - fraccion_transcurrida
+    return fraccion_transcurrida, fraccion_restante
+

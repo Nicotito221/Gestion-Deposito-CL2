@@ -45,6 +45,9 @@ import {
   ArrowRight,
   Eye,
   Check,
+  Upload,
+  Sparkles,
+  FileSearch,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
@@ -56,11 +59,13 @@ import {
   deleteIngreso,
   getRundownSecciones,
   searchMaterialesCatalogo,
+  parseInvoicePdf,
   type IngresoOut,
   type IngresoCreate,
   type IngresoConfirmarRecepcion,
   type RundownSeccionItem,
   type MaterialCatalogoItem,
+  type ParsedInvoiceResult,
 } from "../services/api";
 import { getTodayISODate } from "../components/ui/format";
 
@@ -100,7 +105,7 @@ export function Remitos() {
     orden_compra: "",
     fecha_emision: getTodayISODate(),
     observacion: "",
-    confirmar_inmediato: true,
+    confirmar_inmediato: false,
   });
   const [newItems, setNewItems] = useState<
     { id_material: string; nombre: string; unidad: string; cantidad: number; observacion: string }[]
@@ -108,6 +113,55 @@ export function Remitos() {
   const [matSearch, setMatSearch] = useState<string>("");
   const [matSearchResults, setMatSearchResults] = useState<MaterialCatalogoItem[]>([]);
   const [isSearchingMat, setIsSearchingMat] = useState<boolean>(false);
+
+  const [isParsingOcr, setIsParsingOcr] = useState<boolean>(false);
+  const [ocrResult, setOcrResult] = useState<ParsedInvoiceResult | null>(null);
+  const [ocrFileName, setOcrFileName] = useState<string>("");
+
+  const handleOcrFileSelect = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Seleccione un archivo en formato PDF.");
+      return;
+    }
+    setIsParsingOcr(true);
+    setOcrFileName(file.name);
+    try {
+      const res = await parseInvoicePdf(file);
+      setOcrResult(res);
+
+      setNewForm((prev) => ({
+        ...prev,
+        id_proveedor: res.id_proveedor ? String(res.id_proveedor) : prev.id_proveedor,
+        numero_factura: res.numero_factura || prev.numero_factura,
+        orden_compra: res.orden_compra || prev.orden_compra,
+        fecha_emision: res.fecha_emision || prev.fecha_emision,
+      }));
+
+      if (res.items && res.items.length > 0) {
+        const mappedItems = res.items.map((it) => ({
+          id_material: it.id_material,
+          nombre: it.nombre_material || it.id_material,
+          unidad: it.unidad || "UN",
+          cantidad: it.cantidad_facturada,
+          observacion: it.linea_origen ? `Detectado en PDF: "${it.linea_origen.slice(0, 60)}..."` : "",
+        }));
+        setNewItems(mappedItems);
+        toast.success(`OCR exitoso: ${res.items.length} material(es) detectado(s).`);
+      } else {
+        toast.info("PDF procesado: verifique o complete los materiales manualmente.");
+      }
+
+      if (res.warnings && res.warnings.length > 0) {
+        res.warnings.forEach((w) => toast.warning(w));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error al procesar el archivo con OCR";
+      toast.error(msg);
+    } finally {
+      setIsParsingOcr(false);
+    }
+  };
+
 
   const [recepcionModalOpen, setRecepcionModalOpen] = useState<boolean>(false);
   const [isSubmittingRec, setIsSubmittingRec] = useState<boolean>(false);
@@ -270,7 +324,7 @@ export function Remitos() {
         orden_compra: "",
         fecha_emision: getTodayISODate(),
         observacion: "",
-        confirmar_inmediato: true,
+        confirmar_inmediato: false,
       });
       setNewItems([]);
       await fetchIngresosList();
@@ -642,6 +696,75 @@ export function Remitos() {
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-xs">
+            {/* ZONA DE CARGA INTELIGENTE OCR / PDF */}
+            <div className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-blue-900 flex items-center gap-1.5 text-xs">
+                  <Sparkles className="w-4 h-4 text-blue-600 animate-pulse" />
+                  <span>Autocompletar con OCR (Factura PDF)</span>
+                </span>
+                {ocrResult?.debug_log_file && (
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    Log: {ocrResult.debug_log_file}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="flex-1 cursor-pointer">
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleOcrFileSelect(f);
+                    }}
+                    disabled={isParsingOcr}
+                  />
+                  <div className="flex items-center justify-center gap-2 border-2 border-dashed border-blue-300 hover:border-blue-500 hover:bg-white/80 transition-all rounded-md p-2.5 text-center bg-white/50">
+                    {isParsingOcr ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 text-blue-600 animate-spin" />
+                        <span className="font-medium text-blue-700">Analizando documento y extrayendo ítems...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 text-blue-600" />
+                        <span className="font-medium text-slate-700">
+                          {ocrFileName ? `Archivo: ${ocrFileName}` : "Arrastra o selecciona un PDF de Factura/Remito"}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </label>
+              </div>
+
+              {ocrResult && (
+                <div className="text-[11px] text-slate-600 bg-white/80 p-2 rounded border border-blue-100 flex items-center justify-between">
+                  <div>
+                    <span className="font-semibold text-emerald-700">✓ Extracción lista: </span>
+                    <span>{ocrResult.items.length} material(es) detectado(s).</span>
+                    {ocrResult.codigo_proveedor && (
+                      <span className="ml-1 text-slate-500 font-mono">({ocrResult.codigo_proveedor})</span>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] text-slate-500 hover:text-slate-700 px-1.5"
+                    onClick={() => {
+                      setOcrResult(null);
+                      setOcrFileName("");
+                    }}
+                  >
+                    Limpiar
+                  </Button>
+                </div>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold text-slate-700 flex items-center gap-1">
@@ -1083,6 +1206,9 @@ export function Remitos() {
               <FileText className="w-5 h-5 text-slate-700" />
               <span>Detalle de Comprobante #{selectedDetail?.numero_factura}</span>
             </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Información de la factura, materiales registrados y estado de entrega.
+            </DialogDescription>
           </DialogHeader>
 
           {selectedDetail && (

@@ -1,9 +1,15 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 
 from app.core.security import verify_access_token
-from app.schemas.ingreso import IngresoConfirmarRecepcion, IngresoCreate, IngresoOut
+from app.schemas.ingreso import (
+    IngresoConfirmarRecepcion,
+    IngresoCreate,
+    IngresoOut,
+    ParsedInvoiceResult,
+)
 from app.services.ingreso_service import IngresoService
+from app.services.invoice_parser_service import InvoiceParserService
 
 router = APIRouter(prefix="", tags=["Ingresos / Remitos de Proveedores"])
 
@@ -14,11 +20,35 @@ def get_ingreso_service() -> IngresoService:
     return IngresoService()
 
 
+def get_invoice_parser_service() -> InvoiceParserService:
+    return InvoiceParserService()
+
+
 def get_current_user_payload(authorization: Optional[str] = Header(None)) -> Optional[dict]:
     if not authorization or not authorization.startswith("Bearer "):
         return None
     token = authorization.split("Bearer ", 1)[1].strip()
     return verify_access_token(token)
+
+
+@router.post("/parse-document", response_model=ParsedInvoiceResult)
+async def parse_invoice_document(
+    file: UploadFile = File(...),
+    parser_service: InvoiceParserService = Depends(get_invoice_parser_service),
+) -> ParsedInvoiceResult:
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Formato de archivo no soportado. Debe ser un documento PDF.",
+        )
+    try:
+        content = await file.read()
+        return parser_service.parse_pdf_invoice(content, file.filename)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al procesar el archivo PDF: {str(e)}",
+        )
 
 
 @router.get("", response_model=List[IngresoOut])

@@ -236,8 +236,9 @@ export async function downloadExcelConsolidado(): Promise<void> {
   window.URL.revokeObjectURL(url);
 }
 
-export async function downloadSapPirTxt(): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/sap-pir`);
+export async function downloadSapPirTxt(fechaCorte?: string): Promise<void> {
+  const q = fechaCorte ? `?fecha_corte=${encodeURIComponent(fechaCorte)}` : "";
+  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/sap-pir${q}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al descargar archivo SAP PIR");
@@ -531,6 +532,7 @@ export interface RundownCalendarioDiaUpdate {
   fecha: string;
   es_laboral: boolean;
   observacion?: string | null;
+  factor?: number;
 }
 
 export interface RundownCalendarioMesSave {
@@ -679,6 +681,10 @@ export interface MaterialCatalogoItem {
   tamanio_lote?: number;
   id_proveedor?: number | null;
   proveedor_nombre?: string | null;
+  stock_planta?: number;
+  stock_cl2?: number;
+  stock_total?: number;
+  deposito_en_planta?: boolean;
 }
 
 export interface RundownParametroMaterialItem {
@@ -1875,6 +1881,47 @@ export interface IngresoOut {
   total_items: number;
   items: IngresoDetalleOut[];
 }
+
+export interface ParsedInvoiceItem {
+  id_material: string;
+  nombre_material?: string | null;
+  unidad?: string | null;
+  cantidad_facturada: number;
+  confianza: number;
+  linea_origen?: string | null;
+}
+
+export interface ParsedInvoiceResult {
+  id_proveedor?: number | null;
+  nombre_proveedor?: string | null;
+  codigo_proveedor?: string | null;
+  numero_factura?: string | null;
+  orden_compra?: string | null;
+  fecha_emision?: string | null;
+  items: ParsedInvoiceItem[];
+  total_paginas: number;
+  warnings: string[];
+  debug_log_file?: string | null;
+}
+
+export async function parseInvoicePdf(file: File): Promise<ParsedInvoiceResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const token = localStorage.getItem("auth_token");
+  const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+  const res = await fetch(`${API_BASE_URL}/api/ingresos/parse-document`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al procesar el archivo PDF con OCR");
+  }
+  return res.json();
+}
+
 
 export async function getIngresos(params?: {
   estado?: string;

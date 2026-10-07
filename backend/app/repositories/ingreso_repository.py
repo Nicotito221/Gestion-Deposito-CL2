@@ -402,8 +402,24 @@ class IngresoRepository:
                                     (id_param, id_prov, id_mat, fecha_recep_date, new_p, f"Ingreso proveedor {nro_factura} (#{id_ingreso})", user_id),
                                 )
                         else:
-                            cur_p = 0.0
-                            new_p = cant_delta
+                            cursor.execute("SELECT stock_planta FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
+                            sd_row = cursor.fetchone()
+                            cur_p = float(sd_row[0] or 0.0) if sd_row else 0.0
+                            new_p = round(cur_p + cant_delta, 2)
+
+                        cursor.execute(
+                            """
+                            MERGE dbo.stock_deposito AS target
+                            USING (SELECT ? AS id_material, ? AS delta) AS source
+                            ON (target.id_material = source.id_material)
+                            WHEN MATCHED THEN
+                                UPDATE SET stock_planta = target.stock_planta + source.delta, fecha_actualizacion = GETDATE()
+                            WHEN NOT MATCHED THEN
+                                INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                                VALUES (source.id_material, 0.0, source.delta, 0.0, GETDATE());
+                            """,
+                            (id_mat, cant_delta),
+                        )
 
                         cursor.execute(
                             """

@@ -45,8 +45,10 @@ import {
   GitFork,
   AlertCircle,
   X,
+  CalendarDays,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CalendarioLaboralModal } from "../components/CalendarioLaboralModal";
 import {
   getBomVersions,
   getSetComponentes,
@@ -82,6 +84,8 @@ export function SupplyOrderBom() {
   const [relations, setRelations] = useState<SetComponenteItem[]>([]);
   const [versions, setVersions] = useState<BomVersionItem[]>([]);
 
+  const [calModalOpen, setCalModalOpen] = useState<boolean>(false);
+
   const [loading, setLoading] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -96,6 +100,12 @@ export function SupplyOrderBom() {
   const [isProcessingDemand, setIsProcessingDemand] = useState<boolean>(false);
   const [isDownloadingExcel, setIsDownloadingExcel] = useState<boolean>(false);
   const [isDownloadingSap, setIsDownloadingSap] = useState<boolean>(false);
+  const [sapModalOpen, setSapModalOpen] = useState<boolean>(false);
+  const [sapAplicarCorte, setSapAplicarCorte] = useState<boolean>(true);
+  const [sapFechaCorte, setSapFechaCorte] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  });
 
   const [bomFile, setBomFile] = useState<File | null>(null);
   const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
@@ -147,6 +157,28 @@ export function SupplyOrderBom() {
       setLoading(false);
     }
   }, []);
+
+  const parsePeriodoToAnioMes = useCallback((pStr: string): { anio: number; mes: number } => {
+    const MESES: Record<string, number> = {
+      enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6,
+      julio: 7, agosto: 8, septiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+    };
+    const parts = (pStr || "").trim().toLowerCase().split(/\s+/);
+    if (parts.length >= 2) {
+      const mes = MESES[parts[0]] || 10;
+      const anio = parseInt(parts[1], 10) || new Date().getFullYear();
+      return { anio, mes };
+    }
+    return { anio: new Date().getFullYear(), mes: new Date().getMonth() + 1 };
+  }, []);
+
+  const { anio: calAnio, mes: calMes } = useMemo(() => {
+    return parsePeriodoToAnioMes(periodo);
+  }, [periodo, parsePeriodoToAnioMes]);
+
+  const handleOpenCalendario = () => {
+    setCalModalOpen(true);
+  };
 
   useEffect(() => {
     fetchData();
@@ -315,11 +347,21 @@ export function SupplyOrderBom() {
     }
   };
 
-  const handleDownloadSapPir = async () => {
+  const handleOpenSapModal = () => {
+    setSapModalOpen(true);
+  };
+
+  const handleConfirmDownloadSapPir = async () => {
     setIsDownloadingSap(true);
     try {
-      await downloadSapPirTxt();
-      toast.success("Archivo SAP PIR (.txt) descargado correctamente");
+      const corteParam = sapAplicarCorte && sapFechaCorte ? sapFechaCorte : undefined;
+      await downloadSapPirTxt(corteParam);
+      toast.success(
+        corteParam
+          ? `Archivo SAP PIR descargado (días anteriores a ${corteParam} en 0)`
+          : "Archivo SAP PIR descargado (mes completo)"
+      );
+      setSapModalOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al descargar SAP PIR");
     } finally {
@@ -503,6 +545,10 @@ export function SupplyOrderBom() {
                   <div>
                     <p className="text-white/60 text-xs uppercase tracking-wider">Período Planificado</p>
                     <p className="font-bold text-white text-base">{periodo}</p>
+                    <p className="text-emerald-400 text-xs font-medium mt-0.5 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      {dailyColumns.length} días productivos
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -727,7 +773,21 @@ export function SupplyOrderBom() {
                   Planilla de requerimientos diarios calculados frente a la receta activa en SQL Server
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpenCalendario}
+                  className="flex items-center gap-2 border-indigo-600 text-indigo-700 hover:bg-indigo-50 font-semibold"
+                >
+                  <CalendarDays className="w-4 h-4 text-indigo-600" />
+                  <span>Calendario de Producción</span>
+                  {dailyColumns.length > 0 && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 bg-indigo-100 text-indigo-800">
+                      {dailyColumns.length} días
+                    </Badge>
+                  )}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -742,7 +802,7 @@ export function SupplyOrderBom() {
                   variant="outline"
                   size="sm"
                   disabled={isDownloadingSap || filteredDemand.length === 0}
-                  onClick={handleDownloadSapPir}
+                  onClick={handleOpenSapModal}
                   className="flex items-center gap-2 border-blue-600 text-blue-700 hover:bg-blue-50 hover:text-blue-800"
                 >
                   <FileText className={`w-4 h-4 ${isDownloadingSap ? "animate-spin" : ""}`} />
@@ -1354,6 +1414,97 @@ export function SupplyOrderBom() {
             </Button>
             <Button onClick={handleSaveRelation} disabled={isSavingRelation}>
               {isSavingRelation ? "Guardando..." : editingRelation ? "Guardar Cambios" : "Crear Relación"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <CalendarioLaboralModal
+        open={calModalOpen}
+        onOpenChange={setCalModalOpen}
+        initialAnio={calAnio}
+        initialMes={calMes}
+        onSaved={fetchData}
+      />
+
+      {/* MODAL EXPORTACIÓN SAP PIR CON CORTE DE FECHA */}
+      <Dialog open={sapModalOpen} onOpenChange={setSapModalOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900">
+              <FileText className="w-5 h-5 text-blue-600" />
+              <span>Exportar Demanda a SAP PIR (.txt)</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-blue-900 space-y-1.5">
+              <p className="font-semibold flex items-center gap-1.5 text-xs text-blue-950">
+                <AlertCircle className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Actualización a SAP a mitad de período:</span>
+              </p>
+              <p className="text-[11px] text-blue-800 leading-relaxed">
+                Al cargar una actualización en SAP (por ejemplo, tras agregar un sábado o reajustar turnos),
+                SAP requiere recibir las fechas pasadas con <b>cantidad 0</b> para evitar duplicar consumos
+                ya ejecutados.
+              </p>
+              <p className="text-[11px] text-emerald-800 font-medium">
+                ✓ El Rundown Vivo y la base de datos permanecerán intactos, conservando su histórico real sin alteraciones.
+              </p>
+            </div>
+
+            <div className="space-y-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sapAplicarCorte}
+                  onChange={(e) => setSapAplicarCorte(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+                />
+                <div className="space-y-0.5">
+                  <span className="font-semibold text-slate-900 text-xs block">
+                    Poner en 0 los días anteriores a la fecha de corte
+                  </span>
+                  <span className="text-[11px] text-slate-500 block">
+                    Exporta con 0 los días ya consumidos y envía la producción planificada completa desde la fecha elegida hasta fin de mes.
+                  </span>
+                </div>
+              </label>
+
+              {sapAplicarCorte && (
+                <div className="pl-6 pt-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs font-semibold text-slate-700 whitespace-nowrap">
+                      Fecha de corte (desde):
+                    </Label>
+                    <Input
+                      type="date"
+                      value={sapFechaCorte}
+                      onChange={(e) => setSapFechaCorte(e.target.value)}
+                      className="h-8 text-xs font-mono max-w-[160px] bg-white"
+                    />
+                  </div>
+                  <div className="p-2 bg-amber-50/70 border border-amber-200 rounded text-[11px] text-amber-900">
+                    • <b>Días anteriores al {sapFechaCorte}:</b> se exportarán con cantidad <code>0</code> a SAP.<br />
+                    • <b>Días desde el {sapFechaCorte}:</b> se exportarán con las cantidades planificadas completas.
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setSapModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmDownloadSapPir}
+              disabled={isDownloadingSap}
+              className="bg-blue-600 text-white hover:bg-blue-700 gap-1.5"
+            >
+              <FileText className={`w-3.5 h-3.5 ${isDownloadingSap ? "animate-spin" : ""}`} />
+              <span>{isDownloadingSap ? "Generando TXT..." : "Descargar TXT SAP PIR"}</span>
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -39,7 +39,7 @@ class StockRepository:
                     where_clauses.append("ISNULL(prov.deposito_en_planta, 0) = 0 AND ISNULL(sd.stock_actual, 0.0) > 0")
                 else:
                     where_clauses.append(
-                        "(ISNULL(sd.stock_actual, 0.0) + ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0))) > 0"
+                        "(ISNULL(sd.stock_actual, 0.0) + COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0))) > 0"
                     )
 
             where_str = " AND ".join(where_clauses)
@@ -94,10 +94,10 @@ class StockRepository:
                         WHEN prov.deposito_en_planta = 1 THEN 0.0
                         ELSE CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT)
                     END AS stock_cl2,
-                    CAST(ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT) AS stock_planta,
+                    COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0)) AS stock_planta,
                     CASE 
-                        WHEN prov.deposito_en_planta = 1 THEN CAST(ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
-                        ELSE CAST(ISNULL(sd.stock_actual, 0.0) + ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
+                        WHEN prov.deposito_en_planta = 1 THEN COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0))
+                        ELSE CAST(ISNULL(sd.stock_actual, 0.0) + COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
                     END AS stock_total,
                     prov.id_proveedor,
                     prov.nombre AS nombre_proveedor,
@@ -193,10 +193,10 @@ class StockRepository:
                         WHEN prov.deposito_en_planta = 1 THEN 0.0
                         ELSE CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT)
                     END AS stock_cl2,
-                    CAST(ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT) AS stock_planta,
+                    COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0)) AS stock_planta,
                     CASE 
-                        WHEN prov.deposito_en_planta = 1 THEN CAST(ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
-                        ELSE CAST(ISNULL(sd.stock_actual, 0.0) + ISNULL(latest_adj.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
+                        WHEN prov.deposito_en_planta = 1 THEN COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0))
+                        ELSE CAST(ISNULL(sd.stock_actual, 0.0) + COALESCE(latest_adj.stock_ajustado, CAST(sd.stock_planta AS FLOAT), ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
                     END AS stock_total,
                     prov.id_proveedor,
                     ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta
@@ -344,6 +344,20 @@ class StockRepository:
                 ant_planta = mat_info["stock_planta"]
                 diff_planta = target_planta - ant_planta
                 if diff_planta != 0:
+                    cursor.execute(
+                        """
+                        MERGE dbo.stock_deposito AS target
+                        USING (SELECT ? AS id_material, ? AS stock_planta) AS source
+                        ON (target.id_material = source.id_material)
+                        WHEN MATCHED THEN
+                            UPDATE SET stock_planta = source.stock_planta, fecha_actualizacion = SYSUTCDATETIME()
+                        WHEN NOT MATCHED THEN
+                            INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                            VALUES (source.id_material, 0.0, source.stock_planta, 0.0, SYSUTCDATETIME());
+                        """,
+                        (id_material, target_planta),
+                    )
+
                     cursor.execute(
                         "SELECT id_parametro, id_proveedor FROM dbo.rundown_parametro_material WHERE id_material = ?",
                         (id_material,),

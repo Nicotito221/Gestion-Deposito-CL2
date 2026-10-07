@@ -1,9 +1,10 @@
 import os
 import shutil
 import tempfile
+from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
@@ -124,9 +125,11 @@ def export_excel_consolidado():
 
 
 @router.get("/exportar/sap-pir")
-def export_sap_pir_txt():
+def export_sap_pir_txt(
+    fecha_corte: Optional[date] = Query(None, description="Fecha de corte. Días anteriores irán en 0 para SAP."),
+):
     try:
-        temp_path, file_name = _service.export_sap_txt()
+        temp_path, file_name = _service.export_sap_txt(fecha_corte=fecha_corte)
         return FileResponse(
             path=temp_path,
             filename=file_name,

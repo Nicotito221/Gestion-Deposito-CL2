@@ -217,6 +217,7 @@ class RundownCalendarioDiaUpdate(BaseModel):
     fecha: str
     es_laboral: bool
     observacion: Optional[str] = Field(default=None, max_length=150)
+    factor: Optional[float] = Field(default=1.0, gt=0, le=1.0)
 
 
 class RundownCalendarioMesSave(BaseModel):
@@ -234,6 +235,10 @@ class MaterialCatalogoItem(BaseModel):
     tamanio_lote: Optional[float] = 1.0
     id_proveedor: Optional[int] = None
     proveedor_nombre: Optional[str] = None
+    stock_planta: float = 0.0
+    stock_cl2: float = 0.0
+    stock_total: float = 0.0
+    deposito_en_planta: bool = False
 
 
 class RundownParametroMaterialCreate(BaseModel):

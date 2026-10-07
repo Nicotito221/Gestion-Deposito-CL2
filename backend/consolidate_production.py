@@ -606,9 +606,12 @@ class ProductionConsolidator:
             self.register_demand_item(item)
 
     def get_sorted_columns(self) -> Tuple[List[str], List[str]]:
-        def sort_day_key(col: str) -> int:
+        def sort_day_key(col: str) -> Tuple[int, int, int]:
+            d_obj = self.resolve_date_obj(col)
+            if d_obj:
+                return (d_obj.year, d_obj.month, d_obj.day)
             m = re.match(r'^(\d{1,2})', col)
-            return int(m.group(1)) if m else 999
+            return (9999, 99, int(m.group(1))) if m else (9999, 99, 999)
 
         sorted_daily = sorted(self.daily_columns, key=sort_day_key)
         all_tentative = self.tentative_columns_f1 + [c for c in self.tentative_columns_f2 if c not in self.tentative_columns_f1]
@@ -890,12 +893,44 @@ class ProductionConsolidator:
         wb.save(output_filepath)
         wb.close()
 
-    def export_sap_txt(self, output_txt_path: str, default_centro: str = '1000', default_version: str = '00') -> None:
+    def resolve_date_obj(self, col_name: str) -> Optional[datetime.date]:
+        fecha_str = self.resolve_date_str(col_name)
+        try:
+            d_str, m_str, y_str = fecha_str.split('.')
+            return datetime.date(int(y_str), int(m_str), int(d_str))
+        except Exception:
+            return None
+
+    def export_sap_txt(
+        self,
+        output_txt_path: str,
+        default_centro: str = '1000',
+        default_version: str = '00',
+        fecha_corte: Optional[datetime.date] = None,
+        corte_dt: Optional[datetime.datetime] = None,
+    ) -> None:
         self.consolidate_bom()
 
         sorted_daily, all_tentative = self.get_sorted_columns()
         sap_tentative_cols = [c for c in all_tentative if 'TOTAL' not in c.upper()]
         all_val_cols = sorted_daily + sap_tentative_cols
+
+        try:
+            from app.core.time import get_argentina_today, get_avance_jornada_produccion
+            hoy = get_argentina_today()
+        except ImportError:
+            hoy = datetime.date.today()
+
+            def get_avance_jornada_produccion(dt=None):
+                now = dt or datetime.datetime.now()
+                h = now.hour + now.minute / 60.0 + now.second / 3600.0
+                if h < 6.0:
+                    return 0.0, 1.0
+                elapsed = h - 6.0
+                if elapsed >= 21.38:
+                    return 1.0, 0.0
+                frac = min(1.0, max(0.0, elapsed / 21.38))
+                return frac, 1.0 - frac
 
         unique_hijos: List[str] = []
         hijo_seen: Set[str] = set()
@@ -917,8 +952,33 @@ class ProductionConsolidator:
 
             for col in all_val_cols:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
-                if col_sum > 0:
-                    fecha_str = self.resolve_date_str(col)
+                col_date = self.resolve_date_obj(col)
+                fecha_str = self.resolve_date_str(col)
+
+                if fecha_corte is not None and col_date is not None and col_date < fecha_corte:
+                    output_rows.append([
+                        'X',
+                        mat_code,
+                        centro,
+                        default_version,
+                        fecha_str,
+                        'D',
+                        '0'
+                    ])
+                elif col_date is not None and col_date == hoy:
+                    _, fraccion_restante = get_avance_jornada_produccion(corte_dt)
+                    cant_rem = int(round(col_sum * fraccion_restante))
+                    if col_sum > 0 or (fecha_corte is not None and col_date >= fecha_corte):
+                        output_rows.append([
+                            'X',
+                            mat_code,
+                            centro,
+                            default_version,
+                            fecha_str,
+                            'D',
+                            str(cant_rem)
+                        ])
+                elif col_sum > 0:
                     cant_str = str(int(round(col_sum)))
                     output_rows.append([
                         'X',

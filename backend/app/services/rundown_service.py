@@ -557,6 +557,10 @@ class RundownService:
                 tamanio_lote=r.get("tamanio_lote", 1.0),
                 id_proveedor=r.get("id_proveedor"),
                 proveedor_nombre=r.get("proveedor_nombre"),
+                stock_planta=r.get("stock_planta", 0.0),
+                stock_cl2=r.get("stock_cl2", 0.0),
+                stock_total=r.get("stock_total", 0.0),
+                deposito_en_planta=r.get("deposito_en_planta", False),
             )
             for r in rows
         ]
@@ -574,6 +578,10 @@ class RundownService:
             tamanio_lote=r.get("tamanio_lote", 1.0),
             id_proveedor=r.get("id_proveedor"),
             proveedor_nombre=r.get("proveedor_nombre"),
+            stock_planta=r.get("stock_planta", 0.0),
+            stock_cl2=r.get("stock_cl2", 0.0),
+            stock_total=r.get("stock_total", 0.0),
+            deposito_en_planta=r.get("deposito_en_planta", False),
         )
 
     def get_materiales_proveedor(
@@ -683,10 +691,10 @@ class RundownService:
 
     def save_calendario_mes(self, data: RundownCalendarioMesSave) -> bool:
         tuplas = [
-            (date.fromisoformat(d.fecha), d.es_laboral, d.observacion)
+            (date.fromisoformat(d.fecha), d.es_laboral, d.observacion, getattr(d, "factor", 1.0) or 1.0)
             for d in data.dias
         ]
-        return self._repo.save_calendario_dias(tuplas)
+        return self._repo.save_calendario_dias_con_suministro(data.anio, data.mes, tuplas)
 
     def get_periodos_proyeccion(self) -> List[RundownPeriodoProyeccionItem]:
         MESES_NOMBRES = (

@@ -66,3 +66,26 @@ class IngresoOut(BaseModel):
     observacion: Optional[str] = None
     total_items: int = 0
     items: List[IngresoDetalleOut] = []
+
+
+class ParsedInvoiceItem(BaseModel):
+    id_material: str
+    nombre_material: Optional[str] = None
+    unidad: Optional[str] = None
+    cantidad_facturada: float
+    confianza: float = 1.0
+    linea_origen: Optional[str] = None
+
+
+class ParsedInvoiceResult(BaseModel):
+    id_proveedor: Optional[int] = None
+    nombre_proveedor: Optional[str] = None
+    codigo_proveedor: Optional[str] = None
+    numero_factura: Optional[str] = None
+    orden_compra: Optional[str] = None
+    fecha_emision: Optional[str] = None
+    items: List[ParsedInvoiceItem] = []
+    total_paginas: int = 1
+    warnings: List[str] = []
+    debug_log_file: Optional[str] = None
+
