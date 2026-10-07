@@ -6,8 +6,10 @@ import secrets
 import time
 from typing import Any, Dict, Optional
 
-SECRET_KEY: str = "gestion-deposito-secret-key-2026-production"
+from app.core.config import SECRET_KEY
+
 ALGORITHM: str = "sha256"
+
 ITERATIONS: int = 100000
 
 

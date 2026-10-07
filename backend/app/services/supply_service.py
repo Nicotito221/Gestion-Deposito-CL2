@@ -134,13 +134,15 @@ class SupplyService:
 
         filename, rows = self.repository.get_latest_demand_for_export()
 
-        month_counts: dict = {}
+        month_dates: dict = {}
         for _, fecha_dt, cant, _, _, _ in rows:
             if float(cant or 0.0) > 0 and hasattr(fecha_dt, "year") and hasattr(fecha_dt, "month"):
                 k = (fecha_dt.year, fecha_dt.month)
-                month_counts[k] = month_counts.get(k, 0) + 1
+                month_dates.setdefault(k, set()).add(fecha_dt)
 
-        firm_key = max(month_counts.keys(), key=lambda k: month_counts[k]) if month_counts else (2026, 9)
+        daily_month_keys = {k for k, d_set in month_dates.items() if len(d_set) > 1}
+        if not daily_month_keys and month_dates:
+            daily_month_keys = {min(month_dates.keys())}
 
         for prod_id, fecha_dt, cant, desc, tasa, centro in rows:
             canonical = clean_code(prod_id)
@@ -148,7 +150,7 @@ class SupplyService:
             item.n_parte = format_part_number(prod_id)
             item.codigo_tasa_tbar = format_part_number(tasa)
             item.descripcion = str(desc or "")
-            if (fecha_dt.year, fecha_dt.month) == firm_key:
+            if (fecha_dt.year, fecha_dt.month) in daily_month_keys:
                 col_name = f"{fecha_dt.day}-{SPANISH_MONTHS.get(fecha_dt.month, 'mes')}"
                 if col_name not in consolidator.daily_columns:
                     consolidator.daily_columns.append(col_name)
@@ -174,14 +176,15 @@ class SupplyService:
         out_name = f"{base_name}_Demanda_BOM_Consumo.xlsx"
         return temp_path, out_name
 
-    def export_sap_txt(self) -> Tuple[str, str]:
+    def export_sap_txt(self, fecha_corte: Optional[datetime.date] = None) -> Tuple[str, str]:
         consolidator, filename = self._build_consolidator_from_db()
         temp_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
         temp_path = temp_file.name
         temp_file.close()
 
-        consolidator.export_sap_txt(temp_path)
+        consolidator.export_sap_txt(temp_path, fecha_corte=fecha_corte)
         base_name = os.path.splitext(filename)[0] if filename else "Demanda"
-        out_name = f"{base_name}_SAP_PIR.txt"
+        corte_sufijo = f"_desde_{fecha_corte.strftime('%Y%m%d')}" if fecha_corte else ""
+        out_name = f"{base_name}_SAP_PIR{corte_sufijo}.txt"
         return temp_path, out_name
 

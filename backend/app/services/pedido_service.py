@@ -1,9 +1,9 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import math
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 
-from app.core.time import get_argentina_today, get_turno_sugerido_actual
+from app.core.time import get_argentina_today, get_turno_sugerido_actual, get_avance_jornada_produccion
 from app.repositories.conteo_repository import ConteoRepository
 from app.repositories.pedido_repository import PedidoRepository
 from app.schemas.pedido import (
@@ -46,9 +46,14 @@ class PedidoService:
             counts_map[mat_id] = float(st)
         fecha_conteo: date = request.fecha_conteo or ref_date
 
+        hora_conteo_dt: Optional[datetime] = None
+
         if request.id_conteo:
             conteo = self._conteo_repo.get_conteo_detalle(request.id_conteo)
             if conteo:
+                raw_fh = conteo.get("fecha_finalizacion") or conteo.get("fecha_inicio")
+                if isinstance(raw_fh, datetime):
+                    hora_conteo_dt = raw_fh
                 if conteo.get("fecha_impacto"):
                     try:
                         raw_f = conteo["fecha_impacto"]
@@ -82,10 +87,15 @@ class PedidoService:
                         f_imp = raw_f if isinstance(raw_f, date) else datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
                         if f_imp >= ref_date:
                             fecha_conteo = f_imp
+                            raw_fh = conteo.get("fecha_finalizacion") or conteo.get("fecha_inicio")
+                            if isinstance(raw_fh, datetime):
+                                hora_conteo_dt = raw_fh
                             for it in conteo.get("items", []):
                                 counts_map[it["id_material"]] = float(it["stock_contado"])
                     except Exception:
                         pass
+
+        _, fraccion_restante = get_avance_jornada_produccion(hora_conteo_dt)
 
         materiales = self._repo.get_materiales_para_sugerencia(ids_to_query)
 
@@ -199,11 +209,13 @@ class PedidoService:
 
             if fecha_req <= today:
                 stock_proyectado_inicio = stock_contado
+                consumo_evaluar_hoy = round(consumo_diario * fraccion_restante, 2)
             else:
                 dias_avance = (fecha_req - today).days
-                consumo_intermedio = consumo_hoy * dias_avance
+                consumo_intermedio = round(consumo_hoy * fraccion_restante, 2) + round(consumo_hoy * (dias_avance - 1), 2)
                 pedidos_intermedios = pedidos_hoy_map.get(mat_id, 0.0)
                 stock_proyectado_inicio = round(stock_contado + pedidos_intermedios - consumo_intermedio, 2)
+                consumo_evaluar_hoy = consumo_diario
 
             mat_pedidos = pedidos_por_mat.get(mat_id, [])
             pedidos_items = [
@@ -232,15 +244,16 @@ class PedidoService:
             stock_con_pedidos = round(stock_proyectado_inicio + total_ya_pedido, 2)
 
             doh = m["doh_sugerido_planta"]
-            stock_umbral_doh = round(consumo_diario * doh, 2)
-            tiene_deficit_doh = (consumo_diario > 0) and (stock_con_pedidos < stock_umbral_doh)
+            stock_umbral_doh = round(consumo_evaluar_hoy * doh, 2)
+            tiene_deficit_doh = (consumo_evaluar_hoy > 0) and (stock_con_pedidos < stock_umbral_doh)
 
-            stock_objetivo = round(consumo_diario + (factor_consumo_sig * consumo_sig), 2)
+            stock_objetivo = round(consumo_evaluar_hoy + (factor_consumo_sig * consumo_sig), 2)
             stock_minimo_inicio = stock_umbral_doh
 
             deficit_operativo = max(0.0, round(stock_objetivo - stock_con_pedidos, 2)) if tiene_deficit_doh else 0.0
 
-            piso_seguridad_1doh = consumo_prom_mes if consumo_prom_mes > 0 else (consumo_diario if consumo_diario > 0 else consumo_hoy)
+            base_piso = consumo_prom_mes if consumo_prom_mes > 0 else (consumo_diario if consumo_diario > 0 else consumo_hoy)
+            piso_seguridad_1doh = round(base_piso * (fraccion_restante if fecha_req <= today else 1.0), 2)
             deficit_seguridad_mes = 0.0
             if piso_seguridad_1doh > 0 and stock_con_pedidos < piso_seguridad_1doh:
                 deficit_seguridad_mes = max(0.0, round(piso_seguridad_1doh - stock_con_pedidos, 2))
@@ -337,7 +350,7 @@ class PedidoService:
                     stock_contado=stock_contado,
                     stock_cl2=float(m.get("stock_cl2") or 0.0),
                     en_cl2=bool(m.get("en_cl2", True)),
-                    consumo_diario=consumo_diario,
+                    consumo_diario=round(consumo_evaluar_hoy, 2) if fecha_req <= today else consumo_diario,
                     consumo_sig=consumo_sig,
                     doh_sugerido_planta=doh,
                     stock_objetivo=stock_objetivo,

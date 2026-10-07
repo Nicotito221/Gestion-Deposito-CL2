@@ -96,6 +96,22 @@ class SupplyRepository:
             rows = cursor.fetchall()
 
             if rows:
+                cursor.execute(
+                    """
+                    SELECT YEAR(fecha) AS anio, MONTH(fecha) AS mes, COUNT(DISTINCT fecha) AS cant_fechas
+                    FROM dbo.produccion_planificada
+                    WHERE fecha >= ?
+                    GROUP BY YEAR(fecha), MONTH(fecha)
+                    """,
+                    (firm_start_date,),
+                )
+                meses_info = cursor.fetchall()
+                daily_months_set = {
+                    (int(r[0]), int(r[1]))
+                    for r in meses_info
+                    if int(r[2]) > 1 or (int(r[0]), int(r[1])) == (firm_year, firm_month)
+                }
+
                 daily_dates: Dict[datetime.date, str] = {}
                 tent_months: Dict[Tuple[int, int], str] = {}
                 grouped: Dict[str, Dict[str, object]] = {}
@@ -118,7 +134,7 @@ class SupplyRepository:
                             "total": 0.0,
                         }
 
-                    if (fecha_dt.year, fecha_dt.month) == (firm_year, firm_month):
+                    if (fecha_dt.year, fecha_dt.month) in daily_months_set:
                         col_label = f"{fecha_dt.day}-{SPANISH_MONTHS.get(fecha_dt.month, 'mes')}"
                         daily_dates[fecha_dt] = col_label
                         d_values = grouped[prod_id]["daily_values"]  # type: ignore
@@ -133,12 +149,41 @@ class SupplyRepository:
 
                     grouped[prod_id]["total"] = float(grouped[prod_id]["total"]) + cant
 
+                for ym in daily_months_set:
+                    cursor.execute(
+                        """
+                        SELECT fecha, es_laboral
+                        FROM dbo.rundown_calendario_laboral
+                        WHERE YEAR(fecha) = ? AND MONTH(fecha) = ?
+                        """,
+                        (ym[0], ym[1]),
+                    )
+                    cal_rows = cursor.fetchall()
+                    if cal_rows:
+                        cal_laborales = {r[0] for r in cal_rows if bool(r[1])}
+                        cal_no_laborales = {r[0] for r in cal_rows if not bool(r[1])}
+                        for nld in cal_no_laborales:
+                            daily_dates.pop(nld, None)
+                        for ld in cal_laborales:
+                            if ld not in daily_dates:
+                                daily_dates[ld] = f"{ld.day}-{SPANISH_MONTHS.get(ld.month, 'mes')}"
+
                 sorted_daily = [daily_dates[d] for d in sorted(daily_dates.keys())]
                 sorted_tent = [tent_months[k] for k in sorted(tent_months.keys())]
                 columnas_fechas_map = {daily_dates[d]: d.strftime("%Y-%m-%d") for d in sorted(daily_dates.keys())}
 
                 items: List[DemandRowOut] = []
                 for idx, (prod_id, data) in enumerate(grouped.items()):
+                    d_values_raw = data.get("daily_values", {})
+                    t_values_raw = data.get("tentative_values", {})
+                    d_vals = {
+                        c: int(round(float(d_values_raw.get(c, 0.0))))  # type: ignore
+                        for c in sorted_daily
+                    }
+                    t_vals = {
+                        c: int(round(float(t_values_raw.get(c, 0.0))))  # type: ignore
+                        for c in sorted_tent
+                    }
                     items.append(
                         DemandRowOut(
                             id=str(idx + 1),
@@ -148,17 +193,21 @@ class SupplyRepository:
                             dock="DK-01",
                             box_type="RACK-A",
                             qty_per_box=1,
-                            daily_values=data["daily_values"],  # type: ignore
-                            tentative_values=data["tentative_values"],  # type: ignore
-                            tentative_total=float(data["tentative_total"]),
-                            total=float(data["total"]),
+                            daily_values=d_vals,
+                            tentative_values=t_vals,
+                            tentative_total=int(round(float(data["tentative_total"]))),
+                            total=int(round(float(data["total"]))),
                             status="validado",
                         )
                     )
 
                 total_demanda = sum(it.total for it in items)
                 piezas_validadas = sum(1 for it in items if it.status == "validado")
-                periodo_str = f"{SPANISH_FULL_MONTHS.get(firm_month, '')} {firm_year}"
+                sorted_dm = sorted(list(daily_months_set))
+                if len(sorted_dm) > 1:
+                    periodo_str = f"{SPANISH_FULL_MONTHS.get(sorted_dm[0][1], '')} - {SPANISH_FULL_MONTHS.get(sorted_dm[-1][1], '')} {sorted_dm[-1][0]}"
+                else:
+                    periodo_str = f"{SPANISH_FULL_MONTHS.get(firm_month, '')} {firm_year}"
 
                 return SupplySummaryOut(
                     periodo=periodo_str,
@@ -321,7 +370,7 @@ class SupplyRepository:
                     INSERT (id_producto, fecha, cantidad_planificada, id_importacion, id_usuario, fecha_carga)
                     VALUES (src.id_producto, src.fecha, src.cantidad_planificada, 1, src.id_usuario, SYSDATETIME());
                 """,
-                (id_producto, fecha, float(cantidad), user_id),
+                (id_producto, fecha, int(round(float(cantidad))), user_id),
             )
             conn.commit()
         finally:

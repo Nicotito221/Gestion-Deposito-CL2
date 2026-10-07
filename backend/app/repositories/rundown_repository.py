@@ -1166,6 +1166,94 @@ class RundownRepository:
             cursor.close()
             conn.close()
 
+    def save_calendario_dias_con_suministro(
+        self,
+        anio: int,
+        mes: int,
+        dias: List[Tuple[date, bool, Optional[str], float]],
+    ) -> bool:
+        if not dias:
+            return True
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            for f, es_lab, obs, _ in dias:
+                cursor.execute(
+                    """
+                    MERGE dbo.rundown_calendario_laboral AS target
+                    USING (SELECT ? AS fecha) AS source
+                    ON (target.fecha = source.fecha)
+                    WHEN MATCHED THEN
+                        UPDATE SET es_laboral = ?, observacion = ?, fecha_actualizacion = SYSUTCDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (fecha, es_laboral, observacion) VALUES (?, ?, ?);
+                    """,
+                    (f, 1 if es_lab else 0, obs, f, 1 if es_lab else 0, obs),
+                )
+
+            cursor.execute(
+                """
+                SELECT DISTINCT fecha
+                FROM dbo.produccion_planificada
+                WHERE YEAR(fecha) = ? AND MONTH(fecha) = ?
+                """,
+                (anio, mes),
+            )
+            fechas_existentes = {r[0] for r in cursor.fetchall()}
+
+            for f, es_lab, _, factor in dias:
+                if not es_lab:
+                    if f in fechas_existentes:
+                        cursor.execute(
+                            """
+                            DELETE FROM dbo.produccion_planificada
+                            WHERE fecha = ?
+                            """,
+                            (f,),
+                        )
+                else:
+                    if f not in fechas_existentes and len(fechas_existentes) > 0:
+                        cursor.execute(
+                            """
+                            SELECT 
+                                id_producto,
+                                SUM(cantidad_planificada) AS total_cant,
+                                COUNT(DISTINCT fecha) AS cant_dias,
+                                MAX(id_importacion) AS id_imp,
+                                MAX(id_usuario) AS id_usr
+                            FROM dbo.produccion_planificada
+                            WHERE YEAR(fecha) = ? AND MONTH(fecha) = ? AND fecha != ?
+                            GROUP BY id_producto
+                            """,
+                            (anio, mes, f),
+                        )
+                        prods = cursor.fetchall()
+                        eff_factor = factor if (factor and 0 < factor <= 1.0) else 1.0
+                        for p_row in prods:
+                            pid = str(p_row[0])
+                            total_c = float(p_row[1] or 0.0)
+                            dias_c = int(p_row[2] or 1)
+                            id_imp = int(p_row[3] or 1)
+                            id_usr = int(p_row[4] or 1)
+                            prom = (total_c / dias_c) if dias_c > 0 else 0.0
+                            nueva_cant = int(round(prom * eff_factor))
+                            if nueva_cant > 0:
+                                cursor.execute(
+                                    """
+                                    INSERT INTO dbo.produccion_planificada
+                                    (id_producto, fecha, cantidad_planificada, id_importacion, id_usuario, fecha_carga)
+                                    VALUES (?, ?, ?, ?, ?, SYSUTCDATETIME())
+                                    """,
+                                    (pid, f, nueva_cant, id_imp, id_usr),
+                                )
+                        fechas_existentes.add(f)
+
+            conn.commit()
+            return True
+        finally:
+            cursor.close()
+            conn.close()
+
     def get_produccion_mensual_productos(
         self, product_ids: List[str], anio: int, mes: int
     ) -> Dict[str, float]:
@@ -1261,12 +1349,24 @@ class RundownRepository:
                         1.0
                     ) AS FLOAT) AS tamanio_lote,
                     prov.id_proveedor,
-                    prov.nombre AS proveedor_nombre
+                    prov.nombre AS proveedor_nombre,
+                    ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta,
+                    CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT) AS stock_cl2,
+                    CAST(COALESCE(latest_adj.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT) AS stock_planta
                 FROM dbo.material m
+                LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
+                OUTER APPLY (
+                    SELECT TOP 1 
+                        CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado
+                    FROM dbo.rundown_stock_ajuste rsa
+                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
+                    ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
+                ) latest_adj
                 OUTER APPLY (
                     SELECT TOP 1
                         p.id_proveedor,
-                        p.nombre
+                        p.nombre,
+                        ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta
                     FROM (
                         SELECT id_proveedor_principal AS id_proveedor, 1 AS prioridad 
                         FROM dbo.material 
@@ -1288,7 +1388,8 @@ class RundownRepository:
                         tipo_empaque, 
                         lote_mts,
                         unidad_por_bulto,
-                        bultos_por_pallet
+                        bultos_por_pallet,
+                        stock_inicial_planta
                     FROM dbo.rundown_parametro_material
                     WHERE id_material = m.id_material AND activo = 1
                     ORDER BY id_parametro DESC
@@ -1298,8 +1399,14 @@ class RundownRepository:
                 """,
                 (limit, term, term),
             )
-            return [
-                {
+            rows = cursor.fetchall()
+            result = []
+            for r in rows:
+                dep_planta = bool(r[8])
+                stk_cl2 = float(r[9] or 0.0)
+                stk_planta = float(r[10] or 0.0)
+                stk_total = stk_planta if dep_planta else (stk_planta + stk_cl2)
+                result.append({
                     "id_material": str(r[0]),
                     "nombre": str(r[1] or ""),
                     "unidad": str(r[2] or "UN"),
@@ -1308,9 +1415,12 @@ class RundownRepository:
                     "tamanio_lote": float(r[5] or 1.0),
                     "id_proveedor": int(r[6]) if r[6] is not None else None,
                     "proveedor_nombre": str(r[7]) if r[7] else None,
-                }
-                for r in cursor.fetchall()
-            ]
+                    "deposito_en_planta": dep_planta,
+                    "stock_cl2": 0.0 if dep_planta else stk_cl2,
+                    "stock_planta": stk_planta,
+                    "stock_total": stk_total,
+                })
+            return result
         finally:
             cursor.close()
             conn.close()
@@ -1334,12 +1444,24 @@ class RundownRepository:
                         1.0
                     ) AS FLOAT) AS tamanio_lote,
                     prov.id_proveedor,
-                    prov.nombre AS proveedor_nombre
+                    prov.nombre AS proveedor_nombre,
+                    ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta,
+                    CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT) AS stock_cl2,
+                    CAST(COALESCE(latest_adj.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT) AS stock_planta
                 FROM dbo.material m
+                LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
+                OUTER APPLY (
+                    SELECT TOP 1 
+                        CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado
+                    FROM dbo.rundown_stock_ajuste rsa
+                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
+                    ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
+                ) latest_adj
                 OUTER APPLY (
                     SELECT TOP 1
                         p.id_proveedor,
-                        p.nombre
+                        p.nombre,
+                        ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta
                     FROM (
                         SELECT id_proveedor_principal AS id_proveedor, 1 AS prioridad 
                         FROM dbo.material 
@@ -1361,7 +1483,8 @@ class RundownRepository:
                         tipo_empaque, 
                         lote_mts,
                         unidad_por_bulto,
-                        bultos_por_pallet
+                        bultos_por_pallet,
+                        stock_inicial_planta
                     FROM dbo.rundown_parametro_material
                     WHERE id_material = m.id_material AND activo = 1
                     ORDER BY id_parametro DESC
@@ -1373,6 +1496,10 @@ class RundownRepository:
             r = cursor.fetchone()
             if not r:
                 return None
+            dep_planta = bool(r[8])
+            stk_cl2 = float(r[9] or 0.0)
+            stk_planta = float(r[10] or 0.0)
+            stk_total = stk_planta if dep_planta else (stk_planta + stk_cl2)
             return {
                 "id_material": str(r[0]),
                 "nombre": str(r[1] or ""),
@@ -1382,6 +1509,10 @@ class RundownRepository:
                 "tamanio_lote": float(r[5] or 1.0),
                 "id_proveedor": int(r[6]) if r[6] is not None else None,
                 "proveedor_nombre": str(r[7]) if r[7] else None,
+                "deposito_en_planta": dep_planta,
+                "stock_cl2": 0.0 if dep_planta else stk_cl2,
+                "stock_planta": stk_planta,
+                "stock_total": stk_total,
             }
         finally:
             cursor.close()
@@ -1451,22 +1582,48 @@ class RundownRepository:
 
             horizon_date = self._get_fecha_inicio_firme_cursor(cursor)
 
-            cursor.execute("SELECT ISNULL(stock_actual, 0.0) FROM dbo.stock_deposito WHERE id_material = ?", (data["id_material"],))
-            row_cl2 = cursor.fetchone()
-            curr_cl2 = float(row_cl2[0]) if row_cl2 else 0.0
+            cursor.execute(
+                """
+                SELECT 
+                    ISNULL(sd.stock_actual, 0.0) AS stock_cl2,
+                    ISNULL(sd.stock_planta, 0.0) AS stock_planta
+                FROM dbo.stock_deposito sd
+                WHERE sd.id_material = ?
+                """,
+                (data["id_material"],),
+            )
+            row_sd = cursor.fetchone()
+            curr_cl2 = float(row_sd[0]) if row_sd else 0.0
+            curr_planta = float(row_sd[1]) if row_sd else 0.0
 
             cursor.execute("SELECT ISNULL(deposito_en_planta, 0) FROM dbo.proveedor WHERE id_proveedor = ?", (id_proveedor,))
             row_dep = cursor.fetchone()
             is_dep_planta = bool(row_dep[0]) if row_dep else False
 
-            planta_in = float(data.get("stock_inicial_planta", 0.0) or 0.0)
+            raw_planta = data.get("stock_inicial_planta")
+            planta_in = float(raw_planta) if raw_planta is not None and float(raw_planta) > 0 else curr_planta
             explicit_total = data.get("stock_inicial_total")
             if is_dep_planta:
                 total_in = planta_in
-            elif explicit_total is not None and float(explicit_total) > planta_in:
+            elif explicit_total is not None and float(explicit_total) > 0:
                 total_in = float(explicit_total)
             else:
                 total_in = planta_in + curr_cl2
+
+            if planta_in > 0:
+                cursor.execute(
+                    """
+                    MERGE dbo.stock_deposito AS target
+                    USING (SELECT ? AS id_material, ? AS stock_planta) AS source
+                    ON (target.id_material = source.id_material)
+                    WHEN MATCHED THEN
+                        UPDATE SET stock_planta = source.stock_planta, fecha_actualizacion = SYSUTCDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                        VALUES (source.id_material, 0.0, source.stock_planta, 0.0, SYSUTCDATETIME());
+                    """,
+                    (data["id_material"], planta_in),
+                )
 
             if existing:
                 param_id = int(existing[0])

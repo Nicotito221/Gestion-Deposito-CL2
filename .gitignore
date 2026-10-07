@@ -8,10 +8,15 @@
 .copilot/
 .cursor/
 .cline/
+.claude/
+.gemini/
 *.skill
 SKILL.md
 mcp.json
 *.mcp.json
+*prompts*
+*.prompt
+
 
 # ==========================================
 # Variables de Entorno y Secretos
@@ -53,13 +58,32 @@ env/
 env.bak/
 venv.bak/
 
-# Logs y Bases de Datos / SQL Server Locales
+# Logs, Debugging y Archivos Temporales de Producción
 *.log
+*.log.*
+logs/
+log/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+debug/
+*debug*/
+*.dump
+*.stackdump
+*.crash
+
+# Bases de Datos / SQL Server Locales y Backups
 *.sqlite
 *.sqlite3
 *.mdf
 *.ldf
 *.bak
+backups/
+*seed_usuarios*
+
+
 
 # Testing & Coverage
 .pytest_cache/
@@ -78,6 +102,13 @@ dist/
 frontend/dist/
 dist-ssr/
 *.local
+
+# Hosting y Despliegues Externos
+.vercel/
+*.vercel.json
+vercel.json
+.netlify/
+
 
 # ==========================================
 # IDEs y Sistema Operativo

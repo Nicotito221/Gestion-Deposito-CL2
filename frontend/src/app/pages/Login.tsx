@@ -108,7 +108,7 @@ export function Login() {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-5">
-          Solo personal autorizado · v2.4
+          Solo personal autorizado
         </p>
       </div>
     </div>

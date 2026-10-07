@@ -848,8 +848,9 @@ class PedidoRepository:
 
                         cursor.execute(
                             """
-                            SELECT TOP 1 CAST(ISNULL(rsa.stock_ajustado, ISNULL(rpm.stock_inicial_planta, 0.0)) AS FLOAT)
+                            SELECT TOP 1 CAST(COALESCE(rsa.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT)
                             FROM dbo.material m
+                            LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
                             LEFT JOIN dbo.rundown_parametro_material rpm ON m.id_material = rpm.id_material AND rpm.activo = 1
                             OUTER APPLY (
                                 SELECT TOP 1 stock_ajustado
@@ -864,6 +865,20 @@ class PedidoRepository:
                         pl_row = cursor.fetchone()
                         pl_ant = float(pl_row[0] or 0.0) if pl_row and pl_row[0] is not None else 0.0
                         pl_post = round(pl_ant + delta, 2)
+
+                        cursor.execute(
+                            """
+                            MERGE dbo.stock_deposito AS target
+                            USING (SELECT ? AS id_material, ? AS delta) AS source
+                            ON (target.id_material = source.id_material)
+                            WHEN MATCHED THEN
+                                UPDATE SET stock_planta = target.stock_planta + source.delta, fecha_actualizacion = GETDATE()
+                            WHEN NOT MATCHED THEN
+                                INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                                VALUES (source.id_material, 0.0, source.delta, 0.0, GETDATE());
+                            """,
+                            (id_mat, delta),
+                        )
 
                         cursor.execute(
                             """

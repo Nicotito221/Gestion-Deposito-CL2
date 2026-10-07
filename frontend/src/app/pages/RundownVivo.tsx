@@ -62,6 +62,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CalendarioLaboralModal } from "../components/CalendarioLaboralModal";
 import {
   getRundownSecciones,
   createRundownSeccion,
@@ -296,9 +297,6 @@ export function RundownVivo() {
   const [savingScrap, setSavingScrap] = useState<boolean>(false);
 
   const [calModalOpen, setCalModalOpen] = useState<boolean>(false);
-  const [calData, setCalData] = useState<RundownCalendarioMesOut | null>(null);
-  const [calLoading, setCalLoading] = useState<boolean>(false);
-  const [calSaving, setCalSaving] = useState<boolean>(false);
   const [calSelectedAnio, setCalSelectedAnio] = useState<number>(2026);
   const [calSelectedMes, setCalSelectedMes] = useState<number>(10);
 
@@ -1164,12 +1162,19 @@ export function RundownVivo() {
   };
 
   const handleSelectCatalogoItem = (item: MaterialCatalogoItem) => {
+    const isDepPlanta = Boolean(item.deposito_en_planta);
+    const stPlanta = item.stock_planta ?? 0;
+    const stCl2 = isDepPlanta ? 0 : (item.stock_cl2 ?? 0);
+    const stTotal = item.stock_total ?? (stPlanta + stCl2);
+
     setNewMaterialForm((prev) => ({
       ...prev,
       id_material: item.id_material,
       descripcion: item.nombre || item.id_material,
       unidad: item.unidad || "MTS",
       lote_mts: item.tamanio_lote && item.tamanio_lote > 0 ? item.tamanio_lote : prev.lote_mts,
+      stock_inicial_planta: stPlanta,
+      stock_inicial_total: stTotal,
     }));
     if (item.id_proveedor) {
       setAdminMaterialProvId(item.id_proveedor);
@@ -1185,12 +1190,19 @@ export function RundownVivo() {
     try {
       const mat = await getMaterialCatalogoInfo(cleanCode);
       if (mat) {
+        const isDepPlanta = Boolean(mat.deposito_en_planta);
+        const stPlanta = mat.stock_planta ?? 0;
+        const stCl2 = isDepPlanta ? 0 : (mat.stock_cl2 ?? 0);
+        const stTotal = mat.stock_total ?? (stPlanta + stCl2);
+
         setNewMaterialForm((prev) => ({
           ...prev,
           id_material: mat.id_material,
           descripcion: mat.nombre || prev.descripcion,
           unidad: mat.unidad || prev.unidad || "MTS",
           lote_mts: mat.tamanio_lote && mat.tamanio_lote > 0 ? mat.tamanio_lote : prev.lote_mts,
+          stock_inicial_planta: stPlanta,
+          stock_inicial_total: stTotal,
         }));
         if (mat.id_proveedor) {
           setAdminMaterialProvId(mat.id_proveedor);
@@ -1372,20 +1384,6 @@ export function RundownVivo() {
     }
   };
 
-  const loadCalendarioMes = useCallback(async (anio: number, mes: number) => {
-    setCalLoading(true);
-    try {
-      const data = await getRundownCalendarioMes(anio, mes);
-      setCalData(data);
-      setCalSelectedAnio(anio);
-      setCalSelectedMes(mes);
-    } catch {
-      toast.error("Error al cargar calendario mensual");
-    } finally {
-      setCalLoading(false);
-    }
-  }, []);
-
   const handleOpenCalendarioModal = useCallback((anio?: number, mes?: number) => {
     let targetAnio = anio;
     let targetMes = mes;
@@ -1399,74 +1397,10 @@ export function RundownVivo() {
         targetMes = 10;
       }
     }
-    loadCalendarioMes(targetAnio, targetMes);
+    setCalSelectedAnio(targetAnio);
+    setCalSelectedMes(targetMes);
     setCalModalOpen(true);
-  }, [selectedPeriodo, loadCalendarioMes]);
-
-  const handleToggleDiaLaboral = (fecha: string) => {
-    if (!calData) return;
-    const newDias = calData.dias.map((d) =>
-      d.fecha === fecha ? { ...d, es_laboral: !d.es_laboral } : d
-    );
-    const newLaboralesCount = newDias.filter((d) => d.es_laboral).length;
-    const newPromedio = newLaboralesCount > 0
-      ? Math.round((calData.volumen_total_planificado / newLaboralesCount) * 10) / 10
-      : 0;
-    setCalData({
-      ...calData,
-      dias: newDias,
-      dias_laborales_count: newLaboralesCount,
-      promedio_diario_estimado: newPromedio,
-    });
-  };
-
-  const handlePresetDias = (tipo: "lun_vie" | "todos_sabados" | "sin_sabados") => {
-    if (!calData) return;
-    const newDias = calData.dias.map((d) => {
-      let esLab = d.es_laboral;
-      if (tipo === "lun_vie") {
-        esLab = d.dia_semana < 5;
-      } else if (tipo === "todos_sabados") {
-        if (d.dia_semana === 5) esLab = true;
-      } else if (tipo === "sin_sabados") {
-        if (d.dia_semana === 5) esLab = false;
-      }
-      return { ...d, es_laboral: esLab };
-    });
-    const newLaboralesCount = newDias.filter((d) => d.es_laboral).length;
-    const newPromedio = newLaboralesCount > 0
-      ? Math.round((calData.volumen_total_planificado / newLaboralesCount) * 10) / 10
-      : 0;
-    setCalData({
-      ...calData,
-      dias: newDias,
-      dias_laborales_count: newLaboralesCount,
-      promedio_diario_estimado: newPromedio,
-    });
-  };
-
-  const handleSaveCalendario = async () => {
-    if (!calData) return;
-    setCalSaving(true);
-    try {
-      await saveRundownCalendarioMes({
-        anio: calData.anio,
-        mes: calData.mes,
-        dias: calData.dias.map((d) => ({
-          fecha: d.fecha,
-          es_laboral: d.es_laboral,
-          observacion: d.observacion,
-        })),
-      });
-      toast.success(`Calendario de ${calData.mes_nombre} guardado exitosamente`);
-      setCalModalOpen(false);
-      await fetchRundown();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al guardar calendario");
-    } finally {
-      setCalSaving(false);
-    }
-  };
+  }, [selectedPeriodo]);
 
   const handleOpenPlanSemanalModal = () => {
     setPlanFile(null);
@@ -3112,9 +3046,16 @@ export function RundownVivo() {
                               <span className="font-mono font-bold text-slate-900">{m.id_material}</span>
                               <span className="text-slate-600 ml-2">{m.nombre}</span>
                             </div>
-                            <Badge variant="outline" className="text-[10px]">
-                              {m.unidad}
-                            </Badge>
+                            <div className="flex items-center gap-1.5">
+                              {((m.stock_total ?? 0) > 0 || (m.stock_planta ?? 0) > 0) && (
+                                <span className="text-[10px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded font-mono font-semibold">
+                                  Stock: {(m.stock_total ?? 0).toLocaleString("es-AR")}
+                                </span>
+                              )}
+                              <Badge variant="outline" className="text-[10px]">
+                                {m.unidad}
+                              </Badge>
+                            </div>
                           </button>
                         ))}
                       </div>
@@ -3767,197 +3708,14 @@ export function RundownVivo() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={calModalOpen} onOpenChange={setCalModalOpen}>
-        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pr-6">
-              <DialogTitle className="flex items-center gap-2">
-                <CalendarDays className="w-5 h-5 text-blue-600" />
-                <span>Calendario Productivo — Días Laborales</span>
-              </DialogTitle>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500 font-medium">Mes:</span>
-                <Select
-                  value={`${calSelectedAnio}-${calSelectedMes.toString().padStart(2, "0")}`}
-                  onValueChange={(val) => {
-                    const [a, m] = val.split("-").map(Number);
-                    loadCalendarioMes(a, m);
-                  }}
-                >
-                  <SelectTrigger className="h-8 text-xs w-44 font-medium">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(report?.meses_disponibles || [
-                      { periodo: "2026-09", anio: 2026, mes: 9, label: "Septiembre 2026", es_firme: true },
-                      { periodo: "2026-10", anio: 2026, mes: 10, label: "Octubre 2026", es_firme: false },
-                      { periodo: "2026-11", anio: 2026, mes: 11, label: "Noviembre 2026", es_firme: false },
-                      { periodo: "2026-12", anio: 2026, mes: 12, label: "Diciembre 2026", es_firme: false },
-                      { periodo: "2027-01", anio: 2027, mes: 1, label: "Enero 2027", es_firme: false },
-                      { periodo: "2027-02", anio: 2027, mes: 2, label: "Febrero 2027", es_firme: false },
-                    ]).map((m) => (
-                      <SelectItem key={m.periodo} value={m.periodo} className="text-xs">
-                        {m.label} {m.es_firme ? "(Firme)" : "(Proyección)"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </DialogHeader>
-
-          {calLoading ? (
-            <div className="py-12 text-center text-slate-400 space-y-2">
-              <RefreshCw className="w-6 h-6 animate-spin mx-auto text-blue-600" />
-              <p className="text-xs">Cargando días del calendario...</p>
-            </div>
-          ) : calData ? (
-            <div className="space-y-4 py-2">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div className="p-2.5 bg-emerald-50/60 border border-emerald-200 rounded-lg">
-                  <span className="text-[10px] font-semibold uppercase text-emerald-700">Días Laborales</span>
-                  <p className="text-xl font-black text-emerald-900 mt-0.5">{calData.dias_laborales_count}</p>
-                  <p className="text-[10px] text-emerald-600">Días de producción</p>
-                </div>
-                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                  <span className="text-[10px] font-semibold uppercase text-slate-500">Días No Laborales</span>
-                  <p className="text-xl font-black text-slate-800 mt-0.5">
-                    {calData.dias.length - calData.dias_laborales_count}
-                  </p>
-                  <p className="text-[10px] text-slate-500">Descansos y feriados</p>
-                </div>
-                <div className="p-2.5 bg-blue-50/60 border border-blue-200 rounded-lg">
-                  <span className="text-[10px] font-semibold uppercase text-blue-700">Volumen Planificado</span>
-                  <p className="text-xl font-black text-blue-950 mt-0.5">
-                    {calData.volumen_total_planificado.toLocaleString("es-AR")}
-                  </p>
-                  <p className="text-[10px] text-blue-600">Unidades vehiculares</p>
-                </div>
-                <div className="p-2.5 bg-indigo-50/60 border border-indigo-200 rounded-lg">
-                  <span className="text-[10px] font-semibold uppercase text-indigo-700">Promedio Diario</span>
-                  <p className="text-xl font-black text-indigo-950 mt-0.5">
-                    {calData.promedio_diario_estimado.toLocaleString("es-AR")}
-                  </p>
-                  <p className="text-[10px] text-indigo-600">Vehículos / día laboral</p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 rounded-lg border text-xs">
-                <span className="text-slate-600 font-medium">Ajustes rápidos:</span>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePresetDias("lun_vie")}
-                    className="h-7 text-xs bg-white"
-                  >
-                    Solo Lun-Vie
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePresetDias("todos_sabados")}
-                    className="h-7 text-xs bg-white text-emerald-700 border-emerald-200 hover:bg-emerald-50"
-                  >
-                    + Todos los Sábados
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePresetDias("sin_sabados")}
-                    className="h-7 text-xs bg-white text-slate-700"
-                  >
-                    - Quitar Sábados
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <div className="grid grid-cols-7 gap-1 text-center font-bold text-[11px] text-slate-500 mb-1">
-                  <div>LUN</div>
-                  <div>MAR</div>
-                  <div>MIÉ</div>
-                  <div>JUE</div>
-                  <div>VIE</div>
-                  <div className="text-blue-600">SÁB</div>
-                  <div className="text-red-500">DOM</div>
-                </div>
-
-                <div className="grid grid-cols-7 gap-1">
-                  {calData.dias.length > 0 && Array.from({ length: calData.dias[0].dia_semana }).map((_, idx) => (
-                    <div key={`empty-${idx}`} className="h-16 rounded border border-transparent bg-slate-50/30" />
-                  ))}
-
-                  {calData.dias.map((d) => {
-                    const isSaturday = d.dia_semana === 5;
-                    const isSunday = d.dia_semana === 6;
-                    return (
-                      <button
-                        key={d.fecha}
-                        type="button"
-                        onClick={() => handleToggleDiaLaboral(d.fecha)}
-                        className={`h-16 p-1.5 rounded-lg border text-left flex flex-col justify-between transition-all select-none ${d.es_laboral
-                            ? "border-emerald-400 bg-emerald-50/70 hover:bg-emerald-100/70 text-emerald-950 shadow-xs"
-                            : "border-slate-200 bg-slate-100/80 hover:bg-slate-200/60 text-slate-400"
-                          }`}
-                      >
-                        <div className="flex items-center justify-between w-full">
-                          <span className={`text-xs font-black ${d.es_laboral ? "text-emerald-950" : "text-slate-500"}`}>
-                            {d.dia}
-                          </span>
-                          {isSaturday && (
-                            <span className="text-[9px] font-bold px-1 rounded bg-blue-100 text-blue-700">
-                              Sáb
-                            </span>
-                          )}
-                          {isSunday && (
-                            <span className="text-[9px] font-bold px-1 rounded bg-red-100 text-red-700">
-                              Dom
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center justify-between w-full">
-                          <span
-                            className={`text-[10px] font-bold ${d.es_laboral ? "text-emerald-700" : "text-slate-400"
-                              }`}
-                          >
-                            {d.es_laboral ? "Laboral" : "No lab."}
-                          </span>
-                          <span
-                            className={`w-3 h-3 rounded-full flex items-center justify-center text-[8px] font-bold ${d.es_laboral ? "bg-emerald-600 text-white" : "bg-slate-300 text-slate-600"
-                              }`}
-                          >
-                            {d.es_laboral ? "✓" : "—"}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <p className="text-[11px] text-slate-400">
-                Haz clic sobre cualquier día para alternar entre laboral y no laboral. Los cambios recalcularán automáticamente el promedio diario de unidades a producir.
-              </p>
-            </div>
-          ) : null}
-
-          <DialogFooter className="pt-2">
-            <Button variant="outline" onClick={() => setCalModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleSaveCalendario}
-              disabled={calSaving || calLoading}
-              className="bg-blue-600 text-white hover:bg-blue-700"
-            >
-              {calSaving ? "Guardando..." : "Guardar Calendario"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CalendarioLaboralModal
+        open={calModalOpen}
+        onOpenChange={setCalModalOpen}
+        initialAnio={calSelectedAnio}
+        initialMes={calSelectedMes}
+        mesesDisponibles={report?.meses_disponibles}
+        onSaved={fetchRundown}
+      />
 
       <Dialog open={horizonteModalOpen} onOpenChange={setHorizonteModalOpen}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
