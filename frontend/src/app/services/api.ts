@@ -1441,6 +1441,45 @@ export async function getPedidos(params?: {
   sector?: string;
   limit?: number;
 }): Promise<PedidosListResponse> {
+  if (IS_CL2_NODE_MODE) {
+    try {
+      let url = `${CL2_NODE_URL}/rest/v1/pedidos_cl2?select=*&order=fecha_creacion.desc`;
+      if (params?.estado && params.estado !== "todos") {
+        url += `&estado=eq.${params.estado}`;
+      }
+      const res = await fetch(url, { headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          total: data.length,
+          pedidos: data.map((p: any) => ({
+            id_pedido: p.id_pedido,
+            sector: p.sector,
+            prioridad: p.prioridad,
+            origen: p.origen,
+            estado: p.estado,
+            fecha_creacion: p.fecha_creacion,
+            fecha_despacho: p.fecha_despacho,
+            fecha_entrega: p.fecha_entrega,
+            fecha_requerida: p.fecha_requerida,
+            turno: p.turno,
+            id_conteo: null,
+            comentario: p.comentario,
+            usuario_solicitante: "Planta",
+            id_remito: null,
+            remitos: [],
+            total_items: 0,
+            items: [],
+            es_demorado: false,
+          })),
+        };
+      }
+    } catch {
+      // Fallback
+    }
+    return { total: 0, pedidos: [] };
+  }
+
   const query = new URLSearchParams();
   if (params?.fecha_requerida) query.append("fecha_requerida", params.fecha_requerida);
   if (params?.estado) query.append("estado", params.estado);
@@ -1459,6 +1498,7 @@ export async function getPedidos(params?: {
   }
   return res.json();
 }
+
 
 export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
   const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}`, {
@@ -1669,9 +1709,11 @@ export function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem("auth_token");
   return {
     "Content-Type": "application/json",
+    ...(CL2_NODE_KEY ? { apikey: CL2_NODE_KEY } : {}),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
 }
+
 
 export async function loginUser(username: string, password: string): Promise<LoginResponse> {
   if (IS_CL2_NODE_MODE) {
@@ -1865,6 +1907,41 @@ export interface DashboardResumenResponse {
 }
 
 export async function getDashboardResumen(): Promise<DashboardResumenResponse> {
+  if (IS_CL2_NODE_MODE) {
+    try {
+      const res = await fetch(`${CL2_NODE_URL}/rest/v1/pedidos_cl2?select=id_pedido,estado,fecha_creacion,sector,prioridad&order=fecha_creacion.desc`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const pedidos = await res.json();
+        const pendientes = pedidos.filter((p: any) => p.estado === "pendiente").length;
+        const en_prep = pedidos.filter((p: any) => p.estado === "en_preparacion").length;
+        const completados = pedidos.filter((p: any) => p.estado === "completo").length;
+
+        return {
+          total_pedidos: pedidos.length,
+          pedidos_pendientes: pendientes,
+          pedidos_en_preparacion: en_prep,
+          pedidos_completados: completados,
+          alertas_stock: 0,
+          pedidos_recientes: pedidos.slice(0, 5),
+          ultimos_remitos: [],
+        } as unknown as DashboardResumenResponse;
+      }
+    } catch {
+      // Retorna estructura base en caso de inicialización
+    }
+    return {
+      total_pedidos: 0,
+      pedidos_pendientes: 0,
+      pedidos_en_preparacion: 0,
+      pedidos_completados: 0,
+      alertas_stock: 0,
+      pedidos_recientes: [],
+      ultimos_remitos: [],
+    } as unknown as DashboardResumenResponse;
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/dashboard/resumen`, {
     headers: getAuthHeaders(),
   });
@@ -1874,6 +1951,7 @@ export async function getDashboardResumen(): Promise<DashboardResumenResponse> {
   }
   return res.json();
 }
+
 
 export interface IngresoDetalleCreate {
   id_material: string;
