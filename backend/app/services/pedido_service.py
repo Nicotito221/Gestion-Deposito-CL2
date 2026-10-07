@@ -422,9 +422,14 @@ class PedidoService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Error al recuperar pedido creado",
             )
+
+        from app.services.cl2_sync_service import Cl2SyncService
+        Cl2SyncService().sync_pedido_creado(res)
+
         return self._to_pedido_out(res)
 
     def crear_pedidos_multiples(self, pedidos: List[PedidoCreate]) -> List[PedidoOut]:
+
         results: List[PedidoOut] = []
         for p in pedidos:
             results.append(self.crear_pedido(p))
