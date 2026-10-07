@@ -1,4 +1,9 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const CL2_NODE_URL = import.meta.env.VITE_CL2_NODE_URL || import.meta.env.VITE_SUPABASE_URL || "";
+const CL2_NODE_KEY = import.meta.env.VITE_CL2_NODE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+const IS_CL2_NODE_MODE = Boolean(CL2_NODE_URL && CL2_NODE_KEY);
+
+
 
 export interface BomVersionItem {
   id_version: number;
@@ -1669,6 +1674,39 @@ export function getAuthHeaders(): HeadersInit {
 }
 
 export async function loginUser(username: string, password: string): Promise<LoginResponse> {
+  if (IS_CL2_NODE_MODE) {
+    const email = username.includes("@") ? username : `${username}@deposito.local`;
+    const res = await fetch(`${CL2_NODE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: CL2_NODE_KEY,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Usuario o contraseña incorrectos en nodo CL2.");
+    }
+
+    const authData = await res.json();
+    const token = authData.access_token;
+    const metadata = authData.user?.user_metadata || {};
+
+    const usuario: UsuarioItem = {
+      id_usuario: 9999,
+      username: username,
+      nombre: metadata.nombre || username,
+      apellido: metadata.apellido || "CL2",
+      rol: metadata.rol || "operario_deposito",
+      sector: metadata.sector || "CL2",
+      email: authData.user?.email || null,
+      activo: true,
+    };
+
+    return { token, usuario };
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1682,6 +1720,17 @@ export async function loginUser(username: string, password: string): Promise<Log
 }
 
 export async function getMe(): Promise<UsuarioItem> {
+  if (IS_CL2_NODE_MODE) {
+    const saved = localStorage.getItem("auth_user");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        // Fallback
+      }
+    }
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
     headers: getAuthHeaders(),
   });
@@ -1690,6 +1739,8 @@ export async function getMe(): Promise<UsuarioItem> {
   }
   return res.json();
 }
+
+
 
 export async function getUsuarios(params?: {
   rol?: string;
