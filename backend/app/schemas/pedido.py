@@ -119,10 +119,17 @@ class PedidoItemOut(BaseModel):
     comentario: Optional[str] = None
     tipo_empaque: Optional[str] = "unidad"
     tamanio_lote: Optional[float] = 1.0
+    bultos_por_pallet: Optional[int] = None
+    unidad_por_bulto: Optional[float] = None
     cantidad_pallets: Optional[int] = None
     cantidad_pallets_preparada: Optional[int] = None
     cantidad_pallets_entregada: Optional[int] = None
     cantidad_pallets_pendiente: Optional[int] = None
+    cantidad_bultos: Optional[int] = None
+    cantidad_bultos_preparada: Optional[int] = None
+    cantidad_bultos_entregada: Optional[int] = None
+    cantidad_bultos_pendiente: Optional[int] = None
+
 
 
 class RemitoItemOut(BaseModel):

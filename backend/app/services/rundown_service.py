@@ -443,6 +443,8 @@ class RundownService:
             fecha=data.fecha,
             tipo_stock=data.tipo_stock,
             stock_ajustado=data.stock_ajustado,
+            stock_planta=data.stock_planta,
+            stock_cl2=data.stock_cl2,
             observacion=data.observacion,
         )
 
@@ -555,6 +557,8 @@ class RundownService:
                 categoria=r["categoria"],
                 tipo_empaque=r.get("tipo_empaque", "unidad"),
                 tamanio_lote=r.get("tamanio_lote", 1.0),
+                bultos_por_pallet=r.get("bultos_por_pallet"),
+                unidad_por_bulto=r.get("unidad_por_bulto"),
                 id_proveedor=r.get("id_proveedor"),
                 proveedor_nombre=r.get("proveedor_nombre"),
                 stock_planta=r.get("stock_planta", 0.0),
@@ -576,6 +580,8 @@ class RundownService:
             categoria=r["categoria"],
             tipo_empaque=r.get("tipo_empaque", "unidad"),
             tamanio_lote=r.get("tamanio_lote", 1.0),
+            bultos_por_pallet=r.get("bultos_por_pallet"),
+            unidad_por_bulto=r.get("unidad_por_bulto"),
             id_proveedor=r.get("id_proveedor"),
             proveedor_nombre=r.get("proveedor_nombre"),
             stock_planta=r.get("stock_planta", 0.0),
@@ -976,16 +982,22 @@ class RundownService:
         )
 
     def get_planta_stocks_map(self, target_date: Optional[date] = None) -> Dict[str, float]:
-        from app.core.time import get_argentina_today
-        t_date = target_date or get_argentina_today()
+        from app.core.time import get_fecha_operativa_stock
+        t_date = target_date or get_fecha_operativa_stock()
         periodo_str = f"{t_date.year:04d}-{t_date.month:02d}"
         report = self.get_supplier_rundown(identifier="TODOS", alcance="planta", periodo=periodo_str)
         t_str = t_date.strftime("%Y-%m-%d")
         result: Dict[str, float] = {}
         for m in report.materiales:
-            matched_cell = next((c for c in m.dias if c.fecha == t_str), None)
-            if matched_cell:
-                result[m.id_material] = round(matched_cell.stock_final, 2)
+            idx = next((i for i, c in enumerate(m.dias) if c.fecha == t_str), None)
+            if idx is not None:
+                cell = m.dias[idx]
+                if cell.tiene_ajuste:
+                    result[m.id_material] = round(cell.stock_final, 2)
+                elif idx > 0:
+                    result[m.id_material] = round(m.dias[idx - 1].stock_final, 2)
+                else:
+                    result[m.id_material] = round(m.stock_inicial, 2)
             elif m.dias:
                 if t_str < m.dias[0].fecha:
                     result[m.id_material] = round(m.stock_inicial, 2)

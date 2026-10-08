@@ -53,7 +53,7 @@ class StockRepository:
                     SELECT TOP 1 
                         CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado
                     FROM dbo.rundown_stock_ajuste rsa
-                    WHERE rsa.id_material = m.id_material
+                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
                     ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
                 ) latest_adj
                 OUTER APPLY (
@@ -115,7 +115,7 @@ class StockRepository:
                         CAST(rsa.stock_ajustado AS FLOAT) AS stock_ajustado,
                         rsa.fecha_creacion
                     FROM dbo.rundown_stock_ajuste rsa
-                    WHERE rsa.id_material = m.id_material
+                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
                     ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
                 ) latest_adj
                 OUTER APPLY (

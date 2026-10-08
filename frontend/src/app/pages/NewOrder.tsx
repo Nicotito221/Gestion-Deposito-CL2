@@ -185,8 +185,8 @@ export function NewOrder() {
   const totalPallets = useMemo(
     () =>
       materials.reduce((acc, m) => {
-        const isPallet = m.tipo_empaque === "pallet" && (m.tamanio_lote || 1) > 1;
-        if (!isPallet) return acc;
+        const isPackaging = (m.tipo_empaque === "pallet" || m.tipo_empaque === "rollo") && (m.tamanio_lote || 1) > 1;
+        if (!isPackaging) return acc;
         return acc + (m.pallets ?? Math.ceil(m.quantity / (m.tamanio_lote || 1)));
       }, 0),
     [materials]
@@ -234,8 +234,10 @@ export function NewOrder() {
     return suggestionPreview.items.map((it) => {
       const qty = it.cantidad_sugerida_neta;
       const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
-      const isPallet = (it.tipo_empaque === "pallet" || (!it.tipo_empaque && lotSize > 1)) && lotSize > 1;
-      const pCount = isPallet ? (it.cantidad_pallets_sugerida ?? Math.ceil(qty / lotSize)) : undefined;
+      const isPackaging = (it.tipo_empaque === "pallet" || it.tipo_empaque === "rollo" || (!it.tipo_empaque && lotSize > 1)) && lotSize > 1;
+      const finalTipo = it.tipo_empaque || (isPackaging ? "pallet" : "unidad");
+      const pCount = isPackaging ? (it.cantidad_pallets_sugerida ?? Math.ceil(qty / lotSize)) : undefined;
+      const bCount = (finalTipo === "rollo" && it.bultos_por_pallet && pCount) ? pCount * it.bultos_por_pallet : it.cantidad_bultos_sugerida;
       return {
         material: {
           id: it.id_material,
@@ -244,16 +246,20 @@ export function NewOrder() {
           unit: it.unidad,
           suggestedQuantity: qty,
           suggestedPallets: pCount,
+          suggestedBultos: bCount,
           quantity: qty,
           pallets: pCount,
-          tipo_empaque: it.tipo_empaque || (isPallet ? "pallet" : "unidad"),
+          bultos: bCount,
+          bultos_por_pallet: it.bultos_por_pallet,
+          unidad_por_bulto: it.unidad_por_bulto,
+          tipo_empaque: finalTipo,
           tamanio_lote: lotSize,
           observations: `Sugerido por Conteo | Consumo: ${it.consumo_diario} ${it.unidad} | DOH Planta: ${it.doh_sugerido_planta}d`,
         } as Material,
         raw: it,
         qtySugerida: qty,
         palletsSugeridos: pCount,
-        isPallet,
+        isPallet: isPackaging,
         lotSize,
         tieneDeficit: qty > 0,
       };
@@ -299,7 +305,12 @@ export function NewOrder() {
 
   const handleAddFromCatalog = (item: MaterialCatalogoItem) => {
     const lotSize = item.tamanio_lote && item.tamanio_lote > 1 ? item.tamanio_lote : 1;
-    const isPallet = (item.tipo_empaque === "pallet" || (!item.tipo_empaque && lotSize > 1)) && lotSize > 1;
+    const isPackaging = (item.tipo_empaque === "rollo" || item.tipo_empaque === "pallet" || (!item.tipo_empaque && lotSize > 1)) && lotSize > 1;
+    const finalTipoEmpaque = item.tipo_empaque || (isPackaging ? "pallet" : "unidad");
+    const bpp = item.bultos_por_pallet ?? undefined;
+    const initialPallets = isPackaging ? 1 : undefined;
+    const initialBultos = (finalTipoEmpaque === "rollo" && bpp) ? bpp : undefined;
+    const initialQty = isPackaging ? lotSize : 1;
     setMaterials((prev) => [
       ...prev,
       {
@@ -307,9 +318,12 @@ export function NewOrder() {
         code: item.id_material,
         name: item.nombre || item.id_material,
         unit: item.unidad || "UN",
-        quantity: isPallet ? lotSize : 1,
-        pallets: isPallet ? 1 : undefined,
-        tipo_empaque: isPallet ? "pallet" : "unidad",
+        quantity: initialQty,
+        pallets: initialPallets,
+        bultos: initialBultos,
+        bultos_por_pallet: bpp,
+        unidad_por_bulto: item.unidad_por_bulto ?? undefined,
+        tipo_empaque: finalTipoEmpaque,
         tamanio_lote: lotSize,
         observations: "",
       },
@@ -858,7 +872,11 @@ export function NewOrder() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            {item.tipo_empaque === "pallet" && (item.tamanio_lote || 1) > 1 ? (
+                            {item.tipo_empaque === "rollo" && (item.tamanio_lote || 1) > 1 ? (
+                              <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-800 border-amber-200 font-semibold">
+                                {item.bultos_por_pallet ? `${item.bultos_por_pallet} Rollos/Pal (${item.tamanio_lote} ${item.unidad})` : `Rollo (${item.tamanio_lote} ${item.unidad})`}
+                              </Badge>
+                            ) : item.tipo_empaque === "pallet" && (item.tamanio_lote || 1) > 1 ? (
                               <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold">
                                 Pallet ({item.tamanio_lote} {item.unidad})
                               </Badge>
