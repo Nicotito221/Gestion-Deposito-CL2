@@ -2401,6 +2401,7 @@ export function StockCount() {
                             const currentVal = editedQuantities[item.id_material]?.[turno] ?? 0;
                             const currentPallets = isPackagingLot ? Math.round(currentVal / item.tamanio_lote!) : 0;
                             const currentRollos = (item.tipo_empaque === "rollo" && item.bultos_por_pallet) ? currentPallets * item.bultos_por_pallet : 0;
+                            const pedidosTurno = item.pedidos_por_turno?.[turno] ?? 0;
 
                             return (
                               <div key={turno} className="flex items-center gap-1.5 bg-white p-1 rounded-lg border border-slate-200 shadow-2xs">
