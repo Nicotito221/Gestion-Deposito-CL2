@@ -366,7 +366,9 @@ class PedidoRepository:
                        mp.cantidad_preparada, mp.cantidad_entregada, mp.estado, mp.comentario,
                        ISNULL(m.unidad, 'UN') AS unidad,
                        COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'unidad') AS tipo_empaque,
-                       COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote
+                       COALESCE(NULLIF(rpm.lote_mts, 0), (ISNULL(m.unidad_por_bulto, 1) * ISNULL(m.bultos_por_pallet, 1)), 1.0) AS tamanio_lote,
+                       COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet,
+                       CAST(COALESCE(rpm.unidad_por_bulto, m.unidad_por_bulto) AS FLOAT) AS unidad_por_bulto
                 FROM dbo.material_pedido mp
                 LEFT JOIN dbo.material m ON mp.id_material = m.id_material
                 LEFT JOIN dbo.rundown_parametro_material rpm ON mp.id_material = rpm.id_material AND rpm.activo = 1
@@ -379,6 +381,8 @@ class PedidoRepository:
             for ir in cursor.fetchall():
                 tipo_emp = str(ir[8] or "unidad").lower()
                 tam_lote = float(ir[9] or 1.0)
+                bultos_pp = int(ir[10]) if ir[10] is not None and int(ir[10]) > 0 else None
+                unidad_pb = float(ir[11]) if ir[11] is not None and float(ir[11]) > 0 else None
                 cant_ped = float(ir[2] or 0.0)
                 cant_prep = float(ir[3] or 0.0)
                 cant_entregada = float(ir[4] or 0.0)
@@ -386,7 +390,7 @@ class PedidoRepository:
                 cant_pendiente = 0.0 if is_cancelled else max(0.0, round(cant_ped - cant_entregada, 2))
                 cant_prep_final = 0.0 if is_cancelled else cant_prep
 
-                if tipo_emp == "pallet" and tam_lote > 1 and cant_ped >= tam_lote:
+                if tipo_emp in ("pallet", "rollo") and tam_lote > 0:
                     cant_pallets = int(math.ceil(cant_ped / tam_lote)) if cant_ped > 0 else 0
                     if is_cancelled:
                         cant_pallets_entregada = int(cant_entregada // tam_lote) if cant_entregada > 0 else 0
@@ -400,11 +404,26 @@ class PedidoRepository:
                         cant_pallets_entregada = int(cant_entregada // tam_lote) if cant_entregada > 0 else 0
                         cant_pallets_pendiente = max(0, cant_pallets - cant_pallets_entregada)
                         cant_pallets_prep = int(cant_prep // tam_lote) if cant_prep > 0 else 0
+
+                    if tipo_emp == "rollo" and bultos_pp:
+                        cb = cant_pallets * bultos_pp
+                        cb_ent = cant_pallets_entregada * bultos_pp
+                        cb_pend = cant_pallets_pendiente * bultos_pp
+                        cb_prep = cant_pallets_prep * bultos_pp
+                    else:
+                        cb = None
+                        cb_ent = None
+                        cb_pend = None
+                        cb_prep = None
                 else:
                     cant_pallets = None
                     cant_pallets_entregada = None
                     cant_pallets_pendiente = None
                     cant_pallets_prep = None
+                    cb = None
+                    cb_ent = None
+                    cb_pend = None
+                    cb_prep = None
 
                 items.append({
                     "id_material": str(ir[0]),
@@ -418,10 +437,16 @@ class PedidoRepository:
                     "comentario": str(ir[6]) if ir[6] else None,
                     "tipo_empaque": tipo_emp,
                     "tamanio_lote": tam_lote,
+                    "bultos_por_pallet": bultos_pp,
+                    "unidad_por_bulto": unidad_pb,
                     "cantidad_pallets": cant_pallets,
                     "cantidad_pallets_preparada": cant_pallets_prep,
                     "cantidad_pallets_entregada": cant_pallets_entregada,
                     "cantidad_pallets_pendiente": cant_pallets_pendiente,
+                    "cantidad_bultos": cb,
+                    "cantidad_bultos_preparada": cb_prep,
+                    "cantidad_bultos_entregada": cb_ent,
+                    "cantidad_bultos_pendiente": cb_pend,
                 })
 
             remitos = self.get_remitos_by_pedido(id_pedido, cursor=cursor)

@@ -43,6 +43,8 @@ class RundownStockAjusteUpdate(BaseModel):
     fecha: date
     tipo_stock: str = Field(default="total", pattern=r"^(total|planta)$")
     stock_ajustado: float = Field(ge=0)
+    stock_planta: Optional[float] = Field(default=None, ge=0)
+    stock_cl2: Optional[float] = Field(default=None, ge=0)
     observacion: Optional[str] = Field(default=None, max_length=255)
 
 
@@ -233,6 +235,8 @@ class MaterialCatalogoItem(BaseModel):
     categoria: Optional[str] = None
     tipo_empaque: Optional[str] = "unidad"
     tamanio_lote: Optional[float] = 1.0
+    bultos_por_pallet: Optional[int] = None
+    unidad_por_bulto: Optional[float] = None
     id_proveedor: Optional[int] = None
     proveedor_nombre: Optional[str] = None
     stock_planta: float = 0.0

@@ -454,6 +454,8 @@ export interface RundownStockAjusteInput {
   fecha: string;
   tipo_stock: "total" | "planta";
   stock_ajustado: number;
+  stock_planta?: number;
+  stock_cl2?: number;
   observacion?: string;
 }
 
@@ -679,6 +681,8 @@ export interface MaterialCatalogoItem {
   categoria?: string | null;
   tipo_empaque?: string;
   tamanio_lote?: number;
+  bultos_por_pallet?: number | null;
+  unidad_por_bulto?: number | null;
   id_proveedor?: number | null;
   proveedor_nombre?: string | null;
   stock_planta?: number;
@@ -1292,10 +1296,16 @@ export interface PedidoItemOut {
   comentario?: string;
   tipo_empaque?: string;
   tamanio_lote?: number;
+  bultos_por_pallet?: number | null;
+  unidad_por_bulto?: number | null;
   cantidad_pallets?: number | null;
   cantidad_pallets_preparada?: number | null;
   cantidad_pallets_entregada?: number | null;
   cantidad_pallets_pendiente?: number | null;
+  cantidad_bultos?: number | null;
+  cantidad_bultos_preparada?: number | null;
+  cantidad_bultos_entregada?: number | null;
+  cantidad_bultos_pendiente?: number | null;
 }
 
 export interface RemitoItemOut {

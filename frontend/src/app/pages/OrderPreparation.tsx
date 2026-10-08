@@ -54,10 +54,16 @@ interface MaterialItem {
   isPrepared: boolean;
   tipo_empaque: string;
   tamanio_lote: number;
+  bultos_por_pallet?: number | null;
+  unidad_por_bulto?: number | null;
   cantidad_pallets: number | null;
   cantidad_pallets_entregada: number | null;
   cantidad_pallets_pendiente: number | null;
   cantidad_pallets_preparada: number | null;
+  cantidad_bultos?: number | null;
+  cantidad_bultos_entregada?: number | null;
+  cantidad_bultos_pendiente?: number | null;
+  cantidad_bultos_preparada?: number | null;
 }
 
 const statusConfig: Record<string, { label: string; color: string }> = {
@@ -91,13 +97,14 @@ export function OrderPreparation() {
       setMaterials(
         data.items.map((it) => {
           const lotSize = it.tamanio_lote && it.tamanio_lote > 1 ? it.tamanio_lote : 1;
-          const isPallet = (it.cantidad_pallets != null && it.cantidad_pallets > 0) || (it.tipo_empaque === "pallet" && lotSize > 1 && it.cantidad_pedida >= lotSize);
+          const isPallet = it.tipo_empaque === "rollo" || it.tipo_empaque === "pallet" || (it.cantidad_pallets != null && it.cantidad_pallets > 0) || (lotSize > 1 && it.cantidad_pedida >= lotSize);
           const cantPed = it.cantidad_pedida;
           const cantEnt = it.cantidad_entregada || 0;
           const cantPend = it.cantidad_pendiente ?? Math.max(0, cantPed - cantEnt);
           const palReq = isPallet ? (it.cantidad_pallets ?? Math.ceil(cantPed / lotSize)) : null;
           const palEnt = isPallet ? (it.cantidad_pallets_entregada ?? Math.round(cantEnt / lotSize)) : null;
           const palPend = isPallet ? (it.cantidad_pallets_pendiente ?? Math.max(0, (palReq ?? 0) - (palEnt ?? 0))) : null;
+          const bpp = it.bultos_por_pallet;
           const isDone = cantPend <= 0;
 
           return {
@@ -113,10 +120,16 @@ export function OrderPreparation() {
             isPrepared: isDone,
             tipo_empaque: it.tipo_empaque || "unidad",
             tamanio_lote: lotSize,
+            bultos_por_pallet: bpp,
+            unidad_por_bulto: it.unidad_por_bulto,
             cantidad_pallets: palReq,
             cantidad_pallets_entregada: palEnt,
             cantidad_pallets_pendiente: palPend,
             cantidad_pallets_preparada: 0,
+            cantidad_bultos: (palReq && bpp) ? palReq * bpp : it.cantidad_bultos,
+            cantidad_bultos_entregada: (palEnt && bpp) ? palEnt * bpp : it.cantidad_bultos_entregada,
+            cantidad_bultos_pendiente: (palPend && bpp) ? palPend * bpp : it.cantidad_bultos_pendiente,
+            cantidad_bultos_preparada: 0,
           };
         })
       );
@@ -136,13 +149,18 @@ export function OrderPreparation() {
       prev.map((item) => {
         if (item.id === matId) {
           if (item.quantityPending <= 0) return item;
-          const isPallet = item.tipo_empaque === "pallet" && item.tamanio_lote > 1;
+          const isPallet = (item.tipo_empaque === "pallet" || item.tipo_empaque === "rollo") || item.tamanio_lote > 1;
           const maxPal = item.cantidad_pallets_pendiente ?? 0;
+          const palPrep = checked ? (isPallet ? maxPal : null) : (isPallet ? 0 : null);
+          const bPrep = (item.tipo_empaque === "rollo" && item.bultos_por_pallet && palPrep !== null)
+            ? palPrep * item.bultos_por_pallet
+            : null;
           return {
             ...item,
             isPrepared: checked,
             quantityPrepared: checked ? item.quantityPending : 0,
-            cantidad_pallets_preparada: checked ? (isPallet ? maxPal : null) : (isPallet ? 0 : null),
+            cantidad_pallets_preparada: palPrep,
+            cantidad_bultos_preparada: bPrep,
           };
         }
         return item;
@@ -156,12 +174,16 @@ export function OrderPreparation() {
         if (item.id === matId) {
           const maxAllowed = item.quantityPending;
           const newQuantity = Math.max(0, Math.min(value, maxAllowed));
-          const isPallet = item.tipo_empaque === "pallet" && item.tamanio_lote > 1;
+          const isPallet = (item.tipo_empaque === "pallet" || item.tipo_empaque === "rollo") || item.tamanio_lote > 1;
           const palPrep = isPallet ? Math.round(newQuantity / item.tamanio_lote) : null;
+          const bPrep = (item.tipo_empaque === "rollo" && item.bultos_por_pallet && palPrep !== null)
+            ? palPrep * item.bultos_por_pallet
+            : null;
           return {
             ...item,
             quantityPrepared: newQuantity,
             cantidad_pallets_preparada: palPrep,
+            cantidad_bultos_preparada: bPrep,
             isPrepared: newQuantity === maxAllowed && maxAllowed > 0,
           };
         }
@@ -178,10 +200,14 @@ export function OrderPreparation() {
           const clampedPallets = Math.max(0, Math.min(palletsVal, maxPallets));
           const newUnits = Math.min(item.quantityPending, clampedPallets * item.tamanio_lote);
           const isDone = clampedPallets === maxPallets && maxPallets > 0;
+          const bPrep = (item.tipo_empaque === "rollo" && item.bultos_por_pallet)
+            ? clampedPallets * item.bultos_por_pallet
+            : null;
           return {
             ...item,
             quantityPrepared: newUnits,
             cantidad_pallets_preparada: clampedPallets,
+            cantidad_bultos_preparada: bPrep,
             isPrepared: isDone,
           };
         }
@@ -597,7 +623,7 @@ export function OrderPreparation() {
                       </TableRow>
                     ) : (
                       materials.map((material) => {
-                        const isPallet = (material.cantidad_pallets != null && material.cantidad_pallets > 0) || (material.tipo_empaque === "pallet" && material.tamanio_lote > 1 && material.quantityRequested >= material.tamanio_lote);
+                        const isPackaging = material.tipo_empaque === "rollo" || material.tipo_empaque === "pallet" || (material.cantidad_pallets != null && material.cantidad_pallets > 0) || (material.tamanio_lote > 1 && material.quantityRequested >= material.tamanio_lote);
                         const isFullyDone = material.quantityPending <= 0;
 
                         return (
@@ -609,7 +635,12 @@ export function OrderPreparation() {
                               {material.name}
                             </TableCell>
                             <TableCell className="text-center">
-                              {isPallet ? (
+                              {material.tipo_empaque === "rollo" ? (
+                                <Badge variant="outline" className="bg-amber-50 text-amber-800 border-amber-200 font-semibold text-[10px] gap-1">
+                                  <Layers className="w-3 h-3 text-amber-600" />
+                                  {material.bultos_por_pallet ? `${material.bultos_por_pallet} Rollos / Pallet` : `Rollo (${material.tamanio_lote} ${material.unit})`}
+                                </Badge>
+                              ) : isPackaging ? (
                                 <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold text-[10px] gap-1">
                                   <Layers className="w-3 h-3 text-indigo-500" />
                                   Pallet ({material.tamanio_lote} {material.unit})
@@ -622,14 +653,20 @@ export function OrderPreparation() {
                             </TableCell>
 
                             <TableCell className="text-center">
-                              {isPallet ? (
+                              {isPackaging ? (
                                 <div>
                                   <span className="font-mono font-bold text-xs text-indigo-950 block">
                                     {material.cantidad_pallets} {material.cantidad_pallets === 1 ? "Pallet" : "Pallets"}
                                   </span>
-                                  <span className="text-[11px] text-slate-500 font-mono block">
-                                    ({material.quantityRequested} {material.unit})
-                                  </span>
+                                  {material.tipo_empaque === "rollo" && material.bultos_por_pallet ? (
+                                    <span className="text-[11px] text-amber-800 font-semibold font-mono block">
+                                      ({(material.cantidad_pallets ?? 0) * material.bultos_por_pallet} Rollos)
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500 font-mono block">
+                                      ({material.quantityRequested} {material.unit})
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="font-mono font-bold text-xs text-slate-900">
@@ -639,14 +676,20 @@ export function OrderPreparation() {
                             </TableCell>
 
                             <TableCell className="text-center">
-                              {isPallet ? (
+                              {isPackaging ? (
                                 <div>
                                   <span className="font-mono font-semibold text-xs text-slate-700 block">
                                     {material.cantidad_pallets_entregada ?? 0} {material.cantidad_pallets_entregada === 1 ? "Pallet" : "Pallets"}
                                   </span>
-                                  <span className="text-[11px] text-slate-400 font-mono block">
-                                    ({material.quantityDelivered} {material.unit})
-                                  </span>
+                                  {material.tipo_empaque === "rollo" && material.bultos_por_pallet ? (
+                                    <span className="text-[11px] text-amber-700 font-mono block">
+                                      ({(material.cantidad_pallets_entregada ?? 0) * material.bultos_por_pallet} Rollos)
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-400 font-mono block">
+                                      ({material.quantityDelivered} {material.unit})
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="font-mono text-xs text-slate-600">
@@ -660,14 +703,20 @@ export function OrderPreparation() {
                                 <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 text-[10px]">
                                   0 {material.unit} (Completado)
                                 </Badge>
-                              ) : isPallet ? (
+                              ) : isPackaging ? (
                                 <div>
                                   <span className="font-mono font-bold text-xs text-amber-700 block">
                                     {material.cantidad_pallets_pendiente} {material.cantidad_pallets_pendiente === 1 ? "Pallet" : "Pallets"}
                                   </span>
-                                  <span className="text-[11px] text-amber-600 font-mono block">
-                                    ({material.quantityPending} {material.unit})
-                                  </span>
+                                  {material.tipo_empaque === "rollo" && material.bultos_por_pallet ? (
+                                    <span className="text-[11px] text-amber-800 font-semibold font-mono block">
+                                      ({(material.cantidad_pallets_pendiente ?? 0) * material.bultos_por_pallet} Rollos)
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-amber-600 font-mono block">
+                                      ({material.quantityPending} {material.unit})
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="font-mono font-bold text-xs text-amber-700">
@@ -684,7 +733,7 @@ export function OrderPreparation() {
                                     Entregado 100%
                                   </span>
                                 </div>
-                              ) : isPallet ? (
+                              ) : isPackaging ? (
                                 <div className="flex flex-col items-center gap-1">
                                   <div className="flex items-center gap-1.5 justify-center">
                                     <Input
@@ -700,9 +749,15 @@ export function OrderPreparation() {
                                     />
                                     <span className="text-xs font-medium text-slate-700">Pallets</span>
                                   </div>
-                                  <span className="text-[11px] text-slate-500 font-mono">
-                                    ({material.quantityPrepared} {material.unit}) [Máx: {material.cantidad_pallets_pendiente} pal]
-                                  </span>
+                                  {material.tipo_empaque === "rollo" && material.bultos_por_pallet ? (
+                                    <span className="text-[11px] text-amber-800 font-semibold font-mono">
+                                      ({(material.cantidad_pallets_preparada ?? 0) * material.bultos_por_pallet} Rollos / {material.quantityPrepared} {material.unit}) [Máx: {material.cantidad_pallets_pendiente} pal]
+                                    </span>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500 font-mono">
+                                      ({material.quantityPrepared} {material.unit}) [Máx: {material.cantidad_pallets_pendiente} pal]
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="flex flex-col items-center gap-1">

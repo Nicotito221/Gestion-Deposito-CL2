@@ -108,3 +108,56 @@ class Cl2SyncService:
         except Exception as e:
             logger.error("Error al sincronizar pedido #%s a CL2: %s", pedido_data.get("id_pedido"), str(e))
             self.enqueue_outbox("pedido", str(pedido_data["id_pedido"]), "PEDIDO_CREADO", pedido_data)
+
+    def _get(self, table: str, params: str = "") -> Optional[List[Dict[str, Any]]]:
+        if not self.enabled or not self.base_url or not self.api_key:
+            return None
+
+        url = f"{self.base_url}/rest/v1/{table}?{params}"
+        req = urllib.request.Request(url, headers=self._headers(), method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status == 200:
+                    raw = response.read().decode("utf-8")
+                    return json.loads(raw)
+        except Exception as ex:
+            logger.error("Error consultando nodo CL2 [%s]: %s", table, str(ex))
+        return None
+
+    def pull_updates_from_cl2(self) -> None:
+        if not self.enabled:
+            return
+
+        pedidos_remotos = self._get("pedidos_cl2", "select=id_pedido,estado,preparado_por_nombre,fecha_despacho&estado=in.(en_preparacion,completo,parcial)")
+        if not pedidos_remotos:
+            return
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            for p in pedidos_remotos:
+                id_pedido = p["id_pedido"]
+                estado_remoto = p["estado"]
+                operador = p.get("preparado_por_nombre") or "Operario CL2"
+
+                cursor.execute("SELECT estado FROM dbo.pedido WHERE id_pedido = ?", id_pedido)
+                row = cursor.fetchone()
+                if row and row[0] != estado_remoto:
+                    cursor.execute(
+                        """
+                        UPDATE dbo.pedido
+                        SET estado = ?,
+                            fecha_despacho = COALESCE(?, fecha_despacho)
+                        WHERE id_pedido = ?
+                        """,
+                        estado_remoto,
+                        p.get("fecha_despacho"),
+                        id_pedido,
+                    )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error("Error actualizando estados desde nodo CL2: %s", str(e))
+        finally:
+            conn.close()
+

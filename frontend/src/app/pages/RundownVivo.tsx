@@ -263,6 +263,9 @@ export function RundownVivo() {
     fecha: string;
     material_label: string;
     stock_inicial: number;
+    stock_planta: number;
+    stock_cl2: number;
+    es_deposito_planta: boolean;
     tipo_stock: "total" | "planta";
     observacion: string;
   }>({
@@ -272,6 +275,9 @@ export function RundownVivo() {
     fecha: "",
     material_label: "",
     stock_inicial: 0,
+    stock_planta: 0,
+    stock_cl2: 0,
+    es_deposito_planta: false,
     tipo_stock: "total",
     observacion: "",
   });
@@ -912,7 +918,22 @@ export function RundownVivo() {
         ? Math.round(mat.stock_inicial_planta)
         : Math.round(mat.stock_inicial_total);
 
+    const isDepPlanta = Boolean(activeSupplier?.deposito_en_planta);
     const provId = mat.id_proveedor || report.id_proveedor;
+
+    let initPlanta = 0;
+    let initCl2 = 0;
+    if (isDepPlanta) {
+      initPlanta = initialVal;
+      initCl2 = 0;
+    } else if (alcance === "planta") {
+      initPlanta = initialVal;
+      initCl2 = Math.max(0, Math.round(mat.stock_inicial_total - mat.stock_inicial_planta));
+    } else {
+      initPlanta = Math.max(0, Math.round(mat.stock_inicial_planta));
+      initCl2 = Math.max(0, initialVal - initPlanta);
+    }
+
     setStockForm({
       id_parametro: mat.id_parametro,
       id_proveedor: provId,
@@ -920,6 +941,9 @@ export function RundownVivo() {
       fecha: fechaToUse,
       material_label: `${mat.id_material} — ${mat.descripcion}`,
       stock_inicial: initialVal,
+      stock_planta: initPlanta,
+      stock_cl2: initCl2,
+      es_deposito_planta: isDepPlanta,
       tipo_stock: alcance,
       observacion: "",
     });
@@ -927,23 +951,36 @@ export function RundownVivo() {
   };
 
   const handleSubmitStock = async () => {
-    if (stockForm.stock_inicial < 0) {
-      toast.error("El stock no puede ser negativo");
-      return;
-    }
     if (!stockForm.fecha) {
       toast.error("Debe seleccionar una fecha para el stock");
       return;
     }
+    const isTbarDesglose = stockForm.tipo_stock === "total" && !stockForm.es_deposito_planta;
+    if (isTbarDesglose) {
+      if (stockForm.stock_planta < 0 || stockForm.stock_cl2 < 0) {
+        toast.error("Las cantidades de stock no pueden ser negativas");
+        return;
+      }
+    } else if (stockForm.stock_inicial < 0) {
+      toast.error("El stock no puede ser negativo");
+      return;
+    }
+
     setIsSavingStock(true);
     try {
+      const stockTotalAjustado = isTbarDesglose
+        ? Math.round(stockForm.stock_planta + stockForm.stock_cl2)
+        : Math.round(stockForm.stock_inicial);
+
       const res = await updateRundownStockAjuste({
         id_parametro: stockForm.id_parametro,
         id_proveedor: stockForm.id_proveedor,
         id_material: stockForm.id_material,
         fecha: stockForm.fecha,
         tipo_stock: stockForm.tipo_stock,
-        stock_ajustado: Math.round(stockForm.stock_inicial),
+        stock_ajustado: stockTotalAjustado,
+        stock_planta: isTbarDesglose ? Math.round(stockForm.stock_planta) : (stockForm.tipo_stock === "planta" || stockForm.es_deposito_planta ? stockTotalAjustado : undefined),
+        stock_cl2: isTbarDesglose ? Math.round(stockForm.stock_cl2) : (stockForm.es_deposito_planta ? 0 : undefined),
         observacion: stockForm.observacion.trim() || undefined,
       });
       toast.success(res.mensaje);
@@ -3542,54 +3579,144 @@ export function RundownVivo() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Fecha del Stock *</Label>
-                <Select
-                  value={stockForm.fecha}
-                  onValueChange={(val) => {
-                    const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
-                    const dayCell = mat?.dias.find((d) => d.fecha === val);
-                    const valForDay = dayCell
-                      ? Math.round(dayCell.stock_final)
-                      : Math.round(stockForm.stock_inicial);
-                    setStockForm({
-                      ...stockForm,
-                      fecha: val,
-                      stock_inicial: valForDay,
-                    });
-                  }}
-                >
-                  <SelectTrigger className="text-xs font-mono">
-                    <SelectValue placeholder="Seleccione fecha" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-56">
-                    {report?.columnas_fechas.map((f) => {
+            {stockForm.tipo_stock === "total" && !stockForm.es_deposito_planta ? (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>Fecha del Stock *</Label>
+                  <Select
+                    value={stockForm.fecha}
+                    onValueChange={(val) => {
                       const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
-                      const dayCell = mat?.dias.find((d) => d.fecha === f);
-                      return (
-                        <SelectItem key={f} value={f} className="text-xs font-mono">
-                          {f} ({dayCell?.dia_nombre || ""})
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
+                      const dayCell = mat?.dias.find((d) => d.fecha === val);
+                      const valForDay = dayCell
+                        ? Math.round(dayCell.stock_final)
+                        : Math.round(stockForm.stock_inicial);
+                      const curPlanta = Math.max(0, Math.round(mat?.stock_inicial_planta ?? stockForm.stock_planta));
+                      const curCl2 = Math.max(0, valForDay - curPlanta);
+                      setStockForm({
+                        ...stockForm,
+                        fecha: val,
+                        stock_inicial: valForDay,
+                        stock_planta: curPlanta,
+                        stock_cl2: curCl2,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="text-xs font-mono">
+                      <SelectValue placeholder="Seleccione fecha" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-56">
+                      {report?.columnas_fechas.map((f) => {
+                        const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
+                        const dayCell = mat?.dias.find((d) => d.fecha === f);
+                        return (
+                          <SelectItem key={f} value={f} className="text-xs font-mono">
+                            {f} ({dayCell?.dia_nombre || ""})
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              <div className="space-y-1">
-                <Label>Stock Real / Revalidado *</Label>
-                <Input
-                  type="number"
-                  step="1"
-                  value={Math.round(stockForm.stock_inicial)}
-                  onChange={(e) =>
-                    setStockForm({ ...stockForm, stock_inicial: parseInt(e.target.value, 10) || 0 })
-                  }
-                  className="font-mono font-bold text-xs"
-                />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-blue-700">Stock en Planta *</Label>
+                    <Input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={Math.round(stockForm.stock_planta)}
+                      onChange={(e) => {
+                        const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        setStockForm({
+                          ...stockForm,
+                          stock_planta: val,
+                          stock_inicial: val + stockForm.stock_cl2,
+                        });
+                      }}
+                      className="font-mono font-bold text-xs border-blue-300 focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-amber-700">Stock en CL2 (Depósito) *</Label>
+                    <Input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={Math.round(stockForm.stock_cl2)}
+                      onChange={(e) => {
+                        const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        setStockForm({
+                          ...stockForm,
+                          stock_cl2: val,
+                          stock_inicial: stockForm.stock_planta + val,
+                        });
+                      }}
+                      className="font-mono font-bold text-xs border-amber-300 focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 bg-slate-100 rounded-md border border-slate-200">
+                  <span className="text-xs font-medium text-slate-700">Stock Total Consolidado (TBAR):</span>
+                  <span className="font-mono font-bold text-sm text-slate-900">
+                    {Math.round(stockForm.stock_planta + stockForm.stock_cl2).toLocaleString("es-AR")}
+                  </span>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Fecha del Stock *</Label>
+                  <Select
+                    value={stockForm.fecha}
+                    onValueChange={(val) => {
+                      const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
+                      const dayCell = mat?.dias.find((d) => d.fecha === val);
+                      const valForDay = dayCell
+                        ? Math.round(dayCell.stock_final)
+                        : Math.round(stockForm.stock_inicial);
+                      setStockForm({
+                        ...stockForm,
+                        fecha: val,
+                        stock_inicial: valForDay,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="text-xs font-mono">
+                      <SelectValue placeholder="Seleccione fecha" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-56">
+                      {report?.columnas_fechas.map((f) => {
+                        const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
+                        const dayCell = mat?.dias.find((d) => d.fecha === f);
+                        return (
+                          <SelectItem key={f} value={f} className="text-xs font-mono">
+                            {f} ({dayCell?.dia_nombre || ""})
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1">
+                  <Label>Stock Real / Revalidado *</Label>
+                  <Input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={Math.round(stockForm.stock_inicial)}
+                    onChange={(e) =>
+                      setStockForm({ ...stockForm, stock_inicial: parseInt(e.target.value, 10) || 0 })
+                    }
+                    className="font-mono font-bold text-xs"
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="space-y-1">
               <Label>Observación / Motivo (Opcional)</Label>

@@ -57,3 +57,12 @@ def get_avance_jornada_produccion(dt: Optional[datetime] = None) -> tuple[float,
     fraccion_restante = 1.0 - fraccion_transcurrida
     return fraccion_transcurrida, fraccion_restante
 
+
+def get_fecha_operativa_stock(dt: Optional[datetime] = None) -> date:
+    if dt is None:
+        dt = get_argentina_now()
+    if dt.hour < 6:
+        return dt.date() - timedelta(days=1)
+    return dt.date()
+
+

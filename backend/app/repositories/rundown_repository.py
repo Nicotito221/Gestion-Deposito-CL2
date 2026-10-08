@@ -588,6 +588,8 @@ class RundownRepository:
         fecha: date,
         tipo_stock: str,
         stock_ajustado: float,
+        stock_planta: Optional[float] = None,
+        stock_cl2: Optional[float] = None,
         observacion: Optional[str] = None,
     ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
@@ -606,13 +608,32 @@ class RundownRepository:
             fecha_init = row[0] if row else None
             dep_en_planta = bool(row[1]) if row else False
 
-            tipos_a_guardar = ["planta", "total"] if dep_en_planta else [tipo_stock]
+            target_planta: Optional[float] = None
+            target_cl2: Optional[float] = None
+            target_total: Optional[float] = None
+
+            if stock_planta is not None or stock_cl2 is not None:
+                target_planta = float(stock_planta or 0.0)
+                target_cl2 = 0.0 if dep_en_planta else float(stock_cl2 or 0.0)
+                target_total = target_planta if dep_en_planta else (target_planta + target_cl2)
+                valores_a_guardar = [("planta", target_planta), ("total", target_total)]
+            elif dep_en_planta:
+                target_planta = float(stock_ajustado)
+                target_cl2 = 0.0
+                target_total = float(stock_ajustado)
+                valores_a_guardar = [("planta", stock_ajustado), ("total", stock_ajustado)]
+            elif tipo_stock == "planta":
+                target_planta = float(stock_ajustado)
+                valores_a_guardar = [("planta", stock_ajustado)]
+            else:
+                target_total = float(stock_ajustado)
+                valores_a_guardar = [("total", stock_ajustado)]
 
             if fecha_init and fecha == fecha_init:
-                if dep_en_planta:
+                if target_planta is not None and target_total is not None:
                     cursor.execute(
                         "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
-                        (stock_ajustado, stock_ajustado, stock_ajustado, id_parametro),
+                        (target_planta, target_total, target_total, id_parametro),
                     )
                 elif tipo_stock == "planta":
                     cursor.execute(
@@ -625,7 +646,7 @@ class RundownRepository:
                         (stock_ajustado, stock_ajustado, id_parametro),
                     )
 
-            for t_stock in tipos_a_guardar:
+            for t_stock, val in valores_a_guardar:
                 cursor.execute(
                     """
                     MERGE dbo.rundown_stock_ajuste AS target
@@ -639,10 +660,88 @@ class RundownRepository:
                     """,
                     (
                         id_parametro, fecha, t_stock,
-                        stock_ajustado, observacion,
-                        id_parametro, id_proveedor, id_material, fecha, t_stock, stock_ajustado, observacion,
+                        val, observacion,
+                        id_parametro, id_proveedor, id_material, fecha, t_stock, val, observacion,
                     ),
                 )
+
+            cursor.execute(
+                "SELECT ISNULL(stock_actual, 0.0), ISNULL(stock_planta, 0.0) FROM dbo.stock_deposito WHERE id_material = ?",
+                (id_material,),
+            )
+            sd_row = cursor.fetchone()
+            ant_cl2 = float(sd_row[0]) if sd_row else 0.0
+            ant_planta = float(sd_row[1]) if sd_row else 0.0
+
+            cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+            u_row = cursor.fetchone()
+            user_id = int(u_row[0]) if u_row else 1
+
+            if target_cl2 is not None:
+                cursor.execute(
+                    """
+                    MERGE dbo.stock_deposito AS target
+                    USING (SELECT ? AS id_material, ? AS stock_actual) AS source
+                    ON (target.id_material = source.id_material)
+                    WHEN MATCHED THEN
+                        UPDATE SET stock_actual = source.stock_actual, fecha_actualizacion = SYSUTCDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                        VALUES (source.id_material, source.stock_actual, 0.0, 0.0, SYSUTCDATETIME());
+                    """,
+                    (id_material, target_cl2),
+                )
+                if abs(target_cl2 - ant_cl2) > 0.0001:
+                    cursor.execute(
+                        """
+                        INSERT INTO dbo.movimiento_stock (
+                            id_material, tipo, cantidad, stock_anterior, stock_posterior,
+                            id_usuario, fecha, observacion
+                        )
+                        VALUES (?, 'ajuste_manual', ?, ?, ?, ?, SYSUTCDATETIME(), ?);
+                        """,
+                        (
+                            id_material,
+                            abs(target_cl2 - ant_cl2),
+                            ant_cl2,
+                            target_cl2,
+                            user_id,
+                            observacion or f"Ajuste manual CL2 desde Rundown TBAR ({fecha})",
+                        ),
+                    )
+
+            if target_planta is not None:
+                cursor.execute(
+                    """
+                    MERGE dbo.stock_deposito AS target
+                    USING (SELECT ? AS id_material, ? AS stock_planta) AS source
+                    ON (target.id_material = source.id_material)
+                    WHEN MATCHED THEN
+                        UPDATE SET stock_planta = source.stock_planta, fecha_actualizacion = SYSUTCDATETIME()
+                    WHEN NOT MATCHED THEN
+                        INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                        VALUES (source.id_material, 0.0, source.stock_planta, 0.0, SYSUTCDATETIME());
+                    """,
+                    (id_material, target_planta),
+                )
+                if abs(target_planta - ant_planta) > 0.0001:
+                    cursor.execute(
+                        """
+                        INSERT INTO dbo.movimiento_stock (
+                            id_material, tipo, cantidad, stock_anterior, stock_posterior,
+                            id_usuario, fecha, observacion
+                        )
+                        VALUES (?, 'ajuste_manual', ?, ?, ?, ?, SYSUTCDATETIME(), ?);
+                        """,
+                        (
+                            id_material,
+                            abs(target_planta - ant_planta),
+                            ant_planta,
+                            target_planta,
+                            user_id,
+                            observacion or f"Ajuste manual Planta desde Rundown ({fecha})",
+                        ),
+                    )
 
             conn.commit()
             return True
@@ -1352,7 +1451,9 @@ class RundownRepository:
                     prov.nombre AS proveedor_nombre,
                     ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta,
                     CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT) AS stock_cl2,
-                    CAST(COALESCE(latest_adj.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT) AS stock_planta
+                    CAST(COALESCE(latest_adj.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT) AS stock_planta,
+                    COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet,
+                    CAST(COALESCE(rpm.unidad_por_bulto, m.unidad_por_bulto) AS FLOAT) AS unidad_por_bulto
                 FROM dbo.material m
                 LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
                 OUTER APPLY (
@@ -1406,6 +1507,8 @@ class RundownRepository:
                 stk_cl2 = float(r[9] or 0.0)
                 stk_planta = float(r[10] or 0.0)
                 stk_total = stk_planta if dep_planta else (stk_planta + stk_cl2)
+                b_pp = int(r[11]) if r[11] is not None and int(r[11]) > 0 else None
+                u_pb = float(r[12]) if r[12] is not None and float(r[12]) > 0 else None
                 result.append({
                     "id_material": str(r[0]),
                     "nombre": str(r[1] or ""),
@@ -1419,6 +1522,8 @@ class RundownRepository:
                     "stock_cl2": 0.0 if dep_planta else stk_cl2,
                     "stock_planta": stk_planta,
                     "stock_total": stk_total,
+                    "bultos_por_pallet": b_pp,
+                    "unidad_por_bulto": u_pb,
                 })
             return result
         finally:
@@ -1447,7 +1552,9 @@ class RundownRepository:
                     prov.nombre AS proveedor_nombre,
                     ISNULL(prov.deposito_en_planta, 0) AS deposito_en_planta,
                     CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT) AS stock_cl2,
-                    CAST(COALESCE(latest_adj.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT) AS stock_planta
+                    CAST(COALESCE(latest_adj.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT) AS stock_planta,
+                    COALESCE(rpm.bultos_por_pallet, m.bultos_por_pallet) AS bultos_por_pallet,
+                    CAST(COALESCE(rpm.unidad_por_bulto, m.unidad_por_bulto) AS FLOAT) AS unidad_por_bulto
                 FROM dbo.material m
                 LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
                 OUTER APPLY (
@@ -1500,6 +1607,8 @@ class RundownRepository:
             stk_cl2 = float(r[9] or 0.0)
             stk_planta = float(r[10] or 0.0)
             stk_total = stk_planta if dep_planta else (stk_planta + stk_cl2)
+            b_pp = int(r[11]) if r[11] is not None and int(r[11]) > 0 else None
+            u_pb = float(r[12]) if r[12] is not None and float(r[12]) > 0 else None
             return {
                 "id_material": str(r[0]),
                 "nombre": str(r[1] or ""),
@@ -1513,6 +1622,8 @@ class RundownRepository:
                 "stock_cl2": 0.0 if dep_planta else stk_cl2,
                 "stock_planta": stk_planta,
                 "stock_total": stk_total,
+                "bultos_por_pallet": b_pp,
+                "unidad_por_bulto": u_pb,
             }
         finally:
             cursor.close()
