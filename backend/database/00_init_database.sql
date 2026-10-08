@@ -663,3 +663,64 @@ BEGIN
     OPTION (MAXRECURSION 50);
 END;
 GO
+
+-- 15. TABLAS DE SINCRONIZACION Y EVENTOS (Nodo CL2)
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SyncOutbox' AND schema_id = SCHEMA_ID('dbo'))
+BEGIN
+    CREATE TABLE dbo.SyncOutbox (
+        Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        AggregateType NVARCHAR(50) NOT NULL,
+        AggregateId NVARCHAR(100) NOT NULL,
+        EventType NVARCHAR(50) NOT NULL,
+        PayloadJson NVARCHAR(MAX) NOT NULL,
+        Status NVARCHAR(20) NOT NULL DEFAULT 'PENDING',
+        RetryCount INT NOT NULL DEFAULT 0,
+        MaxRetries INT NOT NULL DEFAULT 5,
+        NextRetryAt DATETIME2 NULL,
+        ProcessedAt DATETIME2 NULL,
+        ErrorMessage NVARCHAR(MAX) NULL,
+        CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+
+    CREATE INDEX IX_SyncOutbox_Status_NextRetryAt 
+    ON dbo.SyncOutbox (Status, NextRetryAt);
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ProcessedEvents' AND schema_id = SCHEMA_ID('dbo'))
+BEGIN
+    CREATE TABLE dbo.ProcessedEvents (
+        EventId NVARCHAR(100) PRIMARY KEY,
+        EventType NVARCHAR(50) NOT NULL,
+        ProcessedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+    );
+END;
+GO
+
+-- 16. CONFIGURACION Y USUARIO ADMINISTRADOR INICIAL
+IF NOT EXISTS (SELECT 1 FROM dbo.configuracion_sistema WHERE clave = 'factor_consumo_siguiente')
+BEGIN
+    INSERT INTO dbo.configuracion_sistema (clave, valor, descripcion)
+    VALUES ('factor_consumo_siguiente', '0.65', 'Factor multiplicador para el consumo del dia siguiente en la regla de pedido sugerido');
+END;
+GO
+
+IF NOT EXISTS (SELECT 1 FROM dbo.usuario WHERE username = 'admin')
+BEGIN
+    INSERT INTO dbo.usuario (
+        username, password_hash, nombre, apellido, rol, activo, sector, email, eliminado
+    )
+    VALUES (
+        'admin',
+        'pbkdf2:sha256:100000$1bb0bd8c5fc22632dd0bd84a22592b45$6be11acd451f56f83ef75f969c9655d8be37dbf579641925a0f25286ef199ffe',
+        'Administrador',
+        'Sistema',
+        'administrador',
+        1,
+        'TODOS',
+        'admin@gestiondeposito.com',
+        0
+    );
+END;
+GO
+
