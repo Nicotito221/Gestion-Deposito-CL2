@@ -4,7 +4,7 @@ module.exports = {
       name: "gestion-deposito-backend",
       cwd: "./backend",
       script: "python",
-      args: "-m uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      args: "-m uvicorn app.main:app --host 0.0.0.0 --port 8002",
       interpreter: "none",
       autorestart: true,
       watch: false,
@@ -16,12 +16,11 @@ module.exports = {
     {
       name: "gestion-deposito-frontend",
       cwd: "./frontend",
-      script: "npx",
-      args: "serve -s dist -l 5173",
+      script: "npm.cmd",
+      args: "run preview",
       autorestart: true,
       watch: false,
       max_memory_restart: "500M"
     }
   ]
 };
-
