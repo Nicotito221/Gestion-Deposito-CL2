@@ -20,6 +20,8 @@ CL2_SYNC_ENABLED: bool = os.getenv("CL2_SYNC_ENABLED", "false").lower() in ("tru
 CL2_API_URL: str = os.getenv("CL2_API_URL", "")
 CL2_API_KEY: str = os.getenv("CL2_API_KEY", "")
 CL2_HMAC_SECRET: str = os.getenv("CL2_HMAC_SECRET", "")
+CL2_SYNC_INTERVAL_SECONDS: int = int(os.getenv("CL2_SYNC_INTERVAL_SECONDS", "1200"))
+
 
 
 
