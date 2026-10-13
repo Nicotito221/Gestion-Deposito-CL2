@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.core.config import get_db_connection, CORS_ORIGINS, CL2_SYNC_ENABLED
+from app.core.config import get_db_connection, CORS_ORIGINS, CL2_SYNC_ENABLED, CL2_SYNC_INTERVAL_SECONDS
 from app.routers import auth, bom, supply, rundown, stock, conteo, pedidos, usuarios, dashboard, ingreso, auditoria
 
 logger = logging.getLogger(__name__)
@@ -14,12 +14,15 @@ logger = logging.getLogger(__name__)
 async def _cl2_sync_polling_loop():
     from app.services.cl2_sync_service import Cl2SyncService
     sync_svc = Cl2SyncService()
+    # Espera inicial para no colisionar con el arranque del servidor
+    await asyncio.sleep(10)
     while True:
         try:
             await asyncio.to_thread(sync_svc.pull_updates_from_cl2)
         except Exception as e:
             logger.error("Error en bucle de sincronizacion CL2: %s", str(e))
-        await asyncio.sleep(60)
+        await asyncio.sleep(CL2_SYNC_INTERVAL_SECONDS)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
