@@ -51,6 +51,7 @@ import { toast } from "sonner";
 import { CalendarioLaboralModal } from "../components/CalendarioLaboralModal";
 import {
   getBomVersions,
+  getBomEstructuraActiva,
   getSetComponentes,
   createSetComponente,
   updateSetComponente,
@@ -62,6 +63,7 @@ import {
   downloadSapPirTxt,
   updateSupplyDailyProduction,
   type BomVersionItem,
+  type BomEstructuraItem,
   type SetComponenteItem,
   type DemandItemApi,
 } from "../services/api";
@@ -83,6 +85,10 @@ export function SupplyOrderBom() {
   const [periodo, setPeriodo] = useState<string>("Octubre 2026");
   const [relations, setRelations] = useState<SetComponenteItem[]>([]);
   const [versions, setVersions] = useState<BomVersionItem[]>([]);
+  const [bomEstructura, setBomEstructura] = useState<BomEstructuraItem[]>([]);
+  const [bomEstructuraTotal, setBomEstructuraTotal] = useState<number>(0);
+  const [searchEstructura, setSearchEstructura] = useState<string>("");
+  const [activeBomSubTab, setActiveBomSubTab] = useState<"estructura" | "sets">("estructura");
 
   const [calModalOpen, setCalModalOpen] = useState<boolean>(false);
 
@@ -128,7 +134,7 @@ export function SupplyOrderBom() {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const [versionsData, relationsData, supplyData] = await Promise.all([
+      const [versionsData, relationsData, supplyData, estructuraData] = await Promise.all([
         getBomVersions().catch(() => []),
         getSetComponentes({ limit: 500 }).catch(() => ({ items: [], total: 0 })),
         getSupplySummary().catch(() => ({
@@ -140,10 +146,13 @@ export function SupplyOrderBom() {
           columnas_tentativas: [],
           items: [],
         })),
+        getBomEstructuraActiva({ limit: 300 }).catch(() => ({ id_version: null, nombre_archivo: null, total: 0, items: [] })),
       ]);
 
       setVersions(versionsData);
       setRelations(relationsData.items);
+      setBomEstructura(estructuraData.items);
+      setBomEstructuraTotal(estructuraData.total);
       setDemandItems(supplyData.items);
       setPeriodo(supplyData.periodo);
       setDailyColumns(supplyData.columnas_diarias || []);
@@ -266,6 +275,18 @@ export function SupplyOrderBom() {
   const activeVersion = useMemo(() => {
     return versions.find((v) => v.es_vigente) ?? versions[0];
   }, [versions]);
+
+  const filteredEstructura = useMemo(() => {
+    if (!searchEstructura.trim()) return bomEstructura;
+    const q = searchEstructura.toLowerCase();
+    return bomEstructura.filter(
+      (it) =>
+        it.id_producto_raiz.toLowerCase().includes(q) ||
+        it.id_padre.toLowerCase().includes(q) ||
+        it.id_hijo.toLowerCase().includes(q) ||
+        (it.descripcion_hijo && it.descripcion_hijo.toLowerCase().includes(q))
+    );
+  }, [bomEstructura, searchEstructura]);
 
   const handleProcessDemand = async () => {
     if (f1Files.length === 0 && f2Files.length === 0) {
@@ -1080,12 +1101,12 @@ export function SupplyOrderBom() {
               <CardContent className="pt-5 pb-5">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <GitFork className="w-5 h-5 text-slate-700" />
+                    <Layers className="w-5 h-5 text-blue-700" />
                   </div>
                   <div>
-                    <p className="text-slate-500 text-xs uppercase tracking-wider">Relaciones Activas</p>
+                    <p className="text-slate-500 text-xs uppercase tracking-wider">Estructura Multinivel Vigente</p>
                     <p className="font-bold text-slate-900 text-xl">
-                      {relations.filter((r) => r.activo).length} <span className="text-xs font-normal text-slate-500">en dbo.set_componente</span>
+                      {bomEstructuraTotal.toLocaleString()} <span className="text-xs font-normal text-slate-500">en dbo.bom_estructura</span>
                     </p>
                   </div>
                 </div>
@@ -1186,126 +1207,237 @@ export function SupplyOrderBom() {
           <Card>
             <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4">
               <div>
-                <CardTitle className="text-slate-900 text-lg">
-                  Relaciones Set / Componente en SQL Server ({filteredRelations.length} de {relations.length})
-                </CardTitle>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Mapeo maestro directo entre sets de demanda y materiales componentes con multiplicador de uso en <code>dbo.set_componente</code>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="inline-flex rounded-lg border bg-slate-100 p-0.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setActiveBomSubTab("estructura")}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all ${
+                        activeBomSubTab === "estructura"
+                          ? "bg-white text-slate-900 shadow-xs font-semibold"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Estructura Multinivel Vigente ({filteredEstructura.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveBomSubTab("sets")}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-md font-medium transition-all ${
+                        activeBomSubTab === "sets"
+                          ? "bg-white text-slate-900 shadow-xs font-semibold"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      <GitFork className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Sets y Componentes TASA ({filteredRelations.length})</span>
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {activeBomSubTab === "estructura"
+                    ? `Desglose jerárquico multinivel importado desde receta BOM en dbo.bom_estructura para la versión #${activeVersion?.id_version || "—"}`
+                    : "Mapeo maestro directo entre sets de demanda y materiales componentes con multiplicador de uso en dbo.set_componente"}
                 </p>
               </div>
-              <Button onClick={openNewRelationDialog} className="flex items-center gap-2">
-                <Plus className="w-4 h-4" />
-                Nueva Relación
-              </Button>
+              {activeBomSubTab === "sets" && (
+                <Button onClick={openNewRelationDialog} className="flex items-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  Nueva Relación
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
-              <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <Input
-                    placeholder="Buscar por código padre, componente hijo o descripción..."
-                    className="pl-9"
-                    value={searchRelation}
-                    onChange={(e) => setSearchRelation(e.target.value)}
-                  />
-                </div>
-                <div className="w-full sm:w-48">
-                  <Select value={filterSector} onValueChange={setFilterSector}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Sector" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="todos">Todos los sectores</SelectItem>
-                      {sectorsList.map((sec) => (
-                        <SelectItem key={sec} value={sec}>
-                          {sec}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+              {activeBomSubTab === "estructura" ? (
+                <>
+                  <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <Input
+                        placeholder="Buscar por producto raíz, padre, componente hijo o descripción..."
+                        className="pl-9"
+                        value={searchEstructura}
+                        onChange={(e) => setSearchEstructura(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-              <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Sector</TableHead>
-                      <TableHead>SD</TableHead>
-                      <TableHead>Código TASA (Padre)</TableHead>
-                      <TableHead>Padre SAP</TableHead>
-                      <TableHead>Componente Hijo</TableHead>
-                      <TableHead>Descripción Hijo</TableHead>
-                      <TableHead className="text-right">Uso / Cant.</TableHead>
-                      <TableHead>Unidad</TableHead>
-                      <TableHead className="text-center">Estado</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredRelations.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={10} className="text-center text-slate-400 py-8">
-                          {loading ? "Cargando relaciones desde base de datos..." : "No se encontraron relaciones"}
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      filteredRelations.map((rel) => (
-                        <TableRow key={rel.id_set_componente} className={!rel.activo ? "opacity-50" : ""}>
-                          <TableCell className="font-medium text-xs">{rel.sector || "—"}</TableCell>
-                          <TableCell className="text-xs text-slate-600">{rel.sd || "—"}</TableCell>
-                          <TableCell className="font-mono text-xs font-semibold">{rel.codigo_tasa}</TableCell>
-                          <TableCell className="font-mono text-xs text-slate-600">{rel.codigo_sap_padre}</TableCell>
-                          <TableCell className="font-mono text-xs font-semibold text-slate-900">{rel.id_material_hijo}</TableCell>
-                          <TableCell className="text-xs text-slate-700 max-w-[220px] truncate" title={rel.descripcion_hijo || ""}>
-                            {rel.descripcion_hijo || rel.id_material_hijo}
-                          </TableCell>
-                          <TableCell className="text-right font-mono font-bold text-slate-900">
-                            {rel.cantidad.toFixed(2)}
-                          </TableCell>
-                          <TableCell className="text-xs">{rel.unidad}</TableCell>
-                          <TableCell className="text-center">
-                            <span
-                              onClick={() => handleToggleRelationActive(rel.id_set_componente)}
-                              className="cursor-pointer"
-                            >
-                              {rel.activo ? (
-                                <Badge className="bg-green-100 text-green-700" variant="outline">
-                                  Activo
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-slate-400">
-                                  Inactivo
-                                </Badge>
-                              )}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openEditRelationDialog(rel)}
-                                className="h-8 w-8 p-0"
-                              >
-                                <Edit2 className="w-3.5 h-3.5 text-slate-600" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => handleToggleRelationActive(rel.id_set_componente)}
-                                className="h-8 w-8 p-0 text-red-600"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
-                          </TableCell>
+                  <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-20 text-center">Nivel</TableHead>
+                          <TableHead>Producto Raíz</TableHead>
+                          <TableHead>Código Padre</TableHead>
+                          <TableHead>Componente Hijo</TableHead>
+                          <TableHead>Descripción Hijo</TableHead>
+                          <TableHead className="text-right">Cantidad / Uso</TableHead>
+                          <TableHead>Unidad</TableHead>
+                          <TableHead className="text-center w-20">Secuencia</TableHead>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredEstructura.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={8} className="text-center text-slate-400 py-8">
+                              {loading ? "Cargando estructura de BOM..." : "No se encontraron componentes en la versión activa de BOM"}
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          filteredEstructura.map((it) => (
+                            <TableRow key={it.id_bom}>
+                              <TableCell className="text-center">
+                                <Badge
+                                  variant="outline"
+                                  className={`text-[11px] font-mono px-2 py-0.5 ${
+                                    it.nivel === 0
+                                      ? "bg-slate-900 text-white font-bold"
+                                      : it.nivel === 1
+                                      ? "bg-blue-100 text-blue-800 border-blue-200 font-semibold"
+                                      : it.nivel === 2
+                                      ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                                      : "bg-slate-100 text-slate-700"
+                                  }`}
+                                >
+                                  Nv. {it.nivel}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="font-mono text-xs font-semibold text-slate-900">
+                                {it.id_producto_raiz}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs text-slate-600">
+                                {it.id_padre}
+                              </TableCell>
+                              <TableCell className="font-mono text-xs font-bold text-blue-700">
+                                {it.id_hijo}
+                              </TableCell>
+                              <TableCell className="text-xs text-slate-700 max-w-[240px] truncate" title={it.descripcion_hijo || ""}>
+                                {it.descripcion_hijo || it.id_hijo}
+                              </TableCell>
+                              <TableCell className="text-right font-mono font-bold text-slate-900">
+                                {it.cantidad.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                              </TableCell>
+                              <TableCell className="text-xs text-slate-600">{it.unidad}</TableCell>
+                              <TableCell className="text-center font-mono text-xs text-slate-400">{it.orden}</TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <Input
+                        placeholder="Buscar por código padre, componente hijo o descripción..."
+                        className="pl-9"
+                        value={searchRelation}
+                        onChange={(e) => setSearchRelation(e.target.value)}
+                      />
+                    </div>
+                    <div className="w-full sm:w-48">
+                      <Select value={filterSector} onValueChange={setFilterSector}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sector" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="todos">Todos los sectores</SelectItem>
+                          {sectorsList.map((sec) => (
+                            <SelectItem key={sec} value={sec}>
+                              {sec}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Sector</TableHead>
+                          <TableHead>SD</TableHead>
+                          <TableHead>Código TASA (Padre)</TableHead>
+                          <TableHead>Padre SAP</TableHead>
+                          <TableHead>Componente Hijo</TableHead>
+                          <TableHead>Descripción Hijo</TableHead>
+                          <TableHead className="text-right">Uso / Cant.</TableHead>
+                          <TableHead>Unidad</TableHead>
+                          <TableHead className="text-center">Estado</TableHead>
+                          <TableHead className="text-right">Acciones</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredRelations.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={10} className="text-center text-slate-400 py-8">
+                              {loading ? "Cargando relaciones desde base de datos..." : "No se encontraron relaciones"}
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          filteredRelations.map((rel) => (
+                            <TableRow key={rel.id_set_componente} className={!rel.activo ? "opacity-50" : ""}>
+                              <TableCell className="font-medium text-xs">{rel.sector || "—"}</TableCell>
+                              <TableCell className="text-xs text-slate-600">{rel.sd || "—"}</TableCell>
+                              <TableCell className="font-mono text-xs font-semibold">{rel.codigo_tasa}</TableCell>
+                              <TableCell className="font-mono text-xs text-slate-600">{rel.codigo_sap_padre}</TableCell>
+                              <TableCell className="font-mono text-xs font-semibold text-slate-900">{rel.id_material_hijo}</TableCell>
+                              <TableCell className="text-xs text-slate-700 max-w-[220px] truncate" title={rel.descripcion_hijo || ""}>
+                                {rel.descripcion_hijo || rel.id_material_hijo}
+                              </TableCell>
+                              <TableCell className="text-right font-mono font-bold text-slate-900">
+                                {rel.cantidad.toFixed(2)}
+                              </TableCell>
+                              <TableCell className="text-xs">{rel.unidad}</TableCell>
+                              <TableCell className="text-center">
+                                <span
+                                  onClick={() => handleToggleRelationActive(rel.id_set_componente)}
+                                  className="cursor-pointer"
+                                >
+                                  {rel.activo ? (
+                                    <Badge className="bg-green-100 text-green-700" variant="outline">
+                                      Activo
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className="text-slate-400">
+                                      Inactivo
+                                    </Badge>
+                                  )}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openEditRelationDialog(rel)}
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5 text-slate-600" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleToggleRelationActive(rel.id_set_componente)}
+                                    className="h-8 w-8 p-0 text-red-600"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

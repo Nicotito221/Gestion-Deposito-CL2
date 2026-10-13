@@ -3,6 +3,8 @@ import pyodbc
 
 from app.core.config import get_db_connection
 from app.schemas.bom import (
+    BomEstructuraItemOut,
+    BomEstructuraResponse,
     BomVersionOut,
     SetComponenteOut,
     SetComponenteCreate,
@@ -276,3 +278,97 @@ class BomRepository:
         finally:
             cursor.close()
             conn.close()
+
+    def get_bom_estructura(
+        self,
+        id_version: Optional[int] = None,
+        search: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> BomEstructuraResponse:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            target_version_id = id_version
+            nombre_archivo = None
+            if not target_version_id:
+                cursor.execute(
+                    "SELECT TOP 1 id_version, nombre_archivo FROM dbo.bom_version WHERE es_vigente = 1 ORDER BY id_version DESC"
+                )
+                v_row = cursor.fetchone()
+                if v_row:
+                    target_version_id = int(v_row[0])
+                    nombre_archivo = str(v_row[1])
+            else:
+                cursor.execute(
+                    "SELECT nombre_archivo FROM dbo.bom_version WHERE id_version = ?",
+                    (target_version_id,),
+                )
+                v_row = cursor.fetchone()
+                if v_row:
+                    nombre_archivo = str(v_row[0])
+
+            if not target_version_id:
+                return BomEstructuraResponse(id_version=None, nombre_archivo=None, total=0, items=[])
+
+            where_conditions = ["b.id_version = ?"]
+            params: List[object] = [target_version_id]
+
+            if search and search.strip():
+                s = f"%{search.strip()}%"
+                where_conditions.append(
+                    "(b.id_producto_raiz LIKE ? OR b.id_padre LIKE ? OR b.id_hijo LIKE ? OR m.nombre LIKE ?)"
+                )
+                params.extend([s, s, s, s])
+
+            where_sql = " AND ".join(where_conditions)
+
+            count_query = f"""
+                SELECT COUNT(*)
+                FROM dbo.bom_estructura b
+                LEFT JOIN dbo.material m ON b.id_hijo = m.id_material
+                WHERE {where_sql}
+            """
+            cursor.execute(count_query, params)
+            total = int(cursor.fetchone()[0])
+
+            data_query = f"""
+                SELECT b.id_bom, b.id_version, b.nivel, b.id_producto_raiz, b.id_padre, b.id_hijo,
+                       ISNULL(m.nombre, b.id_hijo) AS descripcion_hijo,
+                       CAST(b.cantidad AS FLOAT) AS cantidad, b.unidad, b.orden
+                FROM dbo.bom_estructura b
+                LEFT JOIN dbo.material m ON b.id_hijo = m.id_material
+                WHERE {where_sql}
+                ORDER BY b.orden ASC, b.id_bom ASC
+                OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            """
+            data_params = params + [offset, limit]
+            cursor.execute(data_query, data_params)
+            rows = cursor.fetchall()
+
+            items = [
+                BomEstructuraItemOut(
+                    id_bom=int(r[0]),
+                    id_version=int(r[1]),
+                    nivel=int(r[2]),
+                    id_producto_raiz=str(r[3]),
+                    id_padre=str(r[4]),
+                    id_hijo=str(r[5]),
+                    descripcion_hijo=str(r[6]) if r[6] else None,
+                    cantidad=float(r[7]),
+                    unidad=str(r[8]),
+                    orden=int(r[9]),
+                )
+                for r in rows
+            ]
+
+            return BomEstructuraResponse(
+                id_version=target_version_id,
+                nombre_archivo=nombre_archivo,
+                total=total,
+                items=items,
+            )
+        finally:
+            cursor.close()
+            conn.close()
+

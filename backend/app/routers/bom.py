@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from app.repositories.bom_repository import BomRepository
 from app.schemas.bom import (
+    BomEstructuraResponse,
     BomImportResult,
     BomVersionOut,
     SetComponenteCreate,
@@ -18,6 +19,24 @@ from app.services.bom_service import BomService
 router = APIRouter(prefix="/api/bom", tags=["BOM"])
 _repository = BomRepository()
 _bom_service = BomService()
+
+
+@router.get("/estructura-activa", response_model=BomEstructuraResponse)
+def get_bom_estructura_activa(
+    id_version: Optional[int] = Query(default=None),
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> BomEstructuraResponse:
+    try:
+        return _repository.get_bom_estructura(
+            id_version=id_version, search=search, limit=limit, offset=offset
+        )
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al consultar estructura de BOM: {err}",
+        )
 
 
 @router.get("/versiones", response_model=List[BomVersionOut])

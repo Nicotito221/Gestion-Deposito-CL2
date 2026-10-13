@@ -53,6 +53,28 @@ class BomVersionOut(BaseModel):
     observacion: Optional[str] = None
 
 
+class BomEstructuraItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id_bom: int
+    id_version: int
+    nivel: int
+    id_producto_raiz: str
+    id_padre: str
+    id_hijo: str
+    descripcion_hijo: Optional[str] = None
+    cantidad: float
+    unidad: str
+    orden: int
+
+
+class BomEstructuraResponse(BaseModel):
+    id_version: Optional[int] = None
+    nombre_archivo: Optional[str] = None
+    total: int = 0
+    items: List[BomEstructuraItemOut] = []
+
+
 class SetComponenteOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

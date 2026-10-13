@@ -57,8 +57,20 @@ def create_proveedor(
     data: RundownProveedorCreate,
     service: RundownService = Depends(get_rundown_service),
 ):
-    new_id = service.create_proveedor(data)
-    return {"id_proveedor": new_id, "mensaje": "Proveedor registrado exitosamente"}
+    try:
+        new_id = service.create_proveedor(data)
+        return {"id_proveedor": new_id, "mensaje": "Proveedor registrado exitosamente"}
+    except Exception as err:
+        if "Violation of UNIQUE KEY constraint" in str(err) or "2627" in str(err):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El proveedor con código '{data.codigo_proveedor.strip().upper()}' ya existe en el sistema.",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al registrar proveedor: {err}",
+        )
+
 
 
 @router.put("/proveedores/{id_proveedor}")
