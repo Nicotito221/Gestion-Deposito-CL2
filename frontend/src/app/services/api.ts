@@ -9,6 +9,26 @@ export interface BomVersionItem {
   observacion: string | null;
 }
 
+export interface BomEstructuraItem {
+  id_bom: number;
+  id_version: number;
+  nivel: number;
+  id_producto_raiz: string;
+  id_padre: string;
+  id_hijo: string;
+  descripcion_hijo: string | null;
+  cantidad: number;
+  unidad: string;
+  orden: number;
+}
+
+export interface BomEstructuraResponse {
+  id_version: number | null;
+  nombre_archivo: string | null;
+  total: number;
+  items: BomEstructuraItem[];
+}
+
 export interface SetComponenteItem {
   id_set_componente: number;
   sector: string | null;
@@ -72,6 +92,25 @@ export async function getBomVersions(): Promise<BomVersionItem[]> {
   const res = await fetch(`${API_BASE_URL}/api/bom/versiones`);
   if (!res.ok) {
     throw new Error(`Error al obtener versiones de BOM (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function getBomEstructuraActiva(params?: {
+  id_version?: number;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<BomEstructuraResponse> {
+  const query = new URLSearchParams();
+  if (params?.id_version) query.set("id_version", String(params.id_version));
+  if (params?.search) query.set("search", params.search);
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.offset) query.set("offset", String(params.offset));
+
+  const res = await fetch(`${API_BASE_URL}/api/bom/estructura-activa?${query.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Error al obtener estructura de BOM (${res.status})`);
   }
   return res.json();
 }
