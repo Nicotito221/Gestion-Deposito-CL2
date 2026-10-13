@@ -98,10 +98,19 @@ BEGIN
     CREATE TABLE dbo.stock_deposito (
         id_material VARCHAR(50) NOT NULL PRIMARY KEY FOREIGN KEY REFERENCES dbo.material(id_material),
         stock_actual DECIMAL(18,4) NOT NULL DEFAULT 0,
+        stock_planta DECIMAL(18,4) NOT NULL DEFAULT 0.0,
         fecha_actualizacion DATETIME2 NULL DEFAULT SYSDATETIME(),
         stock_warehouse DECIMAL(18,4) NOT NULL DEFAULT 0.0
     );
+END
+ELSE
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.stock_deposito') AND name = 'stock_planta')
+    BEGIN
+        ALTER TABLE dbo.stock_deposito ADD stock_planta DECIMAL(18,4) NOT NULL DEFAULT 0.0;
+    END;
 END;
+
 
 -- 7. TABLA: producto
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'producto')
