@@ -4,7 +4,10 @@
 -- Motor: Microsoft SQL Server (T-SQL)
 -- ============================================================================
 
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
 SET NOCOUNT ON;
+GO
 
 -- 1. TABLA: rundown_seccion
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'rundown_seccion')
@@ -148,6 +151,7 @@ BEGIN
     );
     CREATE UNIQUE INDEX UQ_bom_version_activa ON dbo.bom_version (es_vigente) WHERE es_vigente = 1;
 END;
+GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'bom_estructura')
 BEGIN
@@ -164,6 +168,7 @@ BEGIN
     );
     CREATE INDEX IX_bom_estructura_raiz_padre ON dbo.bom_estructura (id_producto_raiz, id_padre, id_version);
 END;
+GO
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'bom_explosion_plana')
 BEGIN
@@ -177,6 +182,7 @@ BEGIN
     );
     CREATE INDEX IX_bom_plana_raiz ON dbo.bom_explosion_plana (id_producto_raiz);
 END;
+GO
 
 -- 10. TABLA: set_componente
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'set_componente')
@@ -195,6 +201,7 @@ BEGIN
     CREATE INDEX IX_set_componente_hijo ON dbo.set_componente (id_material_hijo, activo);
     CREATE INDEX IX_set_componente_padres ON dbo.set_componente (codigo_tasa, codigo_sap_padre, id_material_hijo, sector, sd, activo);
 END;
+GO
 
 -- 11. TABLAS DE PEDIDOS Y REMITOS
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'pedido')
