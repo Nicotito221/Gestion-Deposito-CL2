@@ -1008,32 +1008,26 @@ class ProductionConsolidator:
                 frac = min(1.0, max(0.0, elapsed / 21.38))
                 return frac, 1.0 - frac
 
-        bom_by_canon_hijo: Dict[str, List[BomItem]] = defaultdict(list)
-        unique_hijos: List[str] = []
-        hijo_seen: Set[str] = set()
-        for b in self.bom_items:
-            canon = clean_code(b.hijo)
-            if canon:
-                bom_by_canon_hijo[canon].append(b)
-                if canon not in hijo_seen:
-                    hijo_seen.add(canon)
-                    unique_hijos.append(b.hijo)
-
         headers = ['Radio button Material', 'Material', 'Centro', 'Versión de plan', 'fecha', 'Tipo formato fecha', 'Cantidad']
         output_rows: List[List[str]] = []
 
-        for raw_hijo in unique_hijos:
-            canon_hijo = clean_code(raw_hijo)
-            meta = self.materials_metadata.get(canon_hijo, MaterialMetadata(canonical_hijo=canon_hijo, n_parte=raw_hijo))
-            mat_code = format_part_number(meta.n_parte or raw_hijo)
-            centro = meta.centro or default_centro
-            matching_bom_rows = bom_by_canon_hijo.get(canon_hijo, [])
+        for item in self.demand_items.values():
+            mat_code = format_part_number(item.n_parte or item.canonical_pn)
+            if not mat_code:
+                continue
+            meta = self.materials_metadata.get(item.canonical_pn, MaterialMetadata(canonical_hijo=item.canonical_pn))
+            centro = getattr(item, 'centro', None) or meta.centro or default_centro
 
             for col in all_val_cols:
-                col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
+                if col in sorted_daily:
+                    cant = item.daily_values.get(col, 0.0)
+                    periodo_tipo = 'D'
+                else:
+                    cant = item.tentative_values.get(col, 0.0)
+                    periodo_tipo = 'M'
+
                 col_date = self.resolve_date_obj(col)
                 fecha_str = self.resolve_date_str(col)
-                periodo_tipo = 'D' if col in sorted_daily else 'M'
 
                 if fecha_corte is not None and col_date is not None and col_date < fecha_corte:
                     output_rows.append([
@@ -1047,8 +1041,8 @@ class ProductionConsolidator:
                     ])
                 elif col_date is not None and col_date == hoy:
                     _, fraccion_restante = get_avance_jornada_produccion(corte_dt)
-                    cant_rem = int(round(col_sum * fraccion_restante))
-                    if col_sum > 0 or (fecha_corte is not None and col_date >= fecha_corte):
+                    cant_rem = int(round(cant * fraccion_restante))
+                    if cant > 0 or (fecha_corte is not None and col_date >= fecha_corte):
                         output_rows.append([
                             'X',
                             mat_code,
@@ -1058,8 +1052,7 @@ class ProductionConsolidator:
                             periodo_tipo,
                             str(cant_rem)
                         ])
-                elif col_sum > 0:
-                    cant_str = str(int(round(col_sum)))
+                elif cant > 0:
                     output_rows.append([
                         'X',
                         mat_code,
@@ -1067,7 +1060,7 @@ class ProductionConsolidator:
                         default_version,
                         fecha_str,
                         periodo_tipo,
-                        cant_str
+                        str(int(round(cant)))
                     ])
 
         with open(output_txt_path, mode='w', encoding='utf-8', newline='') as f:
