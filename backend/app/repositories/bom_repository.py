@@ -293,7 +293,7 @@ class BomRepository:
             nombre_archivo = None
             if not target_version_id:
                 cursor.execute(
-                    "SELECT TOP 1 id_version, nombre_archivo FROM dbo.bom_version WHERE es_vigente = 1 ORDER BY id_version DESC"
+                    "SELECT TOP 1 id_version, nombre_archivo FROM dbo.bom_version ORDER BY es_vigente DESC, id_version DESC"
                 )
                 v_row = cursor.fetchone()
                 if v_row:
