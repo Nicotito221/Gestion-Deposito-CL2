@@ -5,6 +5,7 @@ import os
 import re
 import tkinter as tk
 import unicodedata
+from collections import defaultdict
 from dataclasses import dataclass, field
 from tkinter import filedialog, messagebox
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
@@ -33,12 +34,7 @@ MONTHS_LOOKUP = {
     'dic': 12, 'diciembre': 12, 'dec': 12
 }
 
-DEFAULT_BOM_CANDIDATES = [
-    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\Interfaz.xlsm',
-    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\interfax.xlsm',
-    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\interfax.xslm',
-    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\Interfaz.xlsx',
-]
+DEFAULT_BOM_CANDIDATES: List[str] = []
 
 DEFAULT_TENTATIVE_DATES = {
     10: '19.10.2026',
@@ -48,12 +44,7 @@ DEFAULT_TENTATIVE_DATES = {
     2: '15.02.2027'
 }
 
-DEFAULT_MATERIALS_CANDIDATES = [
-    r'C:\Users\nangerossa\Desktop\PRD - Septiembre 2026 - IASS015922 (2).csv',
-    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\PRD - Septiembre 2026 - IASS015922 (2).csv',
-    r'C:\Users\nangerossa\Desktop\PRD - Septiembre 2026.xlsx',
-    r'C:\Users\nangerossa\Desktop\Cargar orden suministro\PRD - Septiembre 2026.xlsx',
-]
+DEFAULT_MATERIALS_CANDIDATES: List[str] = []
 
 def clean_code(raw: Any) -> str:
     if raw is None:
@@ -390,6 +381,86 @@ class ProductionConsolidator:
             cursor = conn.cursor()
             cursor.execute(
                 """
+                SELECT TOP 1 id_version
+                FROM dbo.bom_version WITH (NOLOCK)
+                ORDER BY es_vigente DESC, id_version DESC
+                """
+            )
+            v_row = cursor.fetchone()
+            if v_row:
+                target_version_id = int(v_row[0])
+                cursor.execute(
+                    """
+                    SELECT 
+                        p.id_producto_raiz,
+                        p.id_material_insumo,
+                        p.factor_consumo_total,
+                        COALESCE(m.nombre, ''),
+                        COALESCE(m.centro, '1000')
+                    FROM dbo.bom_explosion_plana p WITH (NOLOCK)
+                    LEFT JOIN dbo.material m WITH (NOLOCK) ON p.id_material_insumo = m.id_material
+                    WHERE p.id_version = ?
+                    """,
+                    (target_version_id,)
+                )
+                rows = cursor.fetchall()
+
+                if not rows:
+                    cursor.execute(
+                        """
+                        SELECT 
+                            b.id_producto_raiz,
+                            b.id_hijo,
+                            SUM(b.cantidad),
+                            COALESCE(m.nombre, ''),
+                            COALESCE(m.centro, '1000')
+                        FROM dbo.bom_estructura b WITH (NOLOCK)
+                        LEFT JOIN dbo.material m WITH (NOLOCK) ON b.id_hijo = m.id_material
+                        WHERE b.id_version = ?
+                        GROUP BY b.id_producto_raiz, b.id_hijo, m.nombre, m.centro
+                        """,
+                        (target_version_id,)
+                    )
+                    rows = cursor.fetchall()
+
+                if rows:
+                    for r in rows:
+                        raiz_raw = str(r[0] or '')
+                        hijo_raw = str(r[1] or '')
+                        uso_val = float(r[2] or 1.0)
+                        desc = str(r[3] or '')
+                        centro = str(r[4] or '1000')
+
+                        if not hijo_raw or not raiz_raw:
+                            continue
+
+                        formatted_hijo = format_part_number(hijo_raw)
+                        formatted_raiz = format_part_number(raiz_raw)
+
+                        b_item = BomItem(
+                            sector='Seat',
+                            sd='',
+                            codigo_tasa=formatted_raiz or raiz_raw,
+                            codigo_sap_padre=formatted_raiz or raiz_raw,
+                            hijo=formatted_hijo or hijo_raw,
+                            uso=uso_val,
+                            clave=f"{raiz_raw}{hijo_raw}"
+                        )
+                        self.bom_items.append(b_item)
+
+                        canon_hijo = clean_code(hijo_raw)
+                        if canon_hijo not in self.materials_metadata:
+                            self.materials_metadata[canon_hijo] = MaterialMetadata(
+                                canonical_hijo=canon_hijo,
+                                n_parte=formatted_hijo,
+                                codigo_tasa_tbar=formatted_hijo,
+                                descripcion=desc,
+                                centro=centro,
+                            )
+                    return
+
+            cursor.execute(
+                """
                 SELECT 
                     s.sector,
                     s.sd,
@@ -399,8 +470,8 @@ class ProductionConsolidator:
                     s.cantidad,
                     COALESCE(m.nombre, ''),
                     COALESCE(m.centro, '1000')
-                FROM dbo.set_componente s
-                LEFT JOIN dbo.material m ON s.id_material_hijo = m.id_material
+                FROM dbo.set_componente s WITH (NOLOCK)
+                LEFT JOIN dbo.material m WITH (NOLOCK) ON s.id_material_hijo = m.id_material
                 WHERE s.activo = 1
                 """
             )
@@ -778,13 +849,16 @@ class ProductionConsolidator:
             'Tipo Caja', 'Cant x Caja', 'Dock', 'Destino'
         ] + all_val_cols + ['Total']
 
+        bom_by_canon_hijo: Dict[str, List[BomItem]] = defaultdict(list)
         unique_hijos: List[str] = []
         hijo_seen: Set[str] = set()
         for b in self.bom_items:
             canon = clean_code(b.hijo)
-            if canon and canon not in hijo_seen:
-                hijo_seen.add(canon)
-                unique_hijos.append(b.hijo)
+            if canon:
+                bom_by_canon_hijo[canon].append(b)
+                if canon not in hijo_seen:
+                    hijo_seen.add(canon)
+                    unique_hijos.append(b.hijo)
 
         rows: List[List[Union[str, float]]] = []
         for raw_hijo in unique_hijos:
@@ -803,7 +877,7 @@ class ProductionConsolidator:
             ]
 
             hijo_total = 0.0
-            matching_bom_rows = [b for b in self.bom_items if clean_code(b.hijo) == canon_hijo]
+            matching_bom_rows = bom_by_canon_hijo.get(canon_hijo, [])
 
             for col in all_val_cols:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
@@ -932,13 +1006,16 @@ class ProductionConsolidator:
                 frac = min(1.0, max(0.0, elapsed / 21.38))
                 return frac, 1.0 - frac
 
+        bom_by_canon_hijo: Dict[str, List[BomItem]] = defaultdict(list)
         unique_hijos: List[str] = []
         hijo_seen: Set[str] = set()
         for b in self.bom_items:
             canon = clean_code(b.hijo)
-            if canon and canon not in hijo_seen:
-                hijo_seen.add(canon)
-                unique_hijos.append(b.hijo)
+            if canon:
+                bom_by_canon_hijo[canon].append(b)
+                if canon not in hijo_seen:
+                    hijo_seen.add(canon)
+                    unique_hijos.append(b.hijo)
 
         headers = ['Radio button Material', 'Material', 'Centro', 'Versión de plan', 'fecha', 'Tipo formato fecha', 'Cantidad']
         output_rows: List[List[str]] = []
@@ -948,7 +1025,7 @@ class ProductionConsolidator:
             meta = self.materials_metadata.get(canon_hijo, MaterialMetadata(canonical_hijo=canon_hijo, n_parte=raw_hijo))
             mat_code = format_part_number(meta.n_parte or raw_hijo)
             centro = meta.centro or default_centro
-            matching_bom_rows = [b for b in self.bom_items if clean_code(b.hijo) == canon_hijo]
+            matching_bom_rows = bom_by_canon_hijo.get(canon_hijo, [])
 
             for col in all_val_cols:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
