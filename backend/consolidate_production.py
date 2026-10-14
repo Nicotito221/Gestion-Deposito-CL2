@@ -1012,6 +1012,10 @@ class ProductionConsolidator:
         output_rows: List[List[str]] = []
 
         for item in self.demand_items.values():
+            total_pn = sum(item.daily_values.values()) + sum(item.tentative_values.values())
+            if total_pn <= 1.0:
+                continue
+
             mat_code = format_part_number(item.n_parte or item.canonical_pn)
             if not mat_code:
                 continue
