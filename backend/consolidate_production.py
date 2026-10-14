@@ -392,14 +392,16 @@ class ProductionConsolidator:
                 cursor.execute(
                     """
                     SELECT 
-                        p.id_producto_raiz,
-                        p.id_material_insumo,
-                        p.factor_consumo_total,
+                        b.id_producto_raiz,
+                        b.id_hijo,
+                        SUM(b.cantidad),
                         COALESCE(m.nombre, ''),
                         COALESCE(m.centro, '1000')
-                    FROM dbo.bom_explosion_plana p WITH (NOLOCK)
-                    LEFT JOIN dbo.material m WITH (NOLOCK) ON p.id_material_insumo = m.id_material
-                    WHERE p.id_version = ?
+                    FROM dbo.bom_estructura b WITH (NOLOCK)
+                    LEFT JOIN dbo.material m WITH (NOLOCK) ON b.id_hijo = m.id_material
+                    WHERE b.id_version = ?
+                      AND b.nivel = 1
+                    GROUP BY b.id_producto_raiz, b.id_hijo, m.nombre, m.centro
                     """,
                     (target_version_id,)
                 )
@@ -1031,6 +1033,7 @@ class ProductionConsolidator:
                 col_sum = sum(b.daily_calculated.get(col, 0.0) for b in matching_bom_rows)
                 col_date = self.resolve_date_obj(col)
                 fecha_str = self.resolve_date_str(col)
+                periodo_tipo = 'D' if col in sorted_daily else 'M'
 
                 if fecha_corte is not None and col_date is not None and col_date < fecha_corte:
                     output_rows.append([
@@ -1039,7 +1042,7 @@ class ProductionConsolidator:
                         centro,
                         default_version,
                         fecha_str,
-                        'D',
+                        periodo_tipo,
                         '0'
                     ])
                 elif col_date is not None and col_date == hoy:
@@ -1052,7 +1055,7 @@ class ProductionConsolidator:
                             centro,
                             default_version,
                             fecha_str,
-                            'D',
+                            periodo_tipo,
                             str(cant_rem)
                         ])
                 elif col_sum > 0:
@@ -1063,7 +1066,7 @@ class ProductionConsolidator:
                         centro,
                         default_version,
                         fecha_str,
-                        'D',
+                        periodo_tipo,
                         cant_str
                     ])
 
