@@ -1510,9 +1510,19 @@ export async function getPedidos(params?: {
 
     interface SupabaseItemDetalle {
       id_material: string;
+      nombre_material?: string;
+      unidad?: string;
       cantidad_pedida: number;
       cantidad_preparada?: number;
       cantidad_entregada?: number;
+      tipo_empaque?: string;
+      tamanio_lote?: number;
+      bultos_por_pallet?: number;
+      unidad_por_bulto?: number;
+      cantidad_pallets?: number;
+      cantidad_pallets_preparada?: number;
+      cantidad_pallets_entregada?: number;
+      cantidad_pallets_pendiente?: number;
       estado?: string;
       comentario?: string;
     }
@@ -1550,10 +1560,19 @@ export async function getPedidos(params?: {
         total_items: detalle.length,
         items: detalle.map((it) => ({
           id_material: it.id_material,
-          nombre_material: it.id_material,
+          nombre_material: it.nombre_material || it.id_material,
+          unidad: it.unidad || "UN",
           cantidad_pedida: Number(it.cantidad_pedida),
           cantidad_preparada: Number(it.cantidad_preparada || 0),
           cantidad_entregada: Number(it.cantidad_entregada || 0),
+          tipo_empaque: it.tipo_empaque || "unidad",
+          tamanio_lote: Number(it.tamanio_lote || 1),
+          bultos_por_pallet: it.bultos_por_pallet != null ? Number(it.bultos_por_pallet) : undefined,
+          unidad_por_bulto: it.unidad_por_bulto != null ? Number(it.unidad_por_bulto) : undefined,
+          cantidad_pallets: it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null,
+          cantidad_pallets_preparada: it.cantidad_pallets_preparada != null ? Number(it.cantidad_pallets_preparada) : 0,
+          cantidad_pallets_entregada: it.cantidad_pallets_entregada != null ? Number(it.cantidad_pallets_entregada) : 0,
+          cantidad_pallets_pendiente: it.cantidad_pallets_pendiente != null ? Number(it.cantidad_pallets_pendiente) : (it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null),
           estado: it.estado || "pendiente",
           comentario: it.comentario,
         })),
@@ -1592,9 +1611,19 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
 
     interface SupabaseItemDetalle {
       id_material: string;
+      nombre_material?: string;
+      unidad?: string;
       cantidad_pedida: number;
       cantidad_preparada?: number;
       cantidad_entregada?: number;
+      tipo_empaque?: string;
+      tamanio_lote?: number;
+      bultos_por_pallet?: number;
+      unidad_por_bulto?: number;
+      cantidad_pallets?: number;
+      cantidad_pallets_preparada?: number;
+      cantidad_pallets_entregada?: number;
+      cantidad_pallets_pendiente?: number;
       estado?: string;
       comentario?: string;
     }
@@ -1635,10 +1664,19 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
       total_items: detalle.length,
       items: detalle.map((it) => ({
         id_material: it.id_material,
-        nombre_material: it.id_material,
+        nombre_material: it.nombre_material || it.id_material,
+        unidad: it.unidad || "UN",
         cantidad_pedida: Number(it.cantidad_pedida),
         cantidad_preparada: Number(it.cantidad_preparada || 0),
         cantidad_entregada: Number(it.cantidad_entregada || 0),
+        tipo_empaque: it.tipo_empaque || "unidad",
+        tamanio_lote: Number(it.tamanio_lote || 1),
+        bultos_por_pallet: it.bultos_por_pallet != null ? Number(it.bultos_por_pallet) : undefined,
+        unidad_por_bulto: it.unidad_por_bulto != null ? Number(it.unidad_por_bulto) : undefined,
+        cantidad_pallets: it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null,
+        cantidad_pallets_preparada: it.cantidad_pallets_preparada != null ? Number(it.cantidad_pallets_preparada) : 0,
+        cantidad_pallets_entregada: it.cantidad_pallets_entregada != null ? Number(it.cantidad_pallets_entregada) : 0,
+        cantidad_pallets_pendiente: it.cantidad_pallets_pendiente != null ? Number(it.cantidad_pallets_pendiente) : (it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null),
         estado: it.estado || "pendiente",
         comentario: it.comentario,
       })),
@@ -1658,6 +1696,7 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
 export interface PreparacionItemUpdate {
   id_material: string;
   cantidad_preparada: number;
+  cantidad_pallets_preparada?: number | null;
   estado?: string;
   comentario?: string;
 }
@@ -1681,16 +1720,21 @@ export async function updatePreparacionPedido(
         : "en_preparacion";
 
     for (const it of data.items) {
+      const patchData: Record<string, any> = {
+        cantidad_preparada: it.cantidad_preparada,
+        estado: it.estado || (nuevoEstado === "completo" ? "completo" : "en_preparacion"),
+        comentario: it.comentario || null,
+      };
+      if (it.cantidad_pallets_preparada !== undefined && it.cantidad_pallets_preparada !== null) {
+        patchData.cantidad_pallets_preparada = it.cantidad_pallets_preparada;
+      }
+
       await fetch(
         `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(it.id_material)}`,
         {
           method: "PATCH",
           headers: getAuthHeaders(),
-          body: JSON.stringify({
-            cantidad_preparada: it.cantidad_preparada,
-            estado: it.estado || (nuevoEstado === "completo" ? "completo" : "en_preparacion"),
-            comentario: it.comentario || null,
-          }),
+          body: JSON.stringify(patchData),
         }
       );
     }
