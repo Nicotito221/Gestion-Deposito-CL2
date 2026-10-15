@@ -1,7 +1,12 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8002";
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-export const IS_SUPABASE_ACTIVE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+const isLocalHostname =
+  typeof window !== "undefined" &&
+  Boolean(window.location.hostname.match(/^(localhost|127\.0\.0\.1|172\.|192\.168\.|10\.)/));
+
+export const IS_SUPABASE_ACTIVE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && !isLocalHostname);
 
 export interface BomVersionItem {
   id_version: number;
