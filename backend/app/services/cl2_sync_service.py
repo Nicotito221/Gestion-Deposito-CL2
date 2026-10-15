@@ -92,9 +92,19 @@ class Cl2SyncService:
             {
                 "id_pedido": pedido_data["id_pedido"],
                 "id_material": it["id_material"],
+                "nombre_material": it.get("nombre_material") or it["id_material"],
+                "unidad": it.get("unidad") or "UN",
                 "cantidad_pedida": float(it["cantidad_pedida"]),
                 "cantidad_preparada": float(it.get("cantidad_preparada") or 0.0),
                 "cantidad_entregada": float(it.get("cantidad_entregada") or 0.0),
+                "tipo_empaque": it.get("tipo_empaque") or "unidad",
+                "tamanio_lote": float(it.get("tamanio_lote") or 1.0),
+                "bultos_por_pallet": it.get("bultos_por_pallet"),
+                "unidad_por_bulto": it.get("unidad_por_bulto"),
+                "cantidad_pallets": it.get("cantidad_pallets"),
+                "cantidad_pallets_preparada": it.get("cantidad_pallets_preparada") or 0.0,
+                "cantidad_pallets_entregada": it.get("cantidad_pallets_entregada") or 0.0,
+                "cantidad_pallets_pendiente": it.get("cantidad_pallets_pendiente") if it.get("cantidad_pallets_pendiente") is not None else it.get("cantidad_pallets"),
                 "estado": it.get("estado", "pendiente"),
                 "comentario": it.get("comentario"),
             }
@@ -141,7 +151,10 @@ class Cl2SyncService:
         if not self.enabled:
             return
 
-        pedidos_remotos = self._get("pedidos_cl2", "select=id_pedido,estado,preparado_por_nombre,fecha_despacho&estado=in.(en_preparacion,completo,parcial)")
+        pedidos_remotos = self._get(
+            "pedidos_cl2",
+            "select=id_pedido,estado,preparado_por_nombre,fecha_despacho,pedidos_cl2_detalle(id_material,cantidad_preparada,cantidad_pallets_preparada,estado)&estado=in.(en_preparacion,completo,parcial)"
+        )
         if not pedidos_remotos:
             return
 
@@ -151,11 +164,11 @@ class Cl2SyncService:
             for p in pedidos_remotos:
                 id_pedido = p["id_pedido"]
                 estado_remoto = p["estado"]
-                operador = p.get("preparado_por_nombre") or "Operario CL2"
+                fecha_despacho = p.get("fecha_despacho")
 
                 cursor.execute("SELECT estado FROM dbo.pedido WHERE id_pedido = ?", id_pedido)
                 row = cursor.fetchone()
-                if row and row[0] != estado_remoto:
+                if row:
                     cursor.execute(
                         """
                         UPDATE dbo.pedido
@@ -164,9 +177,23 @@ class Cl2SyncService:
                         WHERE id_pedido = ?
                         """,
                         estado_remoto,
-                        p.get("fecha_despacho"),
+                        fecha_despacho,
                         id_pedido,
                     )
+                    detalles = p.get("pedidos_cl2_detalle") or []
+                    for d in detalles:
+                        cursor.execute(
+                            """
+                            UPDATE dbo.material_pedido
+                            SET cantidad_preparada = ?,
+                                estado = ?
+                            WHERE id_pedido = ? AND id_material = ?
+                            """,
+                            float(d.get("cantidad_preparada") or 0.0),
+                            d.get("estado") or estado_remoto,
+                            id_pedido,
+                            d["id_material"],
+                        )
             conn.commit()
         except Exception as e:
             conn.rollback()

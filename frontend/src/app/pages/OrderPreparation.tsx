@@ -235,6 +235,7 @@ export function OrderPreparation() {
         items: materials.map((m) => ({
           id_material: m.id,
           cantidad_preparada: m.quantityPrepared,
+          cantidad_pallets_preparada: m.cantidad_pallets_preparada,
           estado: m.status,
         })),
       };
@@ -263,6 +264,7 @@ export function OrderPreparation() {
         items: materials.map((m) => ({
           id_material: m.id,
           cantidad_preparada: m.quantityPrepared,
+          cantidad_pallets_preparada: m.cantidad_pallets_preparada,
           estado: m.quantityPrepared >= m.quantityPending ? "completo" : (m.quantityPrepared > 0 ? "parcial" : "pendiente"),
         })),
       };
@@ -284,9 +286,13 @@ export function OrderPreparation() {
     if (!order) return;
     const payloadItems = materials.map((m) => {
       const qtyToSend = m.quantityPrepared > 0 ? m.quantityPrepared : m.quantityPending;
+      const palToSend = m.cantidad_pallets_preparada !== null && m.cantidad_pallets_preparada !== undefined && m.cantidad_pallets_preparada > 0
+        ? m.cantidad_pallets_preparada
+        : m.cantidad_pallets_pendiente;
       return {
         id_material: m.id,
         cantidad_preparada: qtyToSend,
+        cantidad_pallets_preparada: palToSend,
         estado: "completo",
       };
     });
