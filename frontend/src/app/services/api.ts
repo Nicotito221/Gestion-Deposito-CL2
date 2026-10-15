@@ -1,4 +1,7 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+export const IS_SUPABASE_ACTIVE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 export interface BomVersionItem {
   id_version: number;
@@ -1485,6 +1488,75 @@ export async function getPedidos(params?: {
   sector?: string;
   limit?: number;
 }): Promise<PedidosListResponse> {
+  if (IS_SUPABASE_ACTIVE) {
+    const query = new URLSearchParams();
+    query.append("select", "*,pedidos_cl2_detalle(*)");
+    query.append("order", "id_pedido.desc");
+    if (params?.estado) query.append("estado", `eq.${params.estado}`);
+    if (params?.turno) query.append("turno", `eq.${params.turno}`);
+    if (params?.limit) query.append("limit", String(params.limit));
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      throw new Error("Error al cargar pedidos desde Supabase");
+    }
+
+    interface SupabaseItemDetalle {
+      id_material: string;
+      cantidad_pedida: number;
+      cantidad_preparada?: number;
+      cantidad_entregada?: number;
+      estado?: string;
+      comentario?: string;
+    }
+
+    interface SupabasePedidoRow {
+      id_pedido: number;
+      sector: string;
+      prioridad: string;
+      origen: string;
+      estado: string;
+      fecha_creacion: string;
+      fecha_despacho?: string | null;
+      fecha_entrega?: string | null;
+      fecha_requerida?: string | null;
+      turno?: string | null;
+      comentario?: string | null;
+      pedidos_cl2_detalle?: SupabaseItemDetalle[];
+    }
+
+    const rows = (await res.json()) as SupabasePedidoRow[];
+    const items: PedidoOut[] = rows.map((p) => {
+      const detalle = p.pedidos_cl2_detalle || [];
+      return {
+        id_pedido: p.id_pedido,
+        sector: p.sector,
+        prioridad: p.prioridad,
+        origen: p.origen,
+        estado: p.estado,
+        fecha_creacion: p.fecha_creacion,
+        fecha_despacho: p.fecha_despacho,
+        fecha_entrega: p.fecha_entrega,
+        fecha_requerida: p.fecha_requerida,
+        turno: p.turno,
+        comentario: p.comentario,
+        total_items: detalle.length,
+        items: detalle.map((it) => ({
+          id_material: it.id_material,
+          nombre_material: it.id_material,
+          cantidad_pedida: Number(it.cantidad_pedida),
+          cantidad_preparada: Number(it.cantidad_preparada || 0),
+          cantidad_entregada: Number(it.cantidad_entregada || 0),
+          estado: it.estado || "pendiente",
+          comentario: it.comentario,
+        })),
+      };
+    });
+    return { items, total: items.length };
+  }
+
   const query = new URLSearchParams();
   if (params?.fecha_requerida) query.append("fecha_requerida", params.fecha_requerida);
   if (params?.estado) query.append("estado", params.estado);
@@ -1505,6 +1577,69 @@ export async function getPedidos(params?: {
 }
 
 export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
+  if (IS_SUPABASE_ACTIVE) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}&select=*,pedidos_cl2_detalle(*)`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      throw new Error("Error al obtener detalle del pedido");
+    }
+
+    interface SupabaseItemDetalle {
+      id_material: string;
+      cantidad_pedida: number;
+      cantidad_preparada?: number;
+      cantidad_entregada?: number;
+      estado?: string;
+      comentario?: string;
+    }
+
+    interface SupabasePedidoRow {
+      id_pedido: number;
+      sector: string;
+      prioridad: string;
+      origen: string;
+      estado: string;
+      fecha_creacion: string;
+      fecha_despacho?: string | null;
+      fecha_entrega?: string | null;
+      fecha_requerida?: string | null;
+      turno?: string | null;
+      comentario?: string | null;
+      pedidos_cl2_detalle?: SupabaseItemDetalle[];
+    }
+
+    const rows = (await res.json()) as SupabasePedidoRow[];
+    if (!rows || rows.length === 0) {
+      throw new Error(`Pedido #${idPedido} no encontrado`);
+    }
+    const p = rows[0];
+    const detalle = p.pedidos_cl2_detalle || [];
+    return {
+      id_pedido: p.id_pedido,
+      sector: p.sector,
+      prioridad: p.prioridad,
+      origen: p.origen,
+      estado: p.estado,
+      fecha_creacion: p.fecha_creacion,
+      fecha_despacho: p.fecha_despacho,
+      fecha_entrega: p.fecha_entrega,
+      fecha_requerida: p.fecha_requerida,
+      turno: p.turno,
+      comentario: p.comentario,
+      total_items: detalle.length,
+      items: detalle.map((it) => ({
+        id_material: it.id_material,
+        nombre_material: it.id_material,
+        cantidad_pedida: Number(it.cantidad_pedida),
+        cantidad_preparada: Number(it.cantidad_preparada || 0),
+        cantidad_entregada: Number(it.cantidad_entregada || 0),
+        estado: it.estado || "pendiente",
+        comentario: it.comentario,
+      })),
+    };
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}`, {
     headers: getAuthHeaders(),
   });
@@ -1532,6 +1667,67 @@ export async function updatePreparacionPedido(
   idPedido: number,
   data: PreparacionPedidoUpdate
 ): Promise<{ pedido: PedidoOut; id_remito?: string; mensaje: string }> {
+  if (IS_SUPABASE_ACTIVE) {
+    const nuevoEstado =
+      data.accion === "confirmar_completo"
+        ? "completo"
+        : data.accion === "confirmar_parcial"
+        ? "parcial"
+        : "en_preparacion";
+
+    for (const it of data.items) {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(it.id_material)}`,
+        {
+          method: "PATCH",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            cantidad_preparada: it.cantidad_preparada,
+            estado: it.estado || (nuevoEstado === "completo" ? "completo" : "en_preparacion"),
+            comentario: it.comentario || null,
+          }),
+        }
+      );
+    }
+
+    const savedUser = localStorage.getItem("auth_user");
+    let preparador = "Operario CL2";
+    if (savedUser) {
+      try {
+        const u = JSON.parse(savedUser) as { nombre?: string; apellido?: string; username?: string };
+        preparador = `${u.nombre || ""} ${u.apellido || ""}`.trim() || u.username || preparador;
+      } catch {
+        preparador = "Operario CL2";
+      }
+    }
+
+    interface PedidoPatchPayload {
+      estado: string;
+      preparado_por_nombre: string;
+      fecha_despacho?: string;
+    }
+
+    const payloadPedido: PedidoPatchPayload = {
+      estado: nuevoEstado,
+      preparado_por_nombre: preparador,
+    };
+    if (nuevoEstado === "completo" || nuevoEstado === "parcial") {
+      payloadPedido.fecha_despacho = new Date().toISOString();
+    }
+
+    await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payloadPedido),
+    });
+
+    const pedidoActualizado = await getPedidoDetalle(idPedido);
+    return {
+      pedido: pedidoActualizado,
+      mensaje: `Pedido #${idPedido} actualizado a ${nuevoEstado}`,
+    };
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/preparacion`, {
     method: "PUT",
     headers: {
@@ -1671,7 +1867,7 @@ export type RolUsuario =
   | "solicitante";
 
 export interface UsuarioItem {
-  id_usuario: number;
+  id_usuario: number | string;
   username: string;
   nombre: string;
   apellido: string;
@@ -1711,6 +1907,13 @@ export interface UsuarioUpdateInput {
 
 export function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem("auth_token");
+  if (IS_SUPABASE_ACTIVE) {
+    return {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  }
   return {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -1718,6 +1921,70 @@ export function getAuthHeaders(): HeadersInit {
 }
 
 export async function loginUser(username: string, password: string): Promise<LoginResponse> {
+  if (IS_SUPABASE_ACTIVE) {
+    const cleanUser = username.trim();
+    const email = cleanUser.includes("@") ? cleanUser : `${cleanUser}@cl2.com`;
+
+    const authRes = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!authRes.ok) {
+      const err = await authRes.json().catch(() => ({}));
+      throw new Error(err.error_description || err.msg || err.message || "Usuario o contraseña incorrectos.");
+    }
+
+    const authData = await authRes.json();
+    const token = authData.access_token as string;
+    const userId = authData.user?.id as string;
+
+    const profileRes = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_perfil?id=eq.${userId}&select=*`, {
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    interface SupabaseProfile {
+      id?: string;
+      nombre?: string;
+      apellido?: string;
+      rol?: string;
+      sector?: string;
+      email?: string;
+      activo?: boolean;
+      created_at?: string;
+    }
+
+    let profile: SupabaseProfile | null = null;
+    if (profileRes.ok) {
+      const profiles = (await profileRes.json()) as SupabaseProfile[];
+      if (Array.isArray(profiles) && profiles.length > 0) {
+        profile = profiles[0];
+      }
+    }
+
+    const usuario: UsuarioItem = {
+      id_usuario: profile?.id || userId,
+      username: profile?.nombre || cleanUser,
+      nombre: profile?.nombre || cleanUser,
+      apellido: profile?.apellido || "",
+      rol: (profile?.rol as RolUsuario) || "operario_deposito",
+      sector: profile?.sector || "CL2",
+      email: profile?.email || authData.user?.email || email,
+      activo: profile?.activo ?? true,
+      fecha_creacion: profile?.created_at || null,
+    };
+
+    return { token, usuario };
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1731,6 +1998,65 @@ export async function loginUser(username: string, password: string): Promise<Log
 }
 
 export async function getMe(): Promise<UsuarioItem> {
+  const token = localStorage.getItem("auth_token");
+  if (!token) {
+    throw new Error("Sesión inválida o expirada.");
+  }
+
+  if (IS_SUPABASE_ACTIVE) {
+    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!userRes.ok) {
+      throw new Error("Sesión inválida o expirada.");
+    }
+
+    const authUser = await userRes.json();
+    const userId = authUser.id;
+
+    const profileRes = await fetch(`${SUPABASE_URL}/rest/v1/usuarios_perfil?id=eq.${userId}&select=*`, {
+      headers: {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    interface SupabaseProfile {
+      id?: string;
+      nombre?: string;
+      apellido?: string;
+      rol?: string;
+      sector?: string;
+      email?: string;
+      activo?: boolean;
+      created_at?: string;
+    }
+
+    let profile: SupabaseProfile | null = null;
+    if (profileRes.ok) {
+      const profiles = (await profileRes.json()) as SupabaseProfile[];
+      if (Array.isArray(profiles) && profiles.length > 0) {
+        profile = profiles[0];
+      }
+    }
+
+    return {
+      id_usuario: profile?.id || userId,
+      username: profile?.nombre || authUser.email?.split("@")[0] || "operario",
+      nombre: profile?.nombre || "Operario",
+      apellido: profile?.apellido || "CL2",
+      rol: (profile?.rol as RolUsuario) || "operario_deposito",
+      sector: profile?.sector || "CL2",
+      email: profile?.email || authUser.email,
+      activo: profile?.activo ?? true,
+      fecha_creacion: profile?.created_at || null,
+    };
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
     headers: getAuthHeaders(),
   });
