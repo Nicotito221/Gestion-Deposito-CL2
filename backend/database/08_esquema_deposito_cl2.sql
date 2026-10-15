@@ -143,3 +143,20 @@ CREATE POLICY "Operarios pueden insertar detalle remitos"
 ON public.remitos_cl2_detalle FOR INSERT
 TO authenticated
 WITH CHECK (true);
+
+-- ==============================================================================
+-- PERMISOS DE ACCESO (GRANTS)
+-- ==============================================================================
+
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO service_role;
+
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO authenticated;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;

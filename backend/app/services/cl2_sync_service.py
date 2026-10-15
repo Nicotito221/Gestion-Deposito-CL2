@@ -101,7 +101,20 @@ class Cl2SyncService:
             for it in pedido_data.get("items", [])
         ]
 
+        mat_rows = [
+            {
+                "id_material": it["id_material"],
+                "nombre": it.get("nombre_material") or it["id_material"],
+                "unidad_medida": it.get("unidad") or "UN",
+                "activo": True,
+            }
+            for it in pedido_data.get("items", [])
+            if it.get("id_material")
+        ]
+
         try:
+            if mat_rows:
+                self._post("materiales_cl2", mat_rows)
             self._post("pedidos_cl2", p_row)
             if items_rows:
                 self._post("pedidos_cl2_detalle", items_rows)
