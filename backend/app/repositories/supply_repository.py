@@ -372,6 +372,24 @@ class SupplyRepository:
                 """,
                 (id_producto, fecha, int(round(float(cantidad))), user_id),
             )
+
+            cursor.execute("SELECT ISNULL(SUM(cantidad_planificada), 0) FROM dbo.produccion_planificada WHERE fecha = ?", (fecha,))
+            tot_row = cursor.fetchone()
+            tot_dia = float(tot_row[0] or 0.0) if tot_row else 0.0
+            es_lab = 1 if tot_dia > 0 else 0
+            obs = f"Producción actualizada: {int(tot_dia)} u" if es_lab else "Sin producción en orden de suministro"
+            cursor.execute(
+                """
+                MERGE dbo.rundown_calendario_laboral AS target
+                USING (SELECT ? AS fecha) AS source
+                ON (target.fecha = source.fecha)
+                WHEN MATCHED THEN
+                    UPDATE SET es_laboral = ?, observacion = ?, fecha_actualizacion = SYSUTCDATETIME()
+                WHEN NOT MATCHED THEN
+                    INSERT (fecha, es_laboral, observacion) VALUES (?, ?, ?);
+                """,
+                (fecha, es_lab, obs, fecha, es_lab, obs),
+            )
             conn.commit()
         finally:
             cursor.close()
@@ -446,24 +464,30 @@ class SupplyRepository:
                 if firm_month_detected != 9:
                     break
 
+            daily_dates_seen: set[datetime.date] = set()
+
             for it in items:
                 has_any_qty = False
                 for col_name, qty in it.daily_values.items():
-                    if qty > 0:
-                        has_any_qty = True
-                        m_daily = re.match(r"^(\d{1,2})-([a-z]+)", col_name.strip().lower())
-                        if m_daily:
-                            day = int(m_daily.group(1))
-                            m_str = m_daily.group(2)
-                            month = MONTHS_LOOKUP.get(m_str, firm_month_detected)
-                            fecha_date = datetime.date(plan_year, month, day)
+                    m_daily = re.match(r"^(\d{1,2})-([a-z]+)", col_name.strip().lower())
+                    if m_daily:
+                        day = int(m_daily.group(1))
+                        m_str = m_daily.group(2)
+                        month = MONTHS_LOOKUP.get(m_str, firm_month_detected)
+                        fecha_date = datetime.date(plan_year, month, day)
+                        daily_dates_seen.add(fecha_date)
+                        if qty > 0:
+                            has_any_qty = True
                             key = (it.part_number, fecha_date)
                             planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
-                        else:
-                            m_num = re.match(r"^(\d{1,2})$", col_name.strip())
-                            if m_num:
-                                day = int(m_num.group(1))
-                                fecha_date = datetime.date(plan_year, firm_month_detected, day)
+                    else:
+                        m_num = re.match(r"^(\d{1,2})$", col_name.strip())
+                        if m_num:
+                            day = int(m_num.group(1))
+                            fecha_date = datetime.date(plan_year, firm_month_detected, day)
+                            daily_dates_seen.add(fecha_date)
+                            if qty > 0:
+                                has_any_qty = True
                                 key = (it.part_number, fecha_date)
                                 planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
 
@@ -486,6 +510,45 @@ class SupplyRepository:
                     key = (it.part_number, datetime.date(plan_year, firm_month_detected, 1))
                     if key not in planned_dict:
                         planned_dict[key] = 0.0
+
+            daily_months = {(d.year, d.month) for d in daily_dates_seen}
+            if not daily_months:
+                daily_months = {(plan_year, firm_month_detected)}
+
+            for anio, mes in daily_months:
+                d_start = datetime.date(anio, mes, 1)
+                d_next = datetime.date(anio + 1, 1, 1) if mes == 12 else datetime.date(anio, mes + 1, 1)
+                d_end = d_next - datetime.timedelta(days=1)
+
+                curr = d_start
+                while curr <= d_end:
+                    total_dia_orden = sum(
+                        planned_dict.get((it.part_number, curr), 0.0) for it in items
+                    )
+                    tiene_prod = total_dia_orden > 0
+                    es_lab = 1 if tiene_prod else 0
+                    obs_cal = f"Orden de producción: {int(total_dia_orden)} u" if tiene_prod else "Sin producción en orden de suministro"
+
+                    cursor.execute(
+                        """
+                        MERGE dbo.rundown_calendario_laboral AS target
+                        USING (SELECT ? AS fecha) AS source
+                        ON (target.fecha = source.fecha)
+                        WHEN MATCHED THEN
+                            UPDATE SET es_laboral = ?, observacion = ?, fecha_actualizacion = SYSUTCDATETIME()
+                        WHEN NOT MATCHED THEN
+                            INSERT (fecha, es_laboral, observacion) VALUES (?, ?, ?);
+                        """,
+                        (curr, es_lab, obs_cal, curr, es_lab, obs_cal),
+                    )
+
+                    if not tiene_prod:
+                        cursor.execute(
+                            "DELETE FROM dbo.produccion_planificada WHERE fecha = ?",
+                            (curr,),
+                        )
+
+                    curr += datetime.timedelta(days=1)
 
             if planned_dict:
                 cursor.execute(

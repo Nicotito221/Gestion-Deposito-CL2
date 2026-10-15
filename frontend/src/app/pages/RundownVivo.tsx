@@ -60,6 +60,8 @@ import {
   UploadCloud,
   CheckCircle2,
   Loader2,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CalendarioLaboralModal } from "../components/CalendarioLaboralModal";
@@ -129,6 +131,36 @@ export function RundownVivo() {
       setFilterSoloRiesgo(true);
     }
   }, [searchParams]);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      if (containerRef.current?.requestFullscreen) {
+        containerRef.current.requestFullscreen().catch(() => {
+          setIsFullscreen(true);
+        });
+      } else {
+        setIsFullscreen(true);
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+      setIsFullscreen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
   const [riskJumpIndex, setRiskJumpIndex] = useState<number>(0);
   const [highlightedRiskId, setHighlightedRiskId] = useState<string | null>(null);
 
@@ -1511,7 +1543,26 @@ export function RundownVivo() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-6 max-w-full">
+    <div
+      ref={containerRef}
+      className={
+        isFullscreen
+          ? "fixed inset-0 z-50 bg-slate-50 overflow-y-auto p-4 sm:p-6 space-y-6 max-w-full"
+          : "p-4 sm:p-6 space-y-6 max-w-full"
+      }
+    >
+      {isFullscreen && (
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2 rounded-full bg-slate-900/90 hover:bg-slate-900 text-white shadow-xl backdrop-blur-xs text-xs font-semibold transition-all hover:scale-105"
+          title="Salir de pantalla completa (Esc)"
+        >
+          <Minimize2 className="w-4 h-4" />
+          <span>Salir de pantalla completa</span>
+        </button>
+      )}
+
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
@@ -1610,6 +1661,26 @@ export function RundownVivo() {
           >
             <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin text-blue-600" : "text-slate-600"}`} />
             <span>Actualizar</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? "Salir de pantalla completa" : "Pantalla completa"}
+            className="flex items-center gap-1.5 text-slate-700 hover:text-slate-900 border-slate-300 shadow-xs"
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-4 h-4 text-indigo-600" />
+                <span>Salir Pantalla Completa</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-4 h-4 text-indigo-600" />
+                <span>Pantalla Completa</span>
+              </>
+            )}
           </Button>
         </div>
       </div>
