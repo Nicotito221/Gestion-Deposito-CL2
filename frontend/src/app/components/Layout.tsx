@@ -120,8 +120,7 @@ function NavContent({
               item.path === "/suministro-bom" ||
               item.path === "/stock" ||
               item.path === "/nuevo-pedido" ||
-              item.path === "/materiales" ||
-              item.path === "/remitos"
+              item.path === "/materiales"
             ) {
               return false;
             }

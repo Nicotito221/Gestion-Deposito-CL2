@@ -60,23 +60,33 @@ CREATE TABLE IF NOT EXISTS public.pedidos_cl2_detalle (
     CONSTRAINT ck_pedidos_cl2_detalle_estado CHECK (estado IN ('pendiente', 'en_preparacion', 'en_transito', 'parcial', 'completo', 'cancelado'))
 );
 
--- 5. TABLA: remitos_cl2 (Despachos y remitos internos generados)
+-- 5. TABLA: remitos_cl2 (Despachos y remitos internos generados / ingresos)
 CREATE TABLE IF NOT EXISTS public.remitos_cl2 (
-    id_remito VARCHAR(50) PRIMARY KEY,
-    id_pedido INT NOT NULL REFERENCES public.pedidos_cl2(id_pedido),
+    id_remito VARCHAR(100) PRIMARY KEY,
+    id_pedido INT NULL,
+    numero_factura VARCHAR(100) NULL,
+    proveedor_nombre VARCHAR(150) NULL,
+    orden_compra VARCHAR(100) NULL,
     fecha_emision TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    fecha_recepcion TIMESTAMPTZ NULL,
     fecha_entrega TIMESTAMPTZ NULL,
-    estado VARCHAR(30) NOT NULL DEFAULT 'emitido',
-    operador_nombre VARCHAR(100) NOT NULL,
+    estado VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+    operador_nombre VARCHAR(100) NULL,
     observacion TEXT NULL,
-    CONSTRAINT ck_remitos_cl2_estado CHECK (estado IN ('emitido', 'entregado', 'anulado'))
+    CONSTRAINT ck_remitos_cl2_estado CHECK (estado IN ('pendiente', 'parcial', 'completo', 'emitido', 'entregado', 'anulado'))
 );
 
--- 6. TABLA: remitos_cl2_detalle (Detalle de remitos)
+-- 6. TABLA: remitos_cl2_detalle (Detalle de remitos e ingresos)
 CREATE TABLE IF NOT EXISTS public.remitos_cl2_detalle (
-    id_remito VARCHAR(50) NOT NULL REFERENCES public.remitos_cl2(id_remito) ON DELETE CASCADE,
-    id_material VARCHAR(50) NOT NULL REFERENCES public.materiales_cl2(id_material),
-    cantidad NUMERIC(18,4) NOT NULL,
+    id_remito VARCHAR(100) NOT NULL REFERENCES public.remitos_cl2(id_remito) ON DELETE CASCADE,
+    id_material VARCHAR(50) NOT NULL,
+    nombre_material VARCHAR(200) NULL,
+    unidad VARCHAR(20) NOT NULL DEFAULT 'UN',
+    cantidad NUMERIC(18,4) NOT NULL DEFAULT 0,
+    cantidad_facturada NUMERIC(18,4) NOT NULL DEFAULT 0,
+    cantidad_recibida NUMERIC(18,4) NULL,
+    conforme BOOLEAN NOT NULL DEFAULT TRUE,
+    observacion TEXT NULL,
     PRIMARY KEY (id_remito, id_material)
 );
 

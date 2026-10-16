@@ -659,6 +659,9 @@ export interface RundownProveedorInput {
 }
 
 export async function getRundownSecciones(): Promise<RundownSeccionItem[]> {
+  if (IS_SUPABASE_ACTIVE) {
+    return [];
+  }
   const res = await fetch(`${API_BASE_URL}/api/rundown/secciones`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -787,6 +790,37 @@ export async function updateLoteMaterial(data: RundownLoteMaterialUpdate): Promi
 
 
 export async function searchMaterialesCatalogo(q: string = ""): Promise<MaterialCatalogoItem[]> {
+  if (IS_SUPABASE_ACTIVE) {
+    const query = new URLSearchParams();
+    query.append("select", "id_material,nombre,unidad_medida,sector");
+    query.append("activo", "eq.true");
+    if (q.trim()) {
+      query.append("or", `id_material.ilike.*${q.trim()}*,nombre.ilike.*${q.trim()}*`);
+    }
+    query.append("limit", "20");
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/materiales_cl2?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) return [];
+    interface SupabaseMatRow {
+      id_material: string;
+      nombre: string;
+      unidad_medida?: string;
+      sector?: string;
+    }
+    const rows = (await res.json()) as SupabaseMatRow[];
+    return rows.map((m) => ({
+      id_material: m.id_material,
+      nombre: m.nombre,
+      unidad: m.unidad_medida || "UN",
+      tipo_empaque: "unidad",
+      tamanio_lote: 1,
+      stock_cl2: 0,
+      stock_planta: 0,
+      stock_total: 0,
+    }));
+  }
+
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
   const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo${qs}`);
   if (!res.ok) throw new Error("Error al buscar materiales en catálogo");
@@ -794,6 +828,31 @@ export async function searchMaterialesCatalogo(q: string = ""): Promise<Material
 }
 
 export async function getMaterialCatalogoInfo(idMaterial: string): Promise<MaterialCatalogoItem | null> {
+  if (IS_SUPABASE_ACTIVE) {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/materiales_cl2?id_material=eq.${encodeURIComponent(idMaterial.trim())}&select=*`,
+      {
+        headers: getAuthHeaders(),
+      }
+    );
+    if (!res.ok) return null;
+    interface SupabaseMatDetail {
+      id_material: string;
+      nombre: string;
+      unidad_medida?: string;
+    }
+    const rows = (await res.json()) as SupabaseMatDetail[];
+    if (!rows || rows.length === 0) return null;
+    const m = rows[0];
+    return {
+      id_material: m.id_material,
+      nombre: m.nombre,
+      unidad: m.unidad_medida || "UN",
+      tipo_empaque: "unidad",
+      tamanio_lote: 1,
+    };
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo/${encodeURIComponent(idMaterial.trim())}`);
   if (!res.ok) {
     if (res.status === 404) return null;
@@ -2449,11 +2508,103 @@ export async function parseInvoicePdf(file: File): Promise<ParsedInvoiceResult> 
 }
 
 
+function hashStringToId(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
 export async function getIngresos(params?: {
   estado?: string;
   id_proveedor?: number;
   search?: string;
 }): Promise<IngresoOut[]> {
+  if (IS_SUPABASE_ACTIVE) {
+    const query = new URLSearchParams();
+    query.append("select", "*,remitos_cl2_detalle(*)");
+    query.append("order", "fecha_emision.desc");
+    if (params?.estado && params.estado !== "all") {
+      query.append("estado", `eq.${params.estado}`);
+    }
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?${query.toString()}`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) throw new Error("Error al obtener comprobantes de ingreso desde Supabase");
+
+    interface SupabaseRemitoItemDetalle {
+      id_material: string;
+      nombre_material?: string | null;
+      unidad?: string | null;
+      cantidad?: number | null;
+      cantidad_facturada?: number | null;
+      cantidad_recibida?: number | null;
+      conforme?: boolean | null;
+      observacion?: string | null;
+    }
+
+    interface SupabaseRemitoRow {
+      id_remito: string;
+      id_pedido?: number | null;
+      numero_factura?: string | null;
+      proveedor_nombre?: string | null;
+      orden_compra?: string | null;
+      fecha_emision?: string | null;
+      fecha_recepcion?: string | null;
+      estado?: string | null;
+      operador_nombre?: string | null;
+      observacion?: string | null;
+      remitos_cl2_detalle?: SupabaseRemitoItemDetalle[];
+    }
+
+    const rows = (await res.json()) as SupabaseRemitoRow[];
+    let result: IngresoOut[] = rows.map((r) => {
+      const numericId = r.id_pedido || hashStringToId(r.id_remito);
+      const items: IngresoDetalleOut[] = (r.remitos_cl2_detalle || []).map((it, idx) => ({
+        id_ingreso_detalle: idx + 1,
+        id_material: it.id_material,
+        nombre_material: it.nombre_material || it.id_material,
+        unidad: it.unidad || "UN",
+        cantidad_facturada: Number(it.cantidad_facturada ?? it.cantidad ?? 0),
+        cantidad_recibida: it.cantidad_recibida !== null && it.cantidad_recibida !== undefined ? Number(it.cantidad_recibida) : null,
+        conforme: it.conforme ?? true,
+        observacion: it.observacion || undefined,
+      }));
+
+      return {
+        id_ingreso: numericId,
+        id_proveedor: 1,
+        nombre_proveedor: r.proveedor_nombre || "PROVEEDOR",
+        codigo_proveedor: "",
+        deposito_en_planta: false,
+        numero_factura: r.numero_factura || r.id_remito,
+        orden_compra: r.orden_compra || undefined,
+        estado: (r.estado as "pendiente" | "parcial" | "completo") || "completo",
+        fecha_emision: r.fecha_emision || undefined,
+        fecha_recepcion: r.fecha_recepcion || null,
+        usuario_creacion: r.operador_nombre,
+        observacion: r.observacion || undefined,
+        total_items: items.length,
+        items,
+      };
+    });
+
+    if (params?.search) {
+      const s = params.search.toLowerCase();
+      result = result.filter(
+        (i) =>
+          i.numero_factura.toLowerCase().includes(s) ||
+          (i.orden_compra && i.orden_compra.toLowerCase().includes(s)) ||
+          (i.nombre_proveedor && i.nombre_proveedor.toLowerCase().includes(s)) ||
+          i.items.some((it) => it.id_material.toLowerCase().includes(s) || it.nombre_material?.toLowerCase().includes(s))
+      );
+    }
+    return result;
+  }
+
   const q = new URLSearchParams();
   if (params?.estado && params.estado !== "all") q.append("estado", params.estado);
   if (params?.id_proveedor && params.id_proveedor > 0) q.append("id_proveedor", String(params.id_proveedor));
@@ -2467,6 +2618,13 @@ export async function getIngresos(params?: {
 }
 
 export async function getIngresoById(idIngreso: number): Promise<IngresoOut> {
+  if (IS_SUPABASE_ACTIVE) {
+    const list = await getIngresos();
+    const found = list.find((i) => i.id_ingreso === idIngreso);
+    if (!found) throw new Error(`Comprobante #${idIngreso} no encontrado`);
+    return found;
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
     headers: getAuthHeaders(),
   });
@@ -2475,6 +2633,95 @@ export async function getIngresoById(idIngreso: number): Promise<IngresoOut> {
 }
 
 export async function createIngreso(data: IngresoCreate, idUsuario?: number): Promise<IngresoOut> {
+  if (IS_SUPABASE_ACTIVE) {
+    const idRemito = data.numero_factura.trim();
+    const savedUser = localStorage.getItem("auth_user");
+    let creador = "Operario CL2";
+    if (savedUser) {
+      try {
+        const u = JSON.parse(savedUser) as { nombre?: string; apellido?: string; username?: string };
+        creador = `${u.nombre || ""} ${u.apellido || ""}`.trim() || u.username || creador;
+      } catch {}
+    }
+
+    const estadoInicial = data.confirmar_inmediato ? "completo" : "pendiente";
+    const fechaRecepcion = data.confirmar_inmediato ? (data.fecha_recepcion || new Date().toISOString()) : null;
+
+    const matRows = data.items.map((it) => ({
+      id_material: it.id_material,
+      nombre: it.id_material,
+      unidad_medida: "UN",
+      activo: true,
+    }));
+    await fetch(`${SUPABASE_URL}/rest/v1/materiales_cl2`, {
+      method: "POST",
+      headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify(matRows),
+    });
+
+    const remitoRow = {
+      id_remito: idRemito,
+      numero_factura: data.numero_factura.trim(),
+      proveedor_nombre: `Proveedor #${data.id_proveedor}`,
+      orden_compra: data.orden_compra?.trim() || null,
+      fecha_emision: data.fecha_emision || new Date().toISOString(),
+      fecha_recepcion: fechaRecepcion,
+      estado: estadoInicial,
+      operador_nombre: creador,
+      observacion: data.observacion?.trim() || null,
+    };
+
+    const remitoRes = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
+      method: "POST",
+      headers: { ...getAuthHeaders(), Prefer: "return=representation" },
+      body: JSON.stringify(remitoRow),
+    });
+    if (!remitoRes.ok) {
+      const err = await remitoRes.json().catch(() => ({}));
+      throw new Error(err.message || err.detail || "Error al crear remito en Supabase");
+    }
+
+    const itemsRows = data.items.map((it) => ({
+      id_remito: idRemito,
+      id_material: it.id_material,
+      unidad: "UN",
+      cantidad: it.cantidad_facturada,
+      cantidad_facturada: it.cantidad_facturada,
+      cantidad_recibida: data.confirmar_inmediato ? it.cantidad_facturada : null,
+      conforme: true,
+      observacion: it.observacion || null,
+    }));
+
+    await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(itemsRows),
+    });
+
+    return {
+      id_ingreso: hashStringToId(idRemito),
+      id_proveedor: data.id_proveedor,
+      nombre_proveedor: `Proveedor #${data.id_proveedor}`,
+      deposito_en_planta: false,
+      numero_factura: data.numero_factura,
+      orden_compra: data.orden_compra,
+      estado: estadoInicial,
+      fecha_emision: data.fecha_emision,
+      fecha_recepcion: fechaRecepcion,
+      total_items: data.items.length,
+      items: itemsRows.map((it, idx) => ({
+        id_ingreso_detalle: idx + 1,
+        id_material: it.id_material,
+        nombre_material: it.id_material,
+        unidad: "UN",
+        cantidad_facturada: it.cantidad_facturada,
+        cantidad_recibida: it.cantidad_recibida,
+        conforme: true,
+        observacion: it.observacion || undefined,
+      })),
+    };
+  }
+
   const qs = idUsuario ? `?id_usuario=${idUsuario}` : "";
   const res = await fetch(`${API_BASE_URL}/api/ingresos${qs}`, {
     method: "POST",
@@ -2493,6 +2740,41 @@ export async function confirmarRecepcionIngreso(
   data: IngresoConfirmarRecepcion,
   idUsuario?: number
 ): Promise<IngresoOut> {
+  if (IS_SUPABASE_ACTIVE) {
+    const list = await getIngresos();
+    const found = list.find((i) => i.id_ingreso === idIngreso);
+    if (!found) throw new Error(`Comprobante #${idIngreso} no encontrado`);
+    const idRemito = found.numero_factura;
+
+    for (const it of data.items) {
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/remitos_cl2_detalle?id_remito=eq.${encodeURIComponent(idRemito)}&id_material=eq.${encodeURIComponent(it.id_material)}`,
+        {
+          method: "PATCH",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            cantidad_recibida: it.cantidad_recibida,
+            conforme: it.conforme ?? true,
+            observacion: it.observacion || null,
+          }),
+        }
+      );
+    }
+
+    const estadoFinal = data.items.every((it) => it.cantidad_recibida > 0) ? "completo" : "parcial";
+    await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(idRemito)}`, {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        estado: estadoFinal,
+        fecha_recepcion: data.fecha_recepcion || new Date().toISOString(),
+        observacion: data.observacion || found.observacion,
+      }),
+    });
+
+    return getIngresoById(idIngreso);
+  }
+
   const qs = idUsuario ? `?id_usuario=${idUsuario}` : "";
   const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}/recepcion${qs}`, {
     method: "PUT",
@@ -2507,6 +2789,18 @@ export async function confirmarRecepcionIngreso(
 }
 
 export async function deleteIngreso(idIngreso: number): Promise<void> {
+  if (IS_SUPABASE_ACTIVE) {
+    const list = await getIngresos();
+    const found = list.find((i) => i.id_ingreso === idIngreso);
+    if (found) {
+      await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(found.numero_factura)}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+    }
+    return;
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
     method: "DELETE",
     headers: getAuthHeaders(),

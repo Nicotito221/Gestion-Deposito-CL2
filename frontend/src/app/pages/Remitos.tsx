@@ -178,7 +178,7 @@ export function Remitos() {
   const proveedoresList = useMemo(() => {
     const list: { id_proveedor: number; nombre: string; deposito_en_planta?: boolean }[] = [];
     secciones.forEach((sec) => {
-      sec.proveedores.forEach((p) => {
+      sec.proveedores?.forEach((p) => {
         if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
           list.push({
             id_proveedor: p.id_proveedor,
@@ -188,8 +188,17 @@ export function Remitos() {
         }
       });
     });
+    ingresos.forEach((ing) => {
+      if (ing.nombre_proveedor && !list.some((it) => it.nombre === ing.nombre_proveedor)) {
+        list.push({
+          id_proveedor: ing.id_proveedor || list.length + 1,
+          nombre: ing.nombre_proveedor,
+          deposito_en_planta: false,
+        });
+      }
+    });
     return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [secciones]);
+  }, [secciones, ingresos]);
 
   const fetchIngresosList = useCallback(async () => {
     setLoading(true);
