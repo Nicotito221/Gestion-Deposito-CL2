@@ -225,7 +225,10 @@ export function Layout() {
         </button>
         <div className="flex items-center gap-2.5">
           <img src={tbarLogo} alt="TBAR" className="h-8 w-auto object-contain" />
-          <span className="text-xs text-slate-500 font-medium">Gestión de Materiales</span>
+          <div className="flex flex-col leading-tight">
+            <span className="text-xs font-extrabold tracking-widest text-slate-900">FLOW</span>
+            <span className="text-[10px] text-slate-500 font-medium">Forecast &amp; Logistics Operations Workspace</span>
+          </div>
         </div>
         <div className="w-9" />
       </header>
@@ -247,7 +250,10 @@ export function Layout() {
                   <X className="w-4 h-4 text-slate-600" />
                 </button>
                 <img src={tbarLogo} alt="Toyota Boshoku" className="h-16 w-auto object-contain mx-auto" />
-                <p className="text-xs font-semibold text-slate-600 mt-2">Gestión de Materiales</p>
+                <p className="text-sm font-extrabold tracking-widest text-slate-900 mt-2">FLOW</p>
+                <p className="text-[10px] font-medium text-slate-500 leading-tight mt-0.5">
+                  Forecast &amp; Logistics Operations Workspace
+                </p>
               </div>
               <NavContent onNavigate={() => setMobileOpen(false)} />
             </aside>
@@ -256,9 +262,12 @@ export function Layout() {
 
         {/* Desktop sidebar */}
         <aside className="hidden lg:flex w-60 bg-white border-r border-slate-200 flex-col overflow-y-auto flex-shrink-0 print:hidden">
-          <div className="py-6 px-4 border-b border-slate-200 flex-shrink-0 flex flex-col items-center text-center">
+          <div className="py-5 px-4 border-b border-slate-200 flex-shrink-0 flex flex-col items-center text-center">
             <img src={tbarLogo} alt="Toyota Boshoku" className="h-20 w-auto object-contain mx-auto" />
-            <p className="text-xs font-semibold text-slate-600 tracking-wide mt-2">Gestión de Materiales</p>
+            <p className="text-sm font-extrabold tracking-widest text-slate-900 mt-2">FLOW</p>
+            <p className="text-[10px] font-medium text-slate-500 leading-tight mt-0.5">
+              Forecast &amp; Logistics Operations Workspace
+            </p>
           </div>
           <NavContent />
         </aside>

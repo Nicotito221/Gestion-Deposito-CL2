@@ -26,14 +26,19 @@ def run_migration_set_componente(source_excel: str) -> None:
 
     rows_to_insert = []
     for r in ws.iter_rows(values_only=True, min_row=2):
-        if r and r[2] and r[4]:
-            sector = str(r[0] or "").strip()
+        if r and (r[2] or r[4]):
+            raw_sector = r[0] if r[0] is not None else (r[8] if len(r) > 8 else "")
+            sector = str(raw_sector or "").strip()
             if sector.lower() == "amnrest":
                 sector = "Armrest"
+            elif sector.lower() in ("head liner", "headliner"):
+                sector = "Headliner"
             sd = str(r[1] or "").strip()
-            codigo_tasa = str(r[2]).strip()
+            if not sector and sd.upper().startswith("H"):
+                sector = "Headliner"
+            codigo_tasa = str(r[2] or r[4]).strip()
             codigo_sap_padre = str(r[3] or codigo_tasa).strip()
-            id_hijo = str(r[4]).strip()
+            id_hijo = str(r[4] or codigo_sap_padre).strip()
             cantidad = float(r[5]) if r[5] is not None else 1.0
             rows_to_insert.append((sector, sd, codigo_tasa, codigo_sap_padre, id_hijo, cantidad))
 

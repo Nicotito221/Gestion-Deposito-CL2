@@ -4,9 +4,6 @@
 -- Motor: Microsoft SQL Server
 -- ============================================================================
 
-USE GestionDeposito;
-GO
-
 IF OBJECT_ID(N'dbo.set_componente', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.set_componente (
