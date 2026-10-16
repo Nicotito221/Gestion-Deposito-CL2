@@ -1560,11 +1560,27 @@ export async function getPedidos(params?: {
     if (params?.turno) query.append("turno", `eq.${params.turno}`);
     if (params?.limit) query.append("limit", String(params.limit));
 
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?${query.toString()}`, {
-      headers: getAuthHeaders(),
-    });
+    const [res, remRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?${query.toString()}`, {
+        headers: getAuthHeaders(),
+      }),
+      fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_pedido=not.is.null&select=id_remito,id_pedido&order=fecha_emision.asc,id_remito.asc`, {
+        headers: getAuthHeaders(),
+      }),
+    ]);
+
     if (!res.ok) {
       throw new Error("Error al cargar pedidos desde Supabase");
+    }
+
+    const remitoMap = new Map<number, string>();
+    if (remRes.ok) {
+      const remRows = (await remRes.json()) as { id_remito: string; id_pedido: number }[];
+      for (const r of remRows) {
+        if (r.id_pedido) {
+          remitoMap.set(Number(r.id_pedido), r.id_remito);
+        }
+      }
     }
 
     interface SupabaseItemDetalle {
@@ -1616,25 +1632,39 @@ export async function getPedidos(params?: {
         fecha_requerida: p.fecha_requerida,
         turno: p.turno,
         comentario: p.comentario,
+        id_remito: remitoMap.get(p.id_pedido) || null,
         total_items: detalle.length,
-        items: detalle.map((it) => ({
-          id_material: it.id_material,
-          nombre_material: it.nombre_material || it.id_material,
-          unidad: it.unidad || "UN",
-          cantidad_pedida: Number(it.cantidad_pedida),
-          cantidad_preparada: Number(it.cantidad_preparada || 0),
-          cantidad_entregada: Number(it.cantidad_entregada || 0),
-          tipo_empaque: it.tipo_empaque || "unidad",
-          tamanio_lote: Number(it.tamanio_lote || 1),
-          bultos_por_pallet: it.bultos_por_pallet != null ? Number(it.bultos_por_pallet) : undefined,
-          unidad_por_bulto: it.unidad_por_bulto != null ? Number(it.unidad_por_bulto) : undefined,
-          cantidad_pallets: it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null,
-          cantidad_pallets_preparada: it.cantidad_pallets_preparada != null ? Number(it.cantidad_pallets_preparada) : 0,
-          cantidad_pallets_entregada: it.cantidad_pallets_entregada != null ? Number(it.cantidad_pallets_entregada) : 0,
-          cantidad_pallets_pendiente: it.cantidad_pallets_pendiente != null ? Number(it.cantidad_pallets_pendiente) : (it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null),
-          estado: it.estado || "pendiente",
-          comentario: it.comentario,
-        })),
+        items: detalle.map((it) => {
+          const cantPed = Number(it.cantidad_pedida);
+          const cantEnt = Number(it.cantidad_entregada || 0);
+          const palReq = it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null;
+          const palEnt = it.cantidad_pallets_entregada != null ? Number(it.cantidad_pallets_entregada) : 0;
+          const palPend =
+            it.cantidad_pallets_pendiente != null
+              ? Number(it.cantidad_pallets_pendiente)
+              : palReq != null
+              ? Math.max(0, palReq - palEnt)
+              : null;
+          return {
+            id_material: it.id_material,
+            nombre_material: it.nombre_material || it.id_material,
+            unidad: it.unidad || "UN",
+            cantidad_pedida: cantPed,
+            cantidad_preparada: Number(it.cantidad_preparada || 0),
+            cantidad_entregada: cantEnt,
+            cantidad_pendiente: Math.max(0, cantPed - cantEnt),
+            tipo_empaque: it.tipo_empaque || "unidad",
+            tamanio_lote: Number(it.tamanio_lote || 1),
+            bultos_por_pallet: it.bultos_por_pallet != null ? Number(it.bultos_por_pallet) : undefined,
+            unidad_por_bulto: it.unidad_por_bulto != null ? Number(it.unidad_por_bulto) : undefined,
+            cantidad_pallets: palReq,
+            cantidad_pallets_preparada: it.cantidad_pallets_preparada != null ? Number(it.cantidad_pallets_preparada) : 0,
+            cantidad_pallets_entregada: palEnt,
+            cantidad_pallets_pendiente: palPend,
+            estado: it.estado || "pendiente",
+            comentario: it.comentario,
+          };
+        }),
       };
     });
     return { items, total: items.length };
@@ -1661,9 +1691,17 @@ export async function getPedidos(params?: {
 
 export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
   if (IS_SUPABASE_ACTIVE) {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}&select=*,pedidos_cl2_detalle(*)`, {
-      headers: getAuthHeaders(),
-    });
+    const [res, remRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}&select=*,pedidos_cl2_detalle(*)`, {
+        headers: getAuthHeaders(),
+      }),
+      fetch(
+        `${SUPABASE_URL}/rest/v1/remitos_cl2?id_pedido=eq.${idPedido}&select=*,remitos_cl2_detalle(*)&order=fecha_emision.asc,id_remito.asc`,
+        {
+          headers: getAuthHeaders(),
+        }
+      ),
+    ]);
     if (!res.ok) {
       throw new Error("Error al obtener detalle del pedido");
     }
@@ -1702,12 +1740,108 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
       pedidos_cl2_detalle?: SupabaseItemDetalle[];
     }
 
+    interface SupabaseOrderRemitoRow {
+      id_remito: string;
+      id_pedido: number;
+      fecha_emision: string;
+      fecha_entrega?: string | null;
+      estado?: string | null;
+      operador_nombre?: string | null;
+      observacion?: string | null;
+      remitos_cl2_detalle?: {
+        id_material: string;
+        nombre_material?: string | null;
+        unidad?: string | null;
+        cantidad?: number | null;
+      }[];
+    }
+
     const rows = (await res.json()) as SupabasePedidoRow[];
     if (!rows || rows.length === 0) {
       throw new Error(`Pedido #${idPedido} no encontrado`);
     }
     const p = rows[0];
     const detalle = p.pedidos_cl2_detalle || [];
+
+    const mappedItems: PedidoItemOut[] = detalle.map((it) => {
+      const cantPed = Number(it.cantidad_pedida);
+      const cantEnt = Number(it.cantidad_entregada || 0);
+      const palReq = it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null;
+      const palEnt = it.cantidad_pallets_entregada != null ? Number(it.cantidad_pallets_entregada) : 0;
+      const palPend =
+        it.cantidad_pallets_pendiente != null
+          ? Number(it.cantidad_pallets_pendiente)
+          : palReq != null
+          ? Math.max(0, palReq - palEnt)
+          : null;
+      return {
+        id_material: it.id_material,
+        nombre_material: it.nombre_material || it.id_material,
+        unidad: it.unidad || "UN",
+        cantidad_pedida: cantPed,
+        cantidad_preparada: Number(it.cantidad_preparada || 0),
+        cantidad_entregada: cantEnt,
+        cantidad_pendiente: Math.max(0, cantPed - cantEnt),
+        tipo_empaque: it.tipo_empaque || "unidad",
+        tamanio_lote: Number(it.tamanio_lote || 1),
+        bultos_por_pallet: it.bultos_por_pallet != null ? Number(it.bultos_por_pallet) : undefined,
+        unidad_por_bulto: it.unidad_por_bulto != null ? Number(it.unidad_por_bulto) : undefined,
+        cantidad_pallets: palReq,
+        cantidad_pallets_preparada: it.cantidad_pallets_preparada != null ? Number(it.cantidad_pallets_preparada) : 0,
+        cantidad_pallets_entregada: palEnt,
+        cantidad_pallets_pendiente: palPend,
+        estado: it.estado || "pendiente",
+        comentario: it.comentario,
+      };
+    });
+
+    const remitoRows: SupabaseOrderRemitoRow[] = remRes.ok ? await remRes.json() : [];
+    const remitosOut: RemitoDetalleOut[] = remitoRows.map((r) => {
+      const rDet = r.remitos_cl2_detalle || [];
+      let totPallets = 0;
+      let totUnidades = 0;
+      const rItems: RemitoItemOut[] = rDet.map((d) => {
+        const mat = mappedItems.find((m) => m.id_material === d.id_material);
+        const cant = Number(d.cantidad || 0);
+        const tipoEmp = mat?.tipo_empaque || "unidad";
+        const tamLote = mat?.tamanio_lote || 1;
+        const bultosPp = mat?.bultos_por_pallet ?? null;
+        const isPal = (tipoEmp === "pallet" || tipoEmp === "rollo") && tamLote > 1 && cant > 0;
+        const cp = isPal ? Math.round(cant / tamLote) : null;
+        const cb = tipoEmp === "rollo" && cp && bultosPp ? cp * bultosPp : null;
+        if (cp) totPallets += cp;
+        totUnidades += cant;
+        return {
+          id_material: d.id_material,
+          nombre_material: d.nombre_material || mat?.nombre_material || d.id_material,
+          unidad: d.unidad || mat?.unidad || "UN",
+          cantidad: cant,
+          tipo_empaque: tipoEmp,
+          tamanio_lote: tamLote,
+          cantidad_pallets: cp,
+          bultos_por_pallet: bultosPp,
+          cantidad_bultos: cb,
+        };
+      });
+      return {
+        id_remito: r.id_remito,
+        id_pedido: r.id_pedido,
+        fecha_emision: r.fecha_emision,
+        fecha_entrega: r.fecha_entrega,
+        estado: r.estado || "emitido",
+        usuario_emisor: r.operador_nombre || "Depósito CL2",
+        observacion: r.observacion,
+        sector_destino: p.sector || "PLANTA",
+        usuario_solicitante: "Solicitante",
+        fecha_requerida: p.fecha_requerida,
+        turno: p.turno,
+        total_items: rItems.length,
+        total_pallets: totPallets,
+        total_unidades: Math.round(totUnidades * 100) / 100,
+        items: rItems,
+      };
+    });
+
     return {
       id_pedido: p.id_pedido,
       sector: p.sector,
@@ -1720,25 +1854,10 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
       fecha_requerida: p.fecha_requerida,
       turno: p.turno,
       comentario: p.comentario,
-      total_items: detalle.length,
-      items: detalle.map((it) => ({
-        id_material: it.id_material,
-        nombre_material: it.nombre_material || it.id_material,
-        unidad: it.unidad || "UN",
-        cantidad_pedida: Number(it.cantidad_pedida),
-        cantidad_preparada: Number(it.cantidad_preparada || 0),
-        cantidad_entregada: Number(it.cantidad_entregada || 0),
-        tipo_empaque: it.tipo_empaque || "unidad",
-        tamanio_lote: Number(it.tamanio_lote || 1),
-        bultos_por_pallet: it.bultos_por_pallet != null ? Number(it.bultos_por_pallet) : undefined,
-        unidad_por_bulto: it.unidad_por_bulto != null ? Number(it.unidad_por_bulto) : undefined,
-        cantidad_pallets: it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null,
-        cantidad_pallets_preparada: it.cantidad_pallets_preparada != null ? Number(it.cantidad_pallets_preparada) : 0,
-        cantidad_pallets_entregada: it.cantidad_pallets_entregada != null ? Number(it.cantidad_pallets_entregada) : 0,
-        cantidad_pallets_pendiente: it.cantidad_pallets_pendiente != null ? Number(it.cantidad_pallets_pendiente) : (it.cantidad_pallets != null ? Number(it.cantidad_pallets) : null),
-        estado: it.estado || "pendiente",
-        comentario: it.comentario,
-      })),
+      id_remito: remitosOut.length > 0 ? remitosOut[remitosOut.length - 1].id_remito : null,
+      remitos: remitosOut,
+      total_items: mappedItems.length,
+      items: mappedItems,
     };
   }
 
@@ -1771,33 +1890,7 @@ export async function updatePreparacionPedido(
   data: PreparacionPedidoUpdate
 ): Promise<{ pedido: PedidoOut; id_remito?: string; mensaje: string }> {
   if (IS_SUPABASE_ACTIVE) {
-    const nuevoEstado =
-      data.accion === "confirmar_completo"
-        ? "completo"
-        : data.accion === "confirmar_parcial"
-        ? "parcial"
-        : "en_preparacion";
-
-    for (const it of data.items) {
-      const patchData: Record<string, any> = {
-        cantidad_preparada: it.cantidad_preparada,
-        estado: it.estado || (nuevoEstado === "completo" ? "completo" : "en_preparacion"),
-        comentario: it.comentario || null,
-      };
-      if (it.cantidad_pallets_preparada !== undefined && it.cantidad_pallets_preparada !== null) {
-        patchData.cantidad_pallets_preparada = it.cantidad_pallets_preparada;
-      }
-
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(it.id_material)}`,
-        {
-          method: "PATCH",
-          headers: getAuthHeaders(),
-          body: JSON.stringify(patchData),
-        }
-      );
-    }
-
+    const currentOrder = await getPedidoDetalle(idPedido);
     const savedUser = localStorage.getItem("auth_user");
     let preparador = "Operario CL2";
     if (savedUser) {
@@ -1809,66 +1902,180 @@ export async function updatePreparacionPedido(
       }
     }
 
-    interface PedidoPatchPayload {
-      estado: string;
-      preparado_por_nombre: string;
-      fecha_despacho?: string;
+    if (data.accion === "guardar_avance") {
+      for (const it of data.items) {
+        const patchData: Record<string, unknown> = {
+          cantidad_preparada: it.cantidad_preparada,
+          estado: it.estado || "en_preparacion",
+          comentario: it.comentario || null,
+        };
+        if (it.cantidad_pallets_preparada !== undefined && it.cantidad_pallets_preparada !== null) {
+          patchData.cantidad_pallets_preparada = it.cantidad_pallets_preparada;
+        }
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(it.id_material)}`,
+          {
+            method: "PATCH",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(patchData),
+          }
+        );
+      }
+
+      if (currentOrder.estado === "pendiente") {
+        await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
+          method: "PATCH",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            estado: "en_preparacion",
+            preparado_por_nombre: preparador,
+          }),
+        });
+      }
+
+      const pedidoActualizado = await getPedidoDetalle(idPedido);
+      return {
+        pedido: pedidoActualizado,
+        mensaje: "Avance de preparación guardado exitosamente.",
+      };
     }
 
-    const payloadPedido: PedidoPatchPayload = {
-      estado: nuevoEstado,
-      preparado_por_nombre: preparador,
-    };
-    if (nuevoEstado === "completo" || nuevoEstado === "parcial") {
-      payloadPedido.fecha_despacho = new Date().toISOString();
+    const inputMap = new Map<string, PreparacionItemUpdate>();
+    for (const it of data.items) {
+      inputMap.set(it.id_material, it);
     }
+
+    const deltaItems: {
+      id_material: string;
+      nombre_material: string;
+      unidad: string;
+      delta: number;
+    }[] = [];
+
+    let allCompleted = true;
+
+    for (const mat of currentOrder.items) {
+      const cPed = mat.cantidad_pedida;
+      const cPrev = mat.cantidad_entregada || 0;
+      const cPend = Math.max(0, Math.round((cPed - cPrev) * 100) / 100);
+      const inp = inputMap.get(mat.id_material);
+      let delta = 0;
+
+      if (cPend > 0) {
+        if (inp) {
+          const cInput = inp.cantidad_preparada;
+          delta = cInput > cPend ? Math.max(0, Math.min(cInput - cPrev, cPend)) : Math.max(0, Math.min(cInput, cPend));
+        } else if (data.accion === "confirmar_completo") {
+          delta = cPend;
+        }
+        if (data.accion === "confirmar_completo" && delta === 0 && (!inp || inp.cantidad_preparada === 0)) {
+          delta = cPend;
+        }
+      }
+
+      delta = Math.round(delta * 100) / 100;
+      const nuevaEntregada = Math.round((cPrev + delta) * 100) / 100;
+      const estItem = nuevaEntregada >= cPed && cPed > 0 ? "completo" : nuevaEntregada > 0 ? "parcial" : "pendiente";
+      if (nuevaEntregada < cPed) {
+        allCompleted = false;
+      }
+
+      const lotSize = mat.tamanio_lote && mat.tamanio_lote > 1 ? mat.tamanio_lote : 1;
+      const isPallet = mat.tipo_empaque === "pallet" || mat.tipo_empaque === "rollo" || lotSize > 1;
+      const palEnt = isPallet ? Math.round(nuevaEntregada / lotSize) : 0;
+      const palPend =
+        mat.cantidad_pallets != null ? Math.max(0, mat.cantidad_pallets - palEnt) : null;
+
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(mat.id_material)}`,
+        {
+          method: "PATCH",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            cantidad_preparada: nuevaEntregada,
+            cantidad_entregada: nuevaEntregada,
+            cantidad_pallets_preparada: palEnt,
+            cantidad_pallets_entregada: palEnt,
+            cantidad_pallets_pendiente: palPend,
+            estado: estItem,
+            comentario: inp?.comentario || mat.comentario || null,
+          }),
+        }
+      );
+
+      if (delta > 0) {
+        deltaItems.push({
+          id_material: mat.id_material,
+          nombre_material: mat.nombre_material || mat.id_material,
+          unidad: mat.unidad || "UN",
+          delta,
+        });
+      }
+    }
+
+    const nuevoEstado = allCompleted ? "completo" : "parcial";
+    const nowIso = new Date().toISOString();
 
     await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
       method: "PATCH",
       headers: getAuthHeaders(),
-      body: JSON.stringify(payloadPedido),
+      body: JSON.stringify({
+        estado: nuevoEstado,
+        preparado_por_nombre: preparador,
+        fecha_despacho: nowIso,
+        ...(nuevoEstado === "completo" ? { fecha_entrega: nowIso } : {}),
+        ...(data.comentario ? { comentario: data.comentario } : {}),
+      }),
     });
 
-    let idRemitoGenerado: string | undefined = undefined;
-    if (nuevoEstado === "completo" || nuevoEstado === "parcial") {
-      idRemitoGenerado = `REM-CL2-${idPedido}-${Date.now().toString().slice(-4)}`;
-      try {
-        await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
-          method: "POST",
-          headers: getAuthHeaders(),
-          body: JSON.stringify({
-            id_remito: idRemitoGenerado,
-            id_pedido: idPedido,
-            fecha_emision: new Date().toISOString(),
-            estado: "emitido",
-            operador_nombre: preparador,
-            observacion: data.comentario || null,
-          }),
-        });
+    const seq = (currentOrder.remitos?.length || 0) + 1;
+    const idRemitoGenerado = `RI-${String(idPedido).padStart(6, "0")}-${String(seq).padStart(2, "0")}`;
+    const obsRemito =
+      data.comentario || `Remito de entrega #${seq} por pedido #${idPedido} para sector ${currentOrder.sector}`;
 
-        const remitoItems = data.items
-          .filter((it) => it.cantidad_preparada > 0)
-          .map((it) => ({
-            id_remito: idRemitoGenerado,
-            id_material: it.id_material,
-            cantidad: it.cantidad_preparada,
-          }));
+    await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
+      method: "POST",
+      headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
+      body: JSON.stringify({
+        id_remito: idRemitoGenerado,
+        id_pedido: idPedido,
+        fecha_emision: nowIso,
+        fecha_entrega: nowIso,
+        estado: "emitido",
+        operador_nombre: preparador,
+        observacion: obsRemito,
+      }),
+    });
 
-        if (remitoItems.length > 0) {
-          await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
-            method: "POST",
-            headers: getAuthHeaders(),
-            body: JSON.stringify(remitoItems),
-          });
-        }
-      } catch {}
+    if (deltaItems.length > 0) {
+      const remitoItems = deltaItems.map((d) => ({
+        id_remito: idRemitoGenerado,
+        id_material: d.id_material,
+        nombre_material: d.nombre_material,
+        unidad: d.unidad,
+        cantidad: d.delta,
+        cantidad_facturada: d.delta,
+        cantidad_recibida: d.delta,
+        conforme: true,
+      }));
+
+      await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(remitoItems),
+      });
     }
 
     const pedidoActualizado = await getPedidoDetalle(idPedido);
+    const msg =
+      nuevoEstado === "completo"
+        ? `Pedido #${idPedido} completado exitosamente. Remito ${idRemitoGenerado} emitido.`
+        : `Pedido #${idPedido} confirmado como parcial. Remito ${idRemitoGenerado} emitido.`;
+
     return {
       pedido: pedidoActualizado,
       id_remito: idRemitoGenerado,
-      mensaje: `Pedido #${idPedido} actualizado a ${nuevoEstado}`,
+      mensaje: msg,
     };
   }
 
@@ -1905,51 +2112,71 @@ export async function cancelarPedido(idPedido: number, motivo: string): Promise<
 
 export async function getRemitoDetalle(idRemito: string): Promise<RemitoDetalleOut> {
   if (IS_SUPABASE_ACTIVE) {
-    try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(idRemito)}&select=*,remitos_cl2_detalle(*)`, {
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        if (rows && rows.length > 0) {
-          const r = rows[0];
-          const ped = await getPedidoDetalle(r.id_pedido).catch(() => null);
-          const detalle = r.remitos_cl2_detalle || [];
-          return {
-            id_remito: r.id_remito,
-            id_pedido: r.id_pedido,
-            fecha_emision: r.fecha_emision,
-            fecha_entrega: r.fecha_entrega,
-            estado: r.estado || "emitido",
-            usuario_emisor: r.operador_nombre,
-            observacion: r.observacion,
-            sector_destino: ped?.sector || "PLANTA",
-            usuario_solicitante: ped?.usuario_solicitante || "Solicitante",
-            fecha_requerida: ped?.fecha_requerida,
-            turno: ped?.turno,
-            total_items: detalle.length,
-            total_pallets: detalle.reduce((acc: number, it: any) => {
-              const mat = ped?.items.find((m) => m.id_material === it.id_material);
-              return acc + (mat?.cantidad_pallets_preparada || 0);
-            }, 0),
-            total_unidades: detalle.reduce((acc: number, it: any) => acc + Number(it.cantidad || 0), 0),
-            items: detalle.map((it: any) => {
-              const mat = ped?.items.find((m) => m.id_material === it.id_material);
-              return {
-                id_material: it.id_material,
-                nombre_material: mat?.nombre_material || it.id_material,
-                unidad: mat?.unidad || "UN",
-                cantidad: Number(it.cantidad),
-                tipo_empaque: mat?.tipo_empaque || "unidad",
-                tamanio_lote: mat?.tamanio_lote || 1,
-                cantidad_pallets: mat?.cantidad_pallets_preparada,
-                bultos_por_pallet: mat?.bultos_por_pallet,
-              };
-            }),
-          };
-        }
-      }
-    } catch {}
+    const cleanId = idRemito.trim();
+    const isNumericOrderId = /^\d+$/.test(cleanId);
+    const filterParam = isNumericOrderId
+      ? `id_pedido=eq.${cleanId}&order=fecha_emision.desc,id_remito.desc&limit=1`
+      : `id_remito=eq.${encodeURIComponent(cleanId)}`;
+
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?${filterParam}&select=*,remitos_cl2_detalle(*)`, {
+      headers: getAuthHeaders(),
+    });
+    if (!res.ok) {
+      throw new Error(`Error al obtener detalle del remito ${idRemito}`);
+    }
+
+    const rows = await res.json();
+    if (!rows || rows.length === 0) {
+      throw new Error(`Remito ${idRemito} no encontrado`);
+    }
+
+    const r = rows[0];
+    const ped = r.id_pedido ? await getPedidoDetalle(Number(r.id_pedido)).catch(() => null) : null;
+    const detalle = r.remitos_cl2_detalle || [];
+
+    let totPallets = 0;
+    let totUnidades = 0;
+    const items: RemitoItemOut[] = detalle.map((it: { id_material: string; nombre_material?: string; unidad?: string; cantidad?: number }) => {
+      const mat = ped?.items.find((m) => m.id_material === it.id_material);
+      const cant = Number(it.cantidad || 0);
+      const tipoEmp = mat?.tipo_empaque || "unidad";
+      const tamLote = mat?.tamanio_lote || 1;
+      const bultosPp = mat?.bultos_por_pallet ?? null;
+      const isPal = (tipoEmp === "pallet" || tipoEmp === "rollo") && tamLote > 1 && cant > 0;
+      const cp = isPal ? Math.round(cant / tamLote) : null;
+      const cb = tipoEmp === "rollo" && cp && bultosPp ? cp * bultosPp : null;
+      if (cp) totPallets += cp;
+      totUnidades += cant;
+      return {
+        id_material: it.id_material,
+        nombre_material: it.nombre_material || mat?.nombre_material || it.id_material,
+        unidad: it.unidad || mat?.unidad || "UN",
+        cantidad: cant,
+        tipo_empaque: tipoEmp,
+        tamanio_lote: tamLote,
+        cantidad_pallets: cp,
+        bultos_por_pallet: bultosPp,
+        cantidad_bultos: cb,
+      };
+    });
+
+    return {
+      id_remito: r.id_remito,
+      id_pedido: r.id_pedido,
+      fecha_emision: r.fecha_emision,
+      fecha_entrega: r.fecha_entrega,
+      estado: r.estado || "emitido",
+      usuario_emisor: r.operador_nombre || "Depósito CL2",
+      observacion: r.observacion,
+      sector_destino: ped?.sector || "PLANTA",
+      usuario_solicitante: ped?.usuario_solicitante || "Solicitante",
+      fecha_requerida: ped?.fecha_requerida,
+      turno: ped?.turno,
+      total_items: items.length,
+      total_pallets: totPallets,
+      total_unidades: Math.round(totUnidades * 100) / 100,
+      items,
+    };
   }
 
   const res = await fetch(`${API_BASE_URL}/api/pedidos/remitos/${idRemito}`, {
@@ -1964,21 +2191,8 @@ export async function getRemitoDetalle(idRemito: string): Promise<RemitoDetalleO
 
 export async function getRemitosByPedido(idPedido: number): Promise<RemitoDetalleOut[]> {
   if (IS_SUPABASE_ACTIVE) {
-    try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_pedido=eq.${idPedido}&select=*,remitos_cl2_detalle(*)`, {
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) {
-        const rows = await res.json();
-        const list: RemitoDetalleOut[] = [];
-        for (const r of rows) {
-          const detail = await getRemitoDetalle(r.id_remito).catch(() => null);
-          if (detail) list.push(detail);
-        }
-        return list;
-      }
-    } catch {}
-    return [];
+    const ped = await getPedidoDetalle(idPedido).catch(() => null);
+    return ped?.remitos || [];
   }
 
   const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/remitos`, {
@@ -2525,6 +2739,7 @@ export async function getIngresos(params?: {
   if (IS_SUPABASE_ACTIVE) {
     const query = new URLSearchParams();
     query.append("select", "*,remitos_cl2_detalle(*)");
+    query.append("id_pedido", "is.null");
     query.append("order", "fecha_emision.desc");
     if (params?.estado && params.estado !== "all") {
       query.append("estado", `eq.${params.estado}`);
@@ -2561,36 +2776,39 @@ export async function getIngresos(params?: {
     }
 
     const rows = (await res.json()) as SupabaseRemitoRow[];
-    let result: IngresoOut[] = rows.map((r) => {
-      const numericId = r.id_pedido || hashStringToId(r.id_remito);
-      const items: IngresoDetalleOut[] = (r.remitos_cl2_detalle || []).map((it, idx) => ({
-        id_ingreso_detalle: idx + 1,
-        id_material: it.id_material,
-        nombre_material: it.nombre_material || it.id_material,
-        unidad: it.unidad || "UN",
-        cantidad_facturada: Number(it.cantidad_facturada ?? it.cantidad ?? 0),
-        cantidad_recibida: it.cantidad_recibida !== null && it.cantidad_recibida !== undefined ? Number(it.cantidad_recibida) : null,
-        conforme: it.conforme ?? true,
-        observacion: it.observacion || undefined,
-      }));
+    let result: IngresoOut[] = rows
+      .filter((r) => r.id_pedido === null || r.id_pedido === undefined)
+      .map((r) => {
+        const numericId = /^\d+$/.test(r.id_remito) ? parseInt(r.id_remito, 10) : hashStringToId(r.id_remito);
+        const items: IngresoDetalleOut[] = (r.remitos_cl2_detalle || []).map((it, idx) => ({
+          id_ingreso_detalle: idx + 1,
+          id_material: it.id_material,
+          nombre_material: it.nombre_material || it.id_material,
+          unidad: it.unidad || "UN",
+          cantidad_facturada: Number(it.cantidad_facturada ?? it.cantidad ?? 0),
+          cantidad_recibida:
+            it.cantidad_recibida !== null && it.cantidad_recibida !== undefined ? Number(it.cantidad_recibida) : null,
+          conforme: it.conforme ?? true,
+          observacion: it.observacion || undefined,
+        }));
 
-      return {
-        id_ingreso: numericId,
-        id_proveedor: 1,
-        nombre_proveedor: r.proveedor_nombre || "PROVEEDOR",
-        codigo_proveedor: "",
-        deposito_en_planta: false,
-        numero_factura: r.numero_factura || r.id_remito,
-        orden_compra: r.orden_compra || undefined,
-        estado: (r.estado as "pendiente" | "parcial" | "completo") || "completo",
-        fecha_emision: r.fecha_emision || undefined,
-        fecha_recepcion: r.fecha_recepcion || null,
-        usuario_creacion: r.operador_nombre,
-        observacion: r.observacion || undefined,
-        total_items: items.length,
-        items,
-      };
-    });
+        return {
+          id_ingreso: numericId,
+          id_proveedor: 1,
+          nombre_proveedor: r.proveedor_nombre || "PROVEEDOR",
+          codigo_proveedor: r.id_remito,
+          deposito_en_planta: false,
+          numero_factura: r.numero_factura || r.id_remito,
+          orden_compra: r.orden_compra || undefined,
+          estado: (r.estado as "pendiente" | "parcial" | "completo") || "pendiente",
+          fecha_emision: r.fecha_emision || undefined,
+          fecha_recepcion: r.fecha_recepcion || null,
+          usuario_creacion: r.operador_nombre,
+          observacion: r.observacion || undefined,
+          total_items: items.length,
+          items,
+        };
+      });
 
     if (params?.search) {
       const s = params.search.toLowerCase();
@@ -2702,6 +2920,7 @@ export async function createIngreso(data: IngresoCreate, idUsuario?: number): Pr
       id_ingreso: hashStringToId(idRemito),
       id_proveedor: data.id_proveedor,
       nombre_proveedor: `Proveedor #${data.id_proveedor}`,
+      codigo_proveedor: idRemito,
       deposito_en_planta: false,
       numero_factura: data.numero_factura,
       orden_compra: data.orden_compra,
@@ -2744,7 +2963,7 @@ export async function confirmarRecepcionIngreso(
     const list = await getIngresos();
     const found = list.find((i) => i.id_ingreso === idIngreso);
     if (!found) throw new Error(`Comprobante #${idIngreso} no encontrado`);
-    const idRemito = found.numero_factura;
+    const idRemito = found.codigo_proveedor || found.numero_factura;
 
     for (const it of data.items) {
       await fetch(
@@ -2761,16 +2980,26 @@ export async function confirmarRecepcionIngreso(
       );
     }
 
-    const estadoFinal = data.items.every((it) => it.cantidad_recibida > 0) ? "completo" : "parcial";
-    await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(idRemito)}`, {
+    const allComplete = data.items.every((it) => {
+      const orig = found.items.find((fi) => fi.id_material === it.id_material);
+      const facturada = orig ? orig.cantidad_facturada : it.cantidad_recibida;
+      return it.cantidad_recibida >= facturada && facturada > 0;
+    });
+    const estadoFinal: "completo" | "parcial" = allComplete ? "completo" : "parcial";
+
+    const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(idRemito)}`, {
       method: "PATCH",
-      headers: getAuthHeaders(),
+      headers: { ...getAuthHeaders(), Prefer: "return=representation" },
       body: JSON.stringify({
         estado: estadoFinal,
         fecha_recepcion: data.fecha_recepcion || new Date().toISOString(),
-        observacion: data.observacion || found.observacion,
+        observacion: data.observacion || found.observacion || null,
       }),
     });
+    if (!patchRes.ok) {
+      const err = await patchRes.json().catch(() => ({}));
+      throw new Error(err.message || "Error al confirmar recepción en Supabase");
+    }
 
     return getIngresoById(idIngreso);
   }
@@ -2793,7 +3022,8 @@ export async function deleteIngreso(idIngreso: number): Promise<void> {
     const list = await getIngresos();
     const found = list.find((i) => i.id_ingreso === idIngreso);
     if (found) {
-      await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(found.numero_factura)}`, {
+      const idRemito = found.codigo_proveedor || found.numero_factura;
+      await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(idRemito)}`, {
         method: "DELETE",
         headers: getAuthHeaders(),
       });
