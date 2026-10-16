@@ -1770,9 +1770,45 @@ export async function updatePreparacionPedido(
       body: JSON.stringify(payloadPedido),
     });
 
+    let idRemitoGenerado: string | undefined = undefined;
+    if (nuevoEstado === "completo" || nuevoEstado === "parcial") {
+      idRemitoGenerado = `REM-CL2-${idPedido}-${Date.now().toString().slice(-4)}`;
+      try {
+        await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
+          method: "POST",
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            id_remito: idRemitoGenerado,
+            id_pedido: idPedido,
+            fecha_emision: new Date().toISOString(),
+            estado: "emitido",
+            operador_nombre: preparador,
+            observacion: data.comentario || null,
+          }),
+        });
+
+        const remitoItems = data.items
+          .filter((it) => it.cantidad_preparada > 0)
+          .map((it) => ({
+            id_remito: idRemitoGenerado,
+            id_material: it.id_material,
+            cantidad: it.cantidad_preparada,
+          }));
+
+        if (remitoItems.length > 0) {
+          await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: JSON.stringify(remitoItems),
+          });
+        }
+      } catch {}
+    }
+
     const pedidoActualizado = await getPedidoDetalle(idPedido);
     return {
       pedido: pedidoActualizado,
+      id_remito: idRemitoGenerado,
       mensaje: `Pedido #${idPedido} actualizado a ${nuevoEstado}`,
     };
   }
@@ -1809,6 +1845,54 @@ export async function cancelarPedido(idPedido: number, motivo: string): Promise<
 }
 
 export async function getRemitoDetalle(idRemito: string): Promise<RemitoDetalleOut> {
+  if (IS_SUPABASE_ACTIVE) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_remito=eq.${encodeURIComponent(idRemito)}&select=*,remitos_cl2_detalle(*)`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        if (rows && rows.length > 0) {
+          const r = rows[0];
+          const ped = await getPedidoDetalle(r.id_pedido).catch(() => null);
+          const detalle = r.remitos_cl2_detalle || [];
+          return {
+            id_remito: r.id_remito,
+            id_pedido: r.id_pedido,
+            fecha_emision: r.fecha_emision,
+            fecha_entrega: r.fecha_entrega,
+            estado: r.estado || "emitido",
+            usuario_emisor: r.operador_nombre,
+            observacion: r.observacion,
+            sector_destino: ped?.sector || "PLANTA",
+            usuario_solicitante: ped?.usuario_solicitante || "Solicitante",
+            fecha_requerida: ped?.fecha_requerida,
+            turno: ped?.turno,
+            total_items: detalle.length,
+            total_pallets: detalle.reduce((acc: number, it: any) => {
+              const mat = ped?.items.find((m) => m.id_material === it.id_material);
+              return acc + (mat?.cantidad_pallets_preparada || 0);
+            }, 0),
+            total_unidades: detalle.reduce((acc: number, it: any) => acc + Number(it.cantidad || 0), 0),
+            items: detalle.map((it: any) => {
+              const mat = ped?.items.find((m) => m.id_material === it.id_material);
+              return {
+                id_material: it.id_material,
+                nombre_material: mat?.nombre_material || it.id_material,
+                unidad: mat?.unidad || "UN",
+                cantidad: Number(it.cantidad),
+                tipo_empaque: mat?.tipo_empaque || "unidad",
+                tamanio_lote: mat?.tamanio_lote || 1,
+                cantidad_pallets: mat?.cantidad_pallets_preparada,
+                bultos_por_pallet: mat?.bultos_por_pallet,
+              };
+            }),
+          };
+        }
+      }
+    } catch {}
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/pedidos/remitos/${idRemito}`, {
     headers: getAuthHeaders(),
   });
@@ -1820,6 +1904,24 @@ export async function getRemitoDetalle(idRemito: string): Promise<RemitoDetalleO
 }
 
 export async function getRemitosByPedido(idPedido: number): Promise<RemitoDetalleOut[]> {
+  if (IS_SUPABASE_ACTIVE) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2?id_pedido=eq.${idPedido}&select=*,remitos_cl2_detalle(*)`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        const list: RemitoDetalleOut[] = [];
+        for (const r of rows) {
+          const detail = await getRemitoDetalle(r.id_remito).catch(() => null);
+          if (detail) list.push(detail);
+        }
+        return list;
+      }
+    } catch {}
+    return [];
+  }
+
   const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/remitos`, {
     headers: getAuthHeaders(),
   });

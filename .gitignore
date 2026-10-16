@@ -105,8 +105,6 @@ dist-ssr/
 
 # Hosting y Despliegues Externos
 .vercel/
-*.vercel.json
-vercel.json
 .netlify/
 
 
