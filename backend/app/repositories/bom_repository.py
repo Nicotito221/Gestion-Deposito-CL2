@@ -2,6 +2,7 @@ from typing import List, Optional, Tuple
 import pyodbc
 
 from app.core.config import get_db_connection
+from app.core.set_componente_seed import ensure_set_componente_seeded
 from app.schemas.bom import (
     BomEstructuraItemOut,
     BomEstructuraResponse,
@@ -15,6 +16,17 @@ from app.schemas.bom import (
 class BomRepository:
     def __init__(self, connection_factory=get_db_connection) -> None:
         self._get_connection = connection_factory
+        self._ensure_seeded()
+
+    def _ensure_seeded(self) -> None:
+        try:
+            conn = self._get_connection()
+        except Exception:
+            return
+        try:
+            ensure_set_componente_seeded(conn)
+        finally:
+            conn.close()
 
     def get_versions(self) -> List[BomVersionOut]:
         conn: pyodbc.Connection = self._get_connection()
@@ -51,6 +63,7 @@ class BomRepository:
         offset: int = 0,
     ) -> Tuple[List[SetComponenteOut], int]:
         conn: pyodbc.Connection = self._get_connection()
+        ensure_set_componente_seeded(conn)
         cursor = conn.cursor()
         try:
             where_clauses: List[str] = []
@@ -63,9 +76,9 @@ class BomRepository:
             if search:
                 pattern = f"%{search.strip()}%"
                 where_clauses.append(
-                    "(s.codigo_tasa LIKE ? OR s.codigo_sap_padre LIKE ? OR s.id_material_hijo LIKE ? OR m.nombre LIKE ?)"
+                    "(s.sd LIKE ? OR s.codigo_tasa LIKE ? OR s.codigo_sap_padre LIKE ? OR s.id_material_hijo LIKE ? OR m.nombre LIKE ?)"
                 )
-                params.extend([pattern, pattern, pattern, pattern])
+                params.extend([pattern, pattern, pattern, pattern, pattern])
 
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

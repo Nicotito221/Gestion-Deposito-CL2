@@ -36,9 +36,12 @@ export function Login() {
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         {/* Brand */}
-        <div className="flex flex-col items-center mb-8">
+        <div className="flex flex-col items-center mb-8 text-center">
           <img src={tbarLogo} alt="TBAR" className="h-16 w-auto object-contain mb-2" />
-          <p className="text-sm text-slate-500 font-medium">Gestión de Materiales · CL2</p>
+          <h1 className="text-lg font-extrabold tracking-widest text-slate-900">FLOW</h1>
+          <p className="text-xs text-slate-500 font-medium mt-0.5">
+            Forecast &amp; Logistics Operations Workspace
+          </p>
         </div>
 
         {/* Card */}

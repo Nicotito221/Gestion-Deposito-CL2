@@ -2006,19 +2006,27 @@ class RundownRepository:
             conn.close()
 
     def get_sd_mappings_by_seccion(self, id_seccion: int) -> Dict[str, Dict[str, str]]:
+        from app.core.set_componente_seed import ensure_set_componente_seeded
+
         conn: pyodbc.Connection = self._get_connection()
+        ensure_set_componente_seeded(conn)
         cursor = conn.cursor()
         try:
             cursor.execute(
                 """
-                SELECT sc.sd, sc.id_material_hijo, ISNULL(p.nombre, sc.id_material_hijo) as descrip
+                SELECT sc.sd, sc.id_material_hijo, ISNULL(p.nombre, ISNULL(m.nombre, sc.id_material_hijo)) as descrip
                 FROM dbo.set_componente sc
                 INNER JOIN dbo.rundown_seccion rs ON (
                     UPPER(sc.sector) = UPPER(rs.nombre) OR
-                    (rs.id_seccion = 1 AND (UPPER(sc.sector) = 'HEADLINER' OR sc.sd LIKE 'H%'))
+                    UPPER(sc.sector) = UPPER(rs.codigo) OR
+                    (
+                        (rs.id_seccion = 1 OR UPPER(rs.codigo) = 'HEADLINER' OR UPPER(rs.nombre) = 'HEADLINER')
+                        AND (UPPER(sc.sector) IN ('HEADLINER', 'HEAD LINER') OR sc.sd LIKE 'H%')
+                    )
                 )
                 LEFT JOIN dbo.producto p ON sc.id_material_hijo = p.id_producto
-                WHERE rs.id_seccion = ? AND sc.sd IS NOT NULL AND sc.sd != ''
+                LEFT JOIN dbo.material m ON sc.id_material_hijo = m.id_material
+                WHERE rs.id_seccion = ? AND sc.sd IS NOT NULL AND sc.sd != '' AND sc.activo = 1
                 """,
                 (id_seccion,),
             )
