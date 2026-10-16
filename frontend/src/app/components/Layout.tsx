@@ -119,7 +119,9 @@ function NavContent({
               item.path === "/rundown" ||
               item.path === "/suministro-bom" ||
               item.path === "/stock" ||
-              item.path === "/nuevo-pedido"
+              item.path === "/nuevo-pedido" ||
+              item.path === "/materiales" ||
+              item.path === "/remitos"
             ) {
               return false;
             }
