@@ -91,9 +91,7 @@ export const router = createBrowserRouter([
         path: "remitos",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista"]}
-            blockedRoles={["deposito", "operario_deposito"]}
-            blockedSectors={["CL2"]}
+            roles={["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"]}
           >
             <Remitos />
           </ProtectedRoute>

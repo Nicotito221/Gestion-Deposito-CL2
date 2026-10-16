@@ -41,7 +41,12 @@ class IngresoService:
                 )
 
         id_ingreso = self._repo.create_ingreso(data, id_usuario=id_usuario)
-        return self.get_ingreso_by_id(id_ingreso)
+        res = self.get_ingreso_by_id(id_ingreso)
+
+        from app.services.cl2_sync_service import Cl2SyncService
+        Cl2SyncService().sync_ingreso_creado(res.model_dump())
+
+        return res
 
     def confirmar_recepcion(
         self, id_ingreso: int, data: IngresoConfirmarRecepcion, id_usuario: Optional[int] = None
@@ -52,6 +57,8 @@ class IngresoService:
                 detail="Debe especificar los ítems a recibir.",
             )
         res = self._repo.confirmar_recepcion(id_ingreso, data, id_usuario=id_usuario)
+        from app.services.cl2_sync_service import Cl2SyncService
+        Cl2SyncService().sync_ingreso_creado(res)
         return IngresoOut.model_validate(res)
 
     def delete_ingreso(self, id_ingreso: int, id_usuario: Optional[int] = None) -> None:

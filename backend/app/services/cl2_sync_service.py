@@ -132,6 +132,76 @@ class Cl2SyncService:
             logger.error("Error al sincronizar pedido #%s a CL2: %s", pedido_data.get("id_pedido"), str(e))
             self.enqueue_outbox("pedido", str(pedido_data["id_pedido"]), "PEDIDO_CREADO", pedido_data)
 
+    def sync_ingreso_creado(self, ingreso_data: Dict[str, Any]) -> None:
+        if not self.enabled:
+            return
+
+        id_remito = str(ingreso_data.get("id_ingreso") or ingreso_data.get("numero_factura"))
+        fe_raw = ingreso_data.get("fecha_emision")
+        fecha_emision = fe_raw.isoformat() if hasattr(fe_raw, "isoformat") else (str(fe_raw) if fe_raw else None)
+        fr_raw = ingreso_data.get("fecha_recepcion")
+        fecha_recepcion = fr_raw.isoformat() if hasattr(fr_raw, "isoformat") else (str(fr_raw) if fr_raw else None)
+
+        r_row: Dict[str, Any] = {
+            "id_remito": id_remito,
+            "numero_factura": ingreso_data.get("numero_factura"),
+            "proveedor_nombre": ingreso_data.get("nombre_proveedor") or str(ingreso_data.get("id_proveedor")),
+            "orden_compra": ingreso_data.get("orden_compra"),
+            "estado": ingreso_data.get("estado", "pendiente"),
+            "observacion": ingreso_data.get("observacion"),
+            "operador_nombre": ingreso_data.get("usuario_creacion") or "Planta",
+        }
+        if fecha_emision:
+            r_row["fecha_emision"] = fecha_emision
+        if fecha_recepcion:
+            r_row["fecha_recepcion"] = fecha_recepcion
+        items_rows = [
+            {
+                "id_remito": id_remito,
+                "id_material": it["id_material"],
+                "nombre_material": it.get("nombre_material") or it["id_material"],
+                "unidad": it.get("unidad", "UN"),
+                "cantidad": float(it.get("cantidad_facturada") or it.get("cantidad") or 0.0),
+                "cantidad_facturada": float(it.get("cantidad_facturada") or it.get("cantidad") or 0.0),
+                "cantidad_recibida": float(it.get("cantidad_recibida")) if it.get("cantidad_recibida") is not None else None,
+                "conforme": it.get("conforme", True),
+                "observacion": it.get("observacion"),
+            }
+            for it in ingreso_data.get("items", [])
+            if it.get("id_material")
+        ]
+
+        mat_rows = [
+            {
+                "id_material": it["id_material"],
+                "nombre": it.get("nombre_material") or it["id_material"],
+                "unidad_medida": it.get("unidad") or "UN",
+                "activo": True,
+            }
+            for it in ingreso_data.get("items", [])
+            if it.get("id_material")
+        ]
+
+        try:
+            if mat_rows:
+                self._post("materiales_cl2", mat_rows)
+            self._post("remitos_cl2", r_row)
+            if items_rows:
+                self._post("remitos_cl2_detalle", items_rows)
+        except Exception as e:
+            logger.error("Error al sincronizar ingreso/remito #%s a CL2: %s", id_remito, str(e))
+
+    def sync_ingresos_historicos_pendientes(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            from app.repositories.ingreso_repository import IngresoRepository
+            ingresos = IngresoRepository().get_ingresos(limit=50)
+            for ing in ingresos:
+                self.sync_ingreso_creado(ing)
+        except Exception as ex:
+            logger.error("Error al sincronizar ingresos historicos a CL2: %s", str(ex))
+
     def _get(self, table: str, params: str = "") -> Optional[List[Dict[str, Any]]]:
         if not self.enabled or not self.base_url or not self.api_key:
             return None
@@ -200,4 +270,6 @@ class Cl2SyncService:
             logger.error("Error actualizando estados desde nodo CL2: %s", str(e))
         finally:
             conn.close()
+
+        self.sync_ingresos_historicos_pendientes()
 
