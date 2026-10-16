@@ -143,7 +143,7 @@ TO authenticated
 USING (true)
 WITH CHECK (true);
 
--- Politica 3: Operarios autenticados pueden generar y ver remitos
+-- Politica 3: Operarios autenticados pueden generar, ver y actualizar remitos
 CREATE POLICY "Operarios pueden ver remitos"
 ON public.remitos_cl2 FOR SELECT
 TO authenticated
@@ -154,6 +154,12 @@ ON public.remitos_cl2 FOR INSERT
 TO authenticated
 WITH CHECK (true);
 
+CREATE POLICY "Operarios pueden actualizar remitos"
+ON public.remitos_cl2 FOR UPDATE
+TO authenticated
+USING (true)
+WITH CHECK (true);
+
 CREATE POLICY "Operarios pueden ver detalle remitos"
 ON public.remitos_cl2_detalle FOR SELECT
 TO authenticated
@@ -162,6 +168,12 @@ USING (true);
 CREATE POLICY "Operarios pueden insertar detalle remitos"
 ON public.remitos_cl2_detalle FOR INSERT
 TO authenticated
+WITH CHECK (true);
+
+CREATE POLICY "Operarios pueden actualizar detalle remitos"
+ON public.remitos_cl2_detalle FOR UPDATE
+TO authenticated
+USING (true)
 WITH CHECK (true);
 
 -- ==============================================================================

@@ -648,6 +648,9 @@ class PedidoService:
                 detail=f"Error al procesar preparación del pedido: {str(e)}",
             )
 
+        from app.services.cl2_sync_service import Cl2SyncService
+        Cl2SyncService().sync_remito_pedido(pedido_actualizado)
+
         msg = "Avance de preparación guardado exitosamente."
         if data.accion == "confirmar_completo":
             msg = f"Pedido #{id_pedido} completado exitosamente. Remito {id_remito} emitido."
