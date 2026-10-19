@@ -120,6 +120,70 @@ def toggle_relation(id_set_componente: int):
         )
 
 
+@router.post("/relaciones/importar")
+def import_relations_file(
+    file: UploadFile = File(...),
+    reemplazar: bool = Query(default=False),
+):
+    import csv
+    import io
+    import openpyxl
+
+    try:
+        raw_bytes = file.file.read()
+        fname = (file.filename or "").lower()
+        parsed_rows = []
+
+        if fname.endswith((".xlsx", ".xlsm")):
+            wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
+            ws = wb.active
+            all_rows = list(ws.iter_rows(values_only=True))
+        else:
+            text = raw_bytes.decode("utf-8-sig", errors="replace")
+            delimiter = "\t" if "\t" in text.splitlines()[0] else (";" if ";" in text.splitlines()[0] else ",")
+            all_rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
+
+        for idx, r in enumerate(all_rows):
+            if not r or all(c is None or str(c).strip() == "" for c in r):
+                continue
+            vals = [str(c).strip() if c is not None else "" for c in r]
+            if idx == 0 and any(h in vals[0].lower() for h in ("sector", "sd", "tasa", "codigo")):
+                continue
+            if len(vals) < 5:
+                continue
+            sector = vals[0] or "Seat"
+            sd = vals[1]
+            tasa = vals[2]
+            sap_padre = vals[3]
+            hijo = vals[4]
+            if not tasa or not sap_padre or not hijo:
+                continue
+            try:
+                cant = float(str(vals[5]).replace(",", ".")) if len(vals) > 5 and vals[5] else 1.0
+            except ValueError:
+                cant = 1.0
+            parsed_rows.append((sector, sd, tasa, sap_padre, hijo, cant))
+
+        if not parsed_rows:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se encontraron filas válidas en el archivo (Columnas esperadas: Sector, SD, Código TASA, Código SAP Padre, Material Hijo, Cantidad).",
+            )
+
+        count = _repository.bulk_import_set_componentes(parsed_rows, replace_all=reemplazar)
+        return {
+            "mensaje": f"Se importaron {count} relaciones de sets/componentes correctamente.",
+            "total_importados": count,
+        }
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Error al importar archivo de relaciones: {err}",
+        )
+
+
 @router.post("/upload", response_model=BomImportResult)
 def upload_bom(file: UploadFile = File(...)) -> BomImportResult:
     temp_dir = tempfile.mkdtemp()

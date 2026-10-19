@@ -66,11 +66,18 @@ class RundownIngresoDiaUpdate(BaseModel):
     estado: str = Field(default="planificado", pattern=r"^(planificado|confirmado)$")
 
 
+class RundownConsumoDiaUpdate(BaseModel):
+    id_material: str = Field(min_length=1, max_length=50)
+    fecha: date
+    cantidad: Optional[float] = Field(default=None, ge=0)
+
+
 class RundownDayCell(BaseModel):
     fecha: str
     dia_nombre: str
     produccion_vehiculos: float
     uso: float
+    tiene_consumo_manual: bool = False
     plan_maritimo: float
     maritimo_po: Optional[str] = None
     maritimo_factura: Optional[str] = None

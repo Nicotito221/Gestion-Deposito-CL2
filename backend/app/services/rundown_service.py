@@ -15,6 +15,7 @@ from app.schemas.rundown import (
     RundownProveedorCreate,
     RundownProveedorUpdate,
     RundownIngresoDiaUpdate,
+    RundownConsumoDiaUpdate,
     RundownStockAjusteUpdate,
     RundownPeriodoItem,
     RundownCalendarioDia,
@@ -190,6 +191,9 @@ class RundownService:
 
         transitos = self._repo.get_transitos(prov_ids, d_start, d_end)
         ajustes_map = self._repo.get_stock_ajustes(prov_ids, d_start, d_end)
+        consumos_manuales_map = self._repo.get_consumos_manuales(
+            list({p["id_material"] for p in parametros}), d_start, d_end
+        )
         pedidos_planta_map = (
             self._repo.get_entregas_pedidos_planta(prov_ids, d_start, d_end)
             if alcance == "planta"
@@ -266,17 +270,23 @@ class RundownService:
                         tiene_ajuste = True
                         stock_real = float(round(ajustes_map[planta_key]))
 
-                veh_prod = sum(
-                    prod_map.get(p["id_producto"], {}).get(d, 0.0) * p["factor_uso"]
-                    for p in param["productos"]
-                )
-
-                uso = round(
-                    veh_prod
-                    * param["factor_conversion"]
-                    * (1.0 + param["scrap_porcentaje"]),
-                    2,
-                )
+                manual_key = (param["id_material"], d)
+                if manual_key in consumos_manuales_map:
+                    tiene_consumo_manual = True
+                    veh_prod = round(consumos_manuales_map[manual_key], 2)
+                    uso = veh_prod
+                else:
+                    tiene_consumo_manual = False
+                    veh_prod = sum(
+                        prod_map.get(p["id_producto"], {}).get(d, 0.0) * p["factor_uso"]
+                        for p in param["productos"]
+                    )
+                    uso = round(
+                        veh_prod
+                        * param["factor_conversion"]
+                        * (1.0 + param["scrap_porcentaje"]),
+                        2,
+                    )
 
                 ped_info = pedidos_planta_map.get((param["id_material"], d))
                 if alcance == "planta" and not es_dep_en_planta:
@@ -345,8 +355,9 @@ class RundownService:
                     RundownDayCell(
                         fecha=d.strftime("%Y-%m-%d"),
                         dia_nombre=f"{d.strftime('%d/%m')} {DIAS_ESP[d.weekday()]}",
-                        produccion_vehiculos=round(veh_prod, 1),
+                        produccion_vehiculos=round(veh_prod, 2) if tiene_consumo_manual else round(veh_prod, 1),
                         uso=uso,
+                        tiene_consumo_manual=tiene_consumo_manual,
                         plan_maritimo=maritimo,
                         maritimo_po=m_meta.get("po_numero"),
                         maritimo_factura=m_meta.get("factura_numero"),
@@ -477,6 +488,14 @@ class RundownService:
             observacion=data.observacion,
             fecha_origen=data.fecha_origen,
             estado=data.estado,
+        )
+
+    def upsert_consumo_dia(self, data: RundownConsumoDiaUpdate, id_usuario: Optional[int] = None) -> bool:
+        return self._repo.upsert_consumo_diario_manual(
+            id_material=data.id_material,
+            fecha=data.fecha,
+            cantidad=data.cantidad,
+            id_usuario=id_usuario,
         )
 
     def get_secciones(self) -> List[RundownSeccionItem]:
@@ -824,54 +843,59 @@ class RundownService:
         )
 
         firm_prod_map = self._repo.get_produccion_planificada(all_products, start_sim, end_prev)
+        prev_consumos_manuales = self._repo.get_consumos_manuales([param["id_material"]], start_sim, end_prev)
         forecast_cache: Dict[Tuple[int, int], Dict[date, float]] = {}
         cal_overrides_cache: Dict[Tuple[int, int], Dict[date, Tuple[bool, Optional[str]]]] = {}
 
         curr = start_sim
         while curr <= end_prev:
-            m_key = (curr.year, curr.month)
-            m_info = next((m for m in meses_raw if m["anio"] == curr.year and m["mes"] == curr.month), None)
-            is_firm = m_info["es_firme"] if m_info else (curr.month == 9 and curr.year == 2026)
-
-            m_start = date(curr.year, curr.month, 1)
-            m_next = date(curr.year + 1, 1, 1) if curr.month == 12 else date(curr.year, curr.month + 1, 1)
-            m_end = m_next - timedelta(days=1)
-            if m_key not in cal_overrides_cache:
-                cal_overrides_cache[m_key] = self._repo.get_calendario_overrides(m_start, m_end)
-            ovs = cal_overrides_cache[m_key]
-            is_lab = ovs[curr][0] if curr in ovs else (curr.weekday() < 5)
-
-            if is_firm:
-                if not is_lab:
-                    veh_prod = 0.0
-                else:
-                    veh_prod = sum(
-                        firm_prod_map.get(p["id_producto"], {}).get(curr, 0.0) * p["factor_uso"]
-                        for p in param["productos"]
-                    )
+            manual_key = (param["id_material"], curr)
+            if manual_key in prev_consumos_manuales:
+                uso = round(prev_consumos_manuales[manual_key], 2)
             else:
-                if m_key not in forecast_cache:
-                    m_start = date(curr.year, curr.month, 1)
-                    m_next = date(curr.year + 1, 1, 1) if curr.month == 12 else date(curr.year, curr.month + 1, 1)
-                    m_end = m_next - timedelta(days=1)
-                    m_ovs = self._repo.get_calendario_overrides(m_start, m_end)
-                    m_days: List[date] = []
-                    c_tmp = m_start
-                    while c_tmp <= m_end:
-                        m_days.append(c_tmp)
-                        c_tmp += timedelta(days=1)
-                    m_lab = [d for d in m_days if (m_ovs[d][0] if d in m_ovs else d.weekday() < 5)]
-                    n_lab = len(m_lab)
-                    m_vols = self._repo.get_produccion_mensual_productos(all_products, curr.year, curr.month)
-                    forecast_cache[m_key] = {}
-                    for d_lab in m_lab:
-                        forecast_cache[m_key][d_lab] = sum(
-                            (m_vols.get(p["id_producto"], 0.0) / n_lab if n_lab > 0 else 0.0) * p["factor_uso"]
+                m_key = (curr.year, curr.month)
+                m_info = next((m for m in meses_raw if m["anio"] == curr.year and m["mes"] == curr.month), None)
+                is_firm = m_info["es_firme"] if m_info else (curr.month == 9 and curr.year == 2026)
+
+                m_start = date(curr.year, curr.month, 1)
+                m_next = date(curr.year + 1, 1, 1) if curr.month == 12 else date(curr.year, curr.month + 1, 1)
+                m_end = m_next - timedelta(days=1)
+                if m_key not in cal_overrides_cache:
+                    cal_overrides_cache[m_key] = self._repo.get_calendario_overrides(m_start, m_end)
+                ovs = cal_overrides_cache[m_key]
+                is_lab = ovs[curr][0] if curr in ovs else (curr.weekday() < 5)
+
+                if is_firm:
+                    if not is_lab:
+                        veh_prod = 0.0
+                    else:
+                        veh_prod = sum(
+                            firm_prod_map.get(p["id_producto"], {}).get(curr, 0.0) * p["factor_uso"]
                             for p in param["productos"]
                         )
-                veh_prod = forecast_cache[m_key].get(curr, 0.0)
+                else:
+                    if m_key not in forecast_cache:
+                        m_start = date(curr.year, curr.month, 1)
+                        m_next = date(curr.year + 1, 1, 1) if curr.month == 12 else date(curr.year, curr.month + 1, 1)
+                        m_end = m_next - timedelta(days=1)
+                        m_ovs = self._repo.get_calendario_overrides(m_start, m_end)
+                        m_days: List[date] = []
+                        c_tmp = m_start
+                        while c_tmp <= m_end:
+                            m_days.append(c_tmp)
+                            c_tmp += timedelta(days=1)
+                        m_lab = [d for d in m_days if (m_ovs[d][0] if d in m_ovs else d.weekday() < 5)]
+                        n_lab = len(m_lab)
+                        m_vols = self._repo.get_produccion_mensual_productos(all_products, curr.year, curr.month)
+                        forecast_cache[m_key] = {}
+                        for d_lab in m_lab:
+                            forecast_cache[m_key][d_lab] = sum(
+                                (m_vols.get(p["id_producto"], 0.0) / n_lab if n_lab > 0 else 0.0) * p["factor_uso"]
+                                for p in param["productos"]
+                            )
+                    veh_prod = forecast_cache[m_key].get(curr, 0.0)
 
-            uso = round(veh_prod * param["factor_conversion"] * (1.0 + param["scrap_porcentaje"]), 2)
+                uso = round(veh_prod * param["factor_conversion"] * (1.0 + param["scrap_porcentaje"]), 2)
             ped_info = pedidos_planta_map.get((param["id_material"], curr))
             if alcance == "planta" and not dep_planta:
                 maritimo = 0.0
