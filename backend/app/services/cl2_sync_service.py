@@ -382,7 +382,13 @@ class Cl2SyncService:
                                 ),
                             )
 
-                        for rem in [r for r in remitos_pedidos if r.get("id_pedido") == id_pedido]:
+                        from app.repositories.pedido_repository import PedidoRepository
+                        ped_repo = PedidoRepository()
+                        cursor.execute("SELECT sector FROM dbo.pedido WHERE id_pedido = ?", (id_pedido,))
+                        sec_row = cursor.fetchone()
+                        sector_ped = str(sec_row[0]) if sec_row and sec_row[0] else "Planta"
+
+                        for idx_rem, rem in enumerate([r for r in remitos_pedidos if r.get("id_pedido") == id_pedido], start=1):
                             id_rem = str(rem["id_remito"])
                             cursor.execute("SELECT 1 FROM dbo.remito WHERE id_remito = ?", (id_rem,))
                             if not cursor.fetchone():
@@ -402,9 +408,20 @@ class Cl2SyncService:
                                 for mr in rem.get("remitos_cl2_detalle") or []:
                                     cant_mr = float(mr.get("cantidad") or 0.0)
                                     if cant_mr > 0 and mr.get("id_material"):
+                                        mat_mr = str(mr["id_material"])
                                         cursor.execute(
                                             "INSERT INTO dbo.material_remito (id_remito, id_material, cantidad) VALUES (?, ?, ?)",
-                                            (id_rem, str(mr["id_material"]), cant_mr),
+                                            (id_rem, mat_mr, cant_mr),
+                                        )
+                                        ped_repo.aplicar_transferencia_stock_remito_item(
+                                            cursor=cursor,
+                                            id_mat=mat_mr,
+                                            delta=cant_mr,
+                                            id_pedido=id_pedido,
+                                            id_remito=id_rem,
+                                            seq=idx_rem,
+                                            sector_pedido=sector_ped,
+                                            user_id_final=default_user_id,
                                         )
                 conn.commit()
             except Exception as e:

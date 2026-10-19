@@ -141,32 +141,59 @@ class PedidoRepository:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
-            where_clauses = ["p.fecha_requerida = ?", "p.estado != 'cancelado'"]
-            params: List[Any] = [fecha_requerida]
-
-            if ids_material:
-                placeholders = ",".join("?" for _ in ids_material)
-                where_clauses.append(f"mp.id_material IN ({placeholders})")
-                params.extend(ids_material)
-
-            sql = f"""
+            sql = """
                 SELECT p.id_pedido, p.turno, p.estado, mp.id_material, CAST(mp.cantidad_pedida AS FLOAT)
                 FROM dbo.pedido p
                 INNER JOIN dbo.material_pedido mp ON p.id_pedido = mp.id_pedido
-                WHERE {' AND '.join(where_clauses)}
+                WHERE p.fecha_requerida = ? AND p.estado != 'cancelado'
                 ORDER BY p.id_pedido
             """
-            cursor.execute(sql, params)
-            return [
-                {
-                    "id_pedido": int(r[0]),
-                    "turno": str(r[1]) if r[1] else "Completo",
-                    "estado": str(r[2]),
-                    "id_material": str(r[3]),
-                    "cantidad_pedida": float(r[4] or 0.0),
-                }
-                for r in cursor.fetchall()
-            ]
+            cursor.execute(sql, [fecha_requerida])
+            raw_rows = cursor.fetchall()
+
+            caja_map: Dict[str, List[Tuple[str, float]]] = {}
+            cursor.execute("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'caja_pedido'")
+            if cursor.fetchone():
+                cursor.execute(
+                    """
+                    SELECT cp.codigo_caja, cpi.id_material, CAST(cpi.cantidad AS FLOAT)
+                    FROM dbo.caja_pedido cp
+                    INNER JOIN dbo.caja_pedido_item cpi ON cp.id_caja = cpi.id_caja
+                    WHERE cp.activo = 1
+                    """
+                )
+                for cr in cursor.fetchall():
+                    caja_map.setdefault(str(cr[0]), []).append((str(cr[1]), float(cr[2] or 0.0)))
+
+            allowed = set(ids_material) if ids_material else None
+            results: List[Dict[str, Any]] = []
+            for r in raw_rows:
+                id_ped = int(r[0])
+                turno_val = str(r[1]) if r[1] else "Completo"
+                est_val = str(r[2])
+                mat_id = str(r[3])
+                cant_ped = float(r[4] or 0.0)
+
+                if mat_id in caja_map:
+                    for child_mat, cant_por_caja in caja_map[mat_id]:
+                        if allowed is None or child_mat in allowed:
+                            results.append({
+                                "id_pedido": id_ped,
+                                "turno": turno_val,
+                                "estado": est_val,
+                                "id_material": child_mat,
+                                "cantidad_pedida": round(cant_ped * cant_por_caja, 4),
+                            })
+                else:
+                    if allowed is None or mat_id in allowed:
+                        results.append({
+                            "id_pedido": id_ped,
+                            "turno": turno_val,
+                            "estado": est_val,
+                            "id_material": mat_id,
+                            "cantidad_pedida": cant_ped,
+                        })
+            return results
         finally:
             cursor.close()
             conn.close()
@@ -826,91 +853,15 @@ class PedidoRepository:
                             "INSERT INTO dbo.material_remito (id_remito, id_material, cantidad) VALUES (?, ?, ?)",
                             (id_remito_generado, id_mat, delta),
                         )
-
-                        cursor.execute(
-                            """
-                            SELECT TOP 1 ISNULL(p.deposito_en_planta, 0)
-                            FROM dbo.material m
-                            OUTER APPLY (
-                                SELECT id_proveedor_principal AS id_prov, 1 AS prio FROM dbo.material WHERE id_material = m.id_material AND id_proveedor_principal IS NOT NULL
-                                UNION ALL
-                                SELECT id_proveedor AS id_prov, 2 AS prio FROM dbo.rundown_parametro_material WHERE id_material = m.id_material AND activo = 1
-                            ) src
-                            JOIN dbo.proveedor p ON src.id_prov = p.id_proveedor
-                            WHERE m.id_material = ?
-                            ORDER BY src.prio ASC
-                            """,
-                            (id_mat,),
-                        )
-                        p_row = cursor.fetchone()
-                        dep_en_planta = bool(p_row[0]) if p_row and p_row[0] is not None else False
-
-                        if not dep_en_planta:
-                            cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
-                            stk_row = cursor.fetchone()
-                            if stk_row is not None:
-                                stk_ant = float(stk_row[0] or 0.0)
-                                stk_post = round(max(0.0, stk_ant - delta), 2)
-                                cursor.execute(
-                                    "UPDATE dbo.stock_deposito SET stock_actual = ?, fecha_actualizacion = GETDATE() WHERE id_material = ?",
-                                    (stk_post, id_mat),
-                                )
-                            else:
-                                stk_ant = 0.0
-                                stk_post = 0.0
-                                cursor.execute(
-                                    "INSERT INTO dbo.stock_deposito (id_material, stock_actual, fecha_actualizacion) VALUES (?, 0.0, GETDATE())",
-                                    (id_mat,),
-                                )
-
-                            cursor.execute(
-                                """
-                                INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_pedido, id_remito, id_usuario, fecha, observacion)
-                                VALUES (?, 'egreso_pedido', ?, ?, ?, ?, ?, ?, GETDATE(), ?)
-                                """,
-                                (id_mat, delta, stk_ant, stk_post, id_pedido, id_remito_generado, user_id_final, f"Entrega #{seq} pedido #{id_pedido} a {sector_pedido} (Transferencia CL2 -> Planta)"),
-                            )
-
-                        cursor.execute(
-                            """
-                            SELECT TOP 1 CAST(COALESCE(rsa.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT)
-                            FROM dbo.material m
-                            LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
-                            LEFT JOIN dbo.rundown_parametro_material rpm ON m.id_material = rpm.id_material AND rpm.activo = 1
-                            OUTER APPLY (
-                                SELECT TOP 1 stock_ajustado
-                                FROM dbo.rundown_stock_ajuste rsa
-                                WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
-                                ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
-                            ) rsa
-                            WHERE m.id_material = ?
-                            """,
-                            (id_mat,),
-                        )
-                        pl_row = cursor.fetchone()
-                        pl_ant = float(pl_row[0] or 0.0) if pl_row and pl_row[0] is not None else 0.0
-                        pl_post = round(pl_ant + delta, 2)
-
-                        cursor.execute(
-                            """
-                            MERGE dbo.stock_deposito AS target
-                            USING (SELECT ? AS id_material, ? AS delta) AS source
-                            ON (target.id_material = source.id_material)
-                            WHEN MATCHED THEN
-                                UPDATE SET stock_planta = target.stock_planta + source.delta, fecha_actualizacion = GETDATE()
-                            WHEN NOT MATCHED THEN
-                                INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
-                                VALUES (source.id_material, 0.0, source.delta, 0.0, GETDATE());
-                            """,
-                            (id_mat, delta),
-                        )
-
-                        cursor.execute(
-                            """
-                            INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_pedido, id_remito, id_usuario, fecha, observacion)
-                            VALUES (?, 'ingreso_pedido', ?, ?, ?, ?, ?, ?, GETDATE(), ?)
-                            """,
-                            (id_mat, delta, pl_ant, pl_post, id_pedido, id_remito_generado, user_id_final, f"Recepción en Planta #{seq} pedido #{id_pedido} (Remito {id_remito_generado})"),
+                        self.aplicar_transferencia_stock_remito_item(
+                            cursor=cursor,
+                            id_mat=id_mat,
+                            delta=delta,
+                            id_pedido=id_pedido,
+                            id_remito=id_remito_generado,
+                            seq=seq,
+                            sector_pedido=sector_pedido,
+                            user_id_final=user_id_final,
                         )
 
                 cursor.execute(
@@ -1056,4 +1007,146 @@ class PedidoRepository:
         finally:
             cursor.close()
             conn.close()
+
+    def aplicar_transferencia_stock_remito_item(
+        self,
+        cursor: Any,
+        id_mat: str,
+        delta: float,
+        id_pedido: int,
+        id_remito: str,
+        seq: int,
+        sector_pedido: str,
+        user_id_final: int,
+    ) -> None:
+        stock_targets: List[Tuple[str, float, str]] = []
+        cursor.execute("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'caja_pedido'")
+        if cursor.fetchone():
+            cursor.execute(
+                """
+                SELECT cp.nombre, cpi.id_material, CAST(cpi.cantidad AS FLOAT)
+                FROM dbo.caja_pedido cp
+                INNER JOIN dbo.caja_pedido_item cpi ON cp.id_caja = cpi.id_caja
+                WHERE cp.codigo_caja = ? AND cp.activo = 1
+                """,
+                (id_mat,),
+            )
+            caja_rows = cursor.fetchall()
+            if caja_rows:
+                for cr in caja_rows:
+                    nombre_caja = str(cr[0] or id_mat)
+                    child_mat = str(cr[1])
+                    cant_por_caja = float(cr[2] or 0.0)
+                    child_delta = round(delta * cant_por_caja, 4)
+                    if child_delta > 0:
+                        stock_targets.append((child_mat, child_delta, f" [Caja {nombre_caja} x{delta:g}]"))
+
+        if not stock_targets:
+            stock_targets.append((id_mat, delta, ""))
+
+        for target_mat, target_delta, extra_obs in stock_targets:
+            cursor.execute(
+                """
+                SELECT TOP 1 ISNULL(p.deposito_en_planta, 0)
+                FROM dbo.material m
+                OUTER APPLY (
+                    SELECT id_proveedor_principal AS id_prov, 1 AS prio FROM dbo.material WHERE id_material = m.id_material AND id_proveedor_principal IS NOT NULL
+                    UNION ALL
+                    SELECT id_proveedor AS id_prov, 2 AS prio FROM dbo.rundown_parametro_material WHERE id_material = m.id_material AND activo = 1
+                ) src
+                JOIN dbo.proveedor p ON src.id_prov = p.id_proveedor
+                WHERE m.id_material = ?
+                ORDER BY src.prio ASC
+                """,
+                (target_mat,),
+            )
+            p_row = cursor.fetchone()
+            dep_en_planta = bool(p_row[0]) if p_row and p_row[0] is not None else False
+
+            if not dep_en_planta:
+                cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (target_mat,))
+                stk_row = cursor.fetchone()
+                if stk_row is not None:
+                    stk_ant = float(stk_row[0] or 0.0)
+                    stk_post = round(max(0.0, stk_ant - target_delta), 2)
+                    cursor.execute(
+                        "UPDATE dbo.stock_deposito SET stock_actual = ?, fecha_actualizacion = GETDATE() WHERE id_material = ?",
+                        (stk_post, target_mat),
+                    )
+                else:
+                    stk_ant = 0.0
+                    stk_post = 0.0
+                    cursor.execute(
+                        "INSERT INTO dbo.stock_deposito (id_material, stock_actual, fecha_actualizacion) VALUES (?, 0.0, GETDATE())",
+                        (target_mat,),
+                    )
+
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_pedido, id_remito, id_usuario, fecha, observacion)
+                    VALUES (?, 'egreso_pedido', ?, ?, ?, ?, ?, ?, GETDATE(), ?)
+                    """,
+                    (
+                        target_mat,
+                        target_delta,
+                        stk_ant,
+                        stk_post,
+                        id_pedido,
+                        id_remito,
+                        user_id_final,
+                        f"Entrega #{seq} pedido #{id_pedido} a {sector_pedido} (Transferencia CL2 -> Planta){extra_obs}",
+                    ),
+                )
+
+            cursor.execute(
+                """
+                SELECT TOP 1 CAST(COALESCE(rsa.stock_ajustado, sd.stock_planta, rpm.stock_inicial_planta, 0.0) AS FLOAT)
+                FROM dbo.material m
+                LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
+                LEFT JOIN dbo.rundown_parametro_material rpm ON m.id_material = rpm.id_material AND rpm.activo = 1
+                OUTER APPLY (
+                    SELECT TOP 1 stock_ajustado
+                    FROM dbo.rundown_stock_ajuste rsa
+                    WHERE rsa.id_material = m.id_material AND rsa.tipo_stock = 'planta'
+                    ORDER BY rsa.fecha DESC, rsa.fecha_creacion DESC
+                ) rsa
+                WHERE m.id_material = ?
+                """,
+                (target_mat,),
+            )
+            pl_row = cursor.fetchone()
+            pl_ant = float(pl_row[0] or 0.0) if pl_row and pl_row[0] is not None else 0.0
+            pl_post = round(pl_ant + target_delta, 2)
+
+            cursor.execute(
+                """
+                MERGE dbo.stock_deposito AS target
+                USING (SELECT ? AS id_material, ? AS delta) AS source
+                ON (target.id_material = source.id_material)
+                WHEN MATCHED THEN
+                    UPDATE SET stock_planta = target.stock_planta + source.delta, fecha_actualizacion = GETDATE()
+                WHEN NOT MATCHED THEN
+                    INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
+                    VALUES (source.id_material, 0.0, source.delta, 0.0, GETDATE());
+                """,
+                (target_mat, target_delta),
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO dbo.movimiento_stock (id_material, tipo, cantidad, stock_anterior, stock_posterior, id_pedido, id_remito, id_usuario, fecha, observacion)
+                VALUES (?, 'ingreso_pedido', ?, ?, ?, ?, ?, ?, GETDATE(), ?)
+                """,
+                (
+                    target_mat,
+                    target_delta,
+                    pl_ant,
+                    pl_post,
+                    id_pedido,
+                    id_remito,
+                    user_id_final,
+                    f"Recepción en Planta #{seq} pedido #{id_pedido} (Remito {id_remito}){extra_obs}",
+                ),
+            )
+
 

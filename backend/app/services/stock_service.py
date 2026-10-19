@@ -1,5 +1,5 @@
 from math import ceil
-from typing import Optional
+from typing import Any, List, Optional
 
 from app.repositories.stock_repository import StockRepository
 from app.schemas.stock import (
@@ -12,6 +12,8 @@ from app.schemas.stock import (
     MaterialConfigItem,
     MaterialConfigListResponse,
     MaterialConfigUpdate,
+    CajaPedidoCreate,
+    CajaPedidoOut,
 )
 
 
@@ -188,3 +190,28 @@ class StockService:
             unidad=data.unidad.strip().upper() if data.unidad and data.unidad.strip() else None,
             en_cl2=data.en_cl2,
         )
+
+    def get_cajas_pedido(self) -> List[CajaPedidoOut]:
+        raw = self._repo.get_cajas_pedido()
+        return [CajaPedidoOut.model_validate(c) for c in raw]
+
+    def create_caja_pedido(self, data: CajaPedidoCreate) -> CajaPedidoOut:
+        res = self._repo.create_caja_pedido(
+            nombre=data.nombre,
+            items=[it.model_dump() for it in data.items],
+            codigo_caja=data.codigo_caja,
+        )
+        return CajaPedidoOut.model_validate(res)
+
+    def update_caja_pedido(self, id_caja: int, data: CajaPedidoCreate) -> CajaPedidoOut:
+        res = self._repo.update_caja_pedido(
+            id_caja=id_caja,
+            nombre=data.nombre,
+            items=[it.model_dump() for it in data.items],
+            codigo_caja=data.codigo_caja,
+        )
+        return CajaPedidoOut.model_validate(res)
+
+    def delete_caja_pedido(self, id_caja: int) -> None:
+        self._repo.delete_caja_pedido(id_caja)
+

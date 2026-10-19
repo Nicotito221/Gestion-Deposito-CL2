@@ -1,5 +1,5 @@
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.schemas.stock import (
     StockAjusteInput,
@@ -8,6 +8,8 @@ from app.schemas.stock import (
     StockMovimientosResponse,
     MaterialConfigListResponse,
     MaterialConfigUpdate,
+    CajaPedidoCreate,
+    CajaPedidoOut,
 )
 from app.services.stock_service import StockService
 
@@ -109,3 +111,55 @@ def update_material_configuracion(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al guardar configuración de material: {e}")
+
+
+@router.get("/cajas", response_model=List[CajaPedidoOut])
+def get_cajas_pedido(
+    service: StockService = Depends(get_stock_service),
+) -> List[CajaPedidoOut]:
+    try:
+        return service.get_cajas_pedido()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener cajas de pedido: {e}")
+
+
+@router.post("/cajas", response_model=CajaPedidoOut, status_code=status.HTTP_201_CREATED)
+def create_caja_pedido(
+    data: CajaPedidoCreate,
+    service: StockService = Depends(get_stock_service),
+) -> CajaPedidoOut:
+    try:
+        return service.create_caja_pedido(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear caja de pedido: {e}")
+
+
+@router.put("/cajas/{id_caja}", response_model=CajaPedidoOut)
+def update_caja_pedido(
+    id_caja: int,
+    data: CajaPedidoCreate,
+    service: StockService = Depends(get_stock_service),
+) -> CajaPedidoOut:
+    try:
+        return service.update_caja_pedido(id_caja, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar caja de pedido: {e}")
+
+
+@router.delete("/cajas/{id_caja}")
+def delete_caja_pedido(
+    id_caja: int,
+    service: StockService = Depends(get_stock_service),
+):
+    try:
+        service.delete_caja_pedido(id_caja)
+        return {"mensaje": "Caja eliminada exitosamente"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar caja de pedido: {e}")
+

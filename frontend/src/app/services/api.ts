@@ -2278,6 +2278,79 @@ export async function updateMaterialConfiguracion(data: MaterialConfigUpdate): P
   return res.json();
 }
 
+export interface CajaPedidoItemInput {
+  id_material: string;
+  cantidad: number;
+}
+
+export interface CajaPedidoItemOut {
+  id_material: string;
+  nombre_material?: string | null;
+  unidad: string;
+  cantidad: number;
+}
+
+export interface CajaPedidoCreate {
+  codigo_caja?: string;
+  nombre: string;
+  items: CajaPedidoItemInput[];
+}
+
+export interface CajaPedidoOut {
+  id_caja: number;
+  codigo_caja: string;
+  nombre: string;
+  activo: boolean;
+  items: CajaPedidoItemOut[];
+}
+
+export async function getCajasPedido(): Promise<CajaPedidoOut[]> {
+  if (IS_SUPABASE_ACTIVE) return [];
+  const res = await fetch(`${API_BASE_URL}/api/stock/cajas`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) throw new Error("Error al obtener cajas de pedido");
+  return res.json();
+}
+
+export async function createCajaPedido(data: CajaPedidoCreate): Promise<CajaPedidoOut> {
+  const res = await fetch(`${API_BASE_URL}/api/stock/cajas`, {
+    method: "POST",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al crear la caja");
+  }
+  return res.json();
+}
+
+export async function updateCajaPedido(idCaja: number, data: CajaPedidoCreate): Promise<CajaPedidoOut> {
+  const res = await fetch(`${API_BASE_URL}/api/stock/cajas/${idCaja}`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar la caja");
+  }
+  return res.json();
+}
+
+export async function deleteCajaPedido(idCaja: number): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/stock/cajas/${idCaja}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al eliminar la caja");
+  }
+  return res.json();
+}
+
 export type RolUsuario =
   | "administrador"
   | "gerente"

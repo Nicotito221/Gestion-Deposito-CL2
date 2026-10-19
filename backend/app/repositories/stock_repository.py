@@ -22,7 +22,7 @@ class StockRepository:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
-            where_clauses: List[str] = ["m.activo = 1"]
+            where_clauses: List[str] = ["m.activo = 1", "ISNULL(m.categoria, '') <> 'CAJA_PEDIDO'"]
             params: List[Any] = []
 
             if search and search.strip():
@@ -565,7 +565,7 @@ class StockRepository:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
-            where_clauses: List[str] = ["m.activo = 1"]
+            where_clauses: List[str] = ["m.activo = 1", "ISNULL(m.categoria, '') <> 'CAJA_PEDIDO'"]
             params: List[Any] = []
 
             if search and search.strip():
@@ -822,3 +822,247 @@ class StockRepository:
         finally:
             cursor.close()
             conn.close()
+
+    def _ensure_caja_tables(self, cursor: Any) -> None:
+        cursor.execute(
+            """
+            IF OBJECT_ID('dbo.caja_pedido', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.caja_pedido (
+                    id_caja INT IDENTITY(1,1) PRIMARY KEY,
+                    codigo_caja VARCHAR(50) NOT NULL UNIQUE,
+                    nombre VARCHAR(150) NOT NULL,
+                    activo BIT NOT NULL DEFAULT 1,
+                    fecha_creacion DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+                );
+            END;
+            IF OBJECT_ID('dbo.caja_pedido_item', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.caja_pedido_item (
+                    id_caja_item INT IDENTITY(1,1) PRIMARY KEY,
+                    id_caja INT NOT NULL REFERENCES dbo.caja_pedido(id_caja) ON DELETE CASCADE,
+                    id_material VARCHAR(50) NOT NULL REFERENCES dbo.material(id_material),
+                    cantidad DECIMAL(18,4) NOT NULL
+                );
+            END;
+            """
+        )
+
+    def get_cajas_pedido(self) -> List[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            self._ensure_caja_tables(cursor)
+            conn.commit()
+            cursor.execute(
+                """
+                SELECT cp.id_caja, cp.codigo_caja, cp.nombre, cp.activo,
+                       cpi.id_material, m.nombre AS nombre_material, ISNULL(m.unidad, 'UN') AS unidad,
+                       CAST(cpi.cantidad AS FLOAT) AS cantidad
+                FROM dbo.caja_pedido cp
+                LEFT JOIN dbo.caja_pedido_item cpi ON cp.id_caja = cpi.id_caja
+                LEFT JOIN dbo.material m ON cpi.id_material = m.id_material
+                WHERE cp.activo = 1
+                ORDER BY cp.nombre ASC, cpi.id_caja_item ASC
+                """
+            )
+            cajas_map: Dict[int, Dict[str, Any]] = {}
+            for r in cursor.fetchall():
+                id_caja = int(r[0])
+                if id_caja not in cajas_map:
+                    cajas_map[id_caja] = {
+                        "id_caja": id_caja,
+                        "codigo_caja": str(r[1]),
+                        "nombre": str(r[2]),
+                        "activo": bool(r[3]),
+                        "items": [],
+                    }
+                if r[4]:
+                    cajas_map[id_caja]["items"].append({
+                        "id_material": str(r[4]),
+                        "nombre_material": str(r[5] or r[4]),
+                        "unidad": str(r[6] or "UN"),
+                        "cantidad": float(r[7] or 0.0),
+                    })
+            return list(cajas_map.values())
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_caja_pedido(
+        self,
+        nombre: str,
+        items: List[Dict[str, Any]],
+        codigo_caja: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            self._ensure_caja_tables(cursor)
+            clean_nombre = nombre.strip()
+            if codigo_caja and codigo_caja.strip():
+                clean_code = codigo_caja.strip().upper()[:50]
+            else:
+                slug = "".join(ch if ch.isalnum() else "-" for ch in clean_nombre.upper()).strip("-")
+                while "--" in slug:
+                    slug = slug.replace("--", "-")
+                clean_code = slug if slug.startswith("CAJA") else f"CAJA-{slug}"
+                clean_code = clean_code[:50]
+
+            cursor.execute(
+                "SELECT id_caja, activo FROM dbo.caja_pedido WHERE codigo_caja = ?",
+                (clean_code,),
+            )
+            existing = cursor.fetchone()
+            if existing and bool(existing[1]):
+                raise ValueError(f"Ya existe una caja activa con el código '{clean_code}'")
+
+            cursor.execute(
+                """
+                MERGE dbo.material AS target
+                USING (SELECT ? AS id_material, ? AS nombre) AS source
+                ON (target.id_material = source.id_material)
+                WHEN MATCHED THEN
+                    UPDATE SET nombre = source.nombre,
+                               unidad = 'CAJA',
+                               categoria = 'CAJA_PEDIDO',
+                               tipo_empaque = 'caja',
+                               activo = 1,
+                               en_cl2 = 1
+                WHEN NOT MATCHED THEN
+                    INSERT (id_material, nombre, unidad, categoria, controla_stock, activo, tipo_empaque, en_cl2)
+                    VALUES (source.id_material, source.nombre, 'CAJA', 'CAJA_PEDIDO', 0, 1, 'caja', 1);
+                """,
+                (clean_code, clean_nombre),
+            )
+
+            if existing:
+                id_caja = int(existing[0])
+                cursor.execute(
+                    "UPDATE dbo.caja_pedido SET nombre = ?, activo = 1 WHERE id_caja = ?",
+                    (clean_nombre, id_caja),
+                )
+                cursor.execute("DELETE FROM dbo.caja_pedido_item WHERE id_caja = ?", (id_caja,))
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO dbo.caja_pedido (codigo_caja, nombre, activo)
+                    OUTPUT INSERTED.id_caja
+                    VALUES (?, ?, 1)
+                    """,
+                    (clean_code, clean_nombre),
+                )
+                id_caja = int(cursor.fetchone()[0])
+
+            merged_items: Dict[str, float] = {}
+            for it in items:
+                mat_id = str(it["id_material"]).strip()
+                cant = float(it["cantidad"])
+                if mat_id and cant > 0:
+                    merged_items[mat_id] = round(merged_items.get(mat_id, 0.0) + cant, 4)
+
+            for mat_id, cant in merged_items.items():
+                cursor.execute(
+                    "INSERT INTO dbo.caja_pedido_item (id_caja, id_material, cantidad) VALUES (?, ?, ?)",
+                    (id_caja, mat_id, cant),
+                )
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+        all_cajas = self.get_cajas_pedido()
+        for c in all_cajas:
+            if c["id_caja"] == id_caja:
+                return c
+        return {
+            "id_caja": id_caja,
+            "codigo_caja": clean_code,
+            "nombre": clean_nombre,
+            "activo": True,
+            "items": [],
+        }
+
+    def update_caja_pedido(
+        self,
+        id_caja: int,
+        nombre: str,
+        items: List[Dict[str, Any]],
+        codigo_caja: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            self._ensure_caja_tables(cursor)
+            cursor.execute("SELECT codigo_caja FROM dbo.caja_pedido WHERE id_caja = ?", (id_caja,))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Caja #{id_caja} no encontrada")
+            current_code = str(row[0])
+            clean_nombre = nombre.strip()
+
+            cursor.execute(
+                "UPDATE dbo.caja_pedido SET nombre = ?, activo = 1 WHERE id_caja = ?",
+                (clean_nombre, id_caja),
+            )
+            cursor.execute(
+                """
+                UPDATE dbo.material
+                SET nombre = ?, unidad = 'CAJA', categoria = 'CAJA_PEDIDO', tipo_empaque = 'caja', activo = 1, en_cl2 = 1
+                WHERE id_material = ?
+                """,
+                (clean_nombre, current_code),
+            )
+
+            cursor.execute("DELETE FROM dbo.caja_pedido_item WHERE id_caja = ?", (id_caja,))
+            merged_items: Dict[str, float] = {}
+            for it in items:
+                mat_id = str(it["id_material"]).strip()
+                cant = float(it["cantidad"])
+                if mat_id and cant > 0:
+                    merged_items[mat_id] = round(merged_items.get(mat_id, 0.0) + cant, 4)
+
+            for mat_id, cant in merged_items.items():
+                cursor.execute(
+                    "INSERT INTO dbo.caja_pedido_item (id_caja, id_material, cantidad) VALUES (?, ?, ?)",
+                    (id_caja, mat_id, cant),
+                )
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+        all_cajas = self.get_cajas_pedido()
+        for c in all_cajas:
+            if c["id_caja"] == id_caja:
+                return c
+        raise ValueError(f"Caja #{id_caja} no encontrada")
+
+    def delete_caja_pedido(self, id_caja: int) -> None:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            self._ensure_caja_tables(cursor)
+            cursor.execute("SELECT codigo_caja FROM dbo.caja_pedido WHERE id_caja = ?", (id_caja,))
+            row = cursor.fetchone()
+            if not row:
+                raise ValueError(f"Caja #{id_caja} no encontrada")
+            code = str(row[0])
+            cursor.execute("UPDATE dbo.caja_pedido SET activo = 0 WHERE id_caja = ?", (id_caja,))
+            cursor.execute("UPDATE dbo.material SET activo = 0 WHERE id_material = ?", (code,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+

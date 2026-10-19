@@ -41,14 +41,17 @@ import {
   ChevronDown,
   ChevronUp,
   Eye,
+  Boxes,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   createPedido,
   searchMaterialesCatalogo,
   calcularSugerenciaPedido,
+  getCajasPedido,
   type MaterialCatalogoItem,
   type CalcularSugerenciaResponse,
+  type CajaPedidoOut,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { formatSoloFechaAR, getTodayISODate, getTurnoSugeridoActual } from "../components/ui/format";
@@ -145,6 +148,13 @@ export function NewOrder() {
   const [catalogResults, setCatalogResults] = useState<MaterialCatalogoItem[]>([]);
   const [isSearchingCatalog, setIsSearchingCatalog] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [availableCajas, setAvailableCajas] = useState<CajaPedidoOut[]>([]);
+
+  useEffect(() => {
+    getCajasPedido()
+      .then((res) => setAvailableCajas(res))
+      .catch(() => setAvailableCajas([]));
+  }, []);
 
   useEffect(() => {
     if (isSectorLocked && currentUser?.sector) {
@@ -825,11 +835,49 @@ export function NewOrder() {
               )}
             </CardHeader>
             <CardContent className="p-5 space-y-4">
+              {availableCajas.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 p-2.5 bg-indigo-50/60 border border-indigo-200/80 rounded-lg">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-indigo-900 mr-1">
+                    <Boxes className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Cajas rápidas:</span>
+                  </div>
+                  {availableCajas.map((caja) => {
+                    const isAdded = alreadyAdded.has(caja.codigo_caja);
+                    return (
+                      <Button
+                        key={caja.id_caja}
+                        type="button"
+                        variant={isAdded ? "secondary" : "outline"}
+                        size="sm"
+                        disabled={isAdded}
+                        onClick={() =>
+                          handleAddFromCatalog({
+                            id_material: caja.codigo_caja,
+                            nombre: caja.nombre,
+                            unidad: "CAJA",
+                            categoria: "CAJA_PEDIDO",
+                            tipo_empaque: "caja",
+                            tamanio_lote: 1,
+                          })
+                        }
+                        className="h-7 px-2.5 text-xs gap-1.5 bg-white border-indigo-200 text-indigo-900 hover:bg-indigo-100/70"
+                      >
+                        <Plus className="w-3 h-3 text-indigo-600" />
+                        <span className="font-bold">{caja.nombre}</span>
+                        <span className="text-[10px] font-mono text-indigo-600">
+                          ({caja.items.length} PNs)
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Buscador de Catálogo */}
               <div className="relative">
                 <div className="relative">
                   <Input
-                    placeholder="Escriba código SAP o descripción para buscar material..."
+                    placeholder="Escriba código SAP, descripción o nombre de caja para buscar..."
                     value={searchValue}
                     onChange={(e) => {
                       setSearchValue(e.target.value);
@@ -872,7 +920,11 @@ export function NewOrder() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            {item.tipo_empaque === "rollo" && (item.tamanio_lote || 1) > 1 ? (
+                            {item.tipo_empaque === "caja" || item.categoria === "CAJA_PEDIDO" ? (
+                              <Badge variant="outline" className="text-[10px] bg-indigo-100 text-indigo-800 border-indigo-300 font-semibold">
+                                Caja de Pedido
+                              </Badge>
+                            ) : item.tipo_empaque === "rollo" && (item.tamanio_lote || 1) > 1 ? (
                               <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-800 border-amber-200 font-semibold">
                                 {item.bultos_por_pallet ? `${item.bultos_por_pallet} Rollos/Pal (${item.tamanio_lote} ${item.unidad})` : `Rollo (${item.tamanio_lote} ${item.unidad})`}
                               </Badge>
@@ -931,17 +983,36 @@ export function NewOrder() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {materials.map((m) => (
+                      {materials.map((m) => {
+                        const cajaInfo = availableCajas.find((c) => c.codigo_caja === m.code);
+                        return (
                         <TableRow key={m.id} className="hover:bg-slate-50/50">
                           <TableCell className="font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
                             {m.code}
                           </TableCell>
                           <TableCell className="text-xs font-medium text-slate-900">
-                            {m.name}
+                            <div>{m.name}</div>
+                            {cajaInfo && cajaInfo.items.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {cajaInfo.items.map((ci) => (
+                                  <span
+                                    key={ci.id_material}
+                                    className="inline-flex items-center px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 font-mono text-[10px]"
+                                  >
+                                    {ci.id_material}: {(ci.cantidad * (Number(m.quantity) || 1)).toLocaleString("es-AR")} {ci.unidad}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </TableCell>
 
                           <TableCell className="text-center">
-                            {m.tipo_empaque === "rollo" && (m.tamanio_lote || 1) > 1 ? (
+                            {m.tipo_empaque === "caja" || cajaInfo ? (
+                              <Badge variant="outline" className="text-[10px] bg-indigo-100 text-indigo-800 border-indigo-300 font-semibold gap-1 whitespace-nowrap">
+                                <Boxes className="w-2.5 h-2.5 text-indigo-600" />
+                                Caja ({cajaInfo ? `${cajaInfo.items.length} PNs` : "Kit"})
+                              </Badge>
+                            ) : m.tipo_empaque === "rollo" && (m.tamanio_lote || 1) > 1 ? (
                               <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-800 border-amber-200 font-semibold gap-1 whitespace-nowrap">
                                 <Layers className="w-2.5 h-2.5 text-amber-600" />
                                 {m.bultos_por_pallet ? `${m.bultos_por_pallet} Rollos / Pallet` : `Rollo (${m.tamanio_lote} ${m.unit})`}
@@ -1099,7 +1170,8 @@ export function NewOrder() {
                             </button>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>

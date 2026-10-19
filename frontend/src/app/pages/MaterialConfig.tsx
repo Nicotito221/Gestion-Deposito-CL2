@@ -44,6 +44,9 @@ import {
   Scale,
   Warehouse,
   Sparkles,
+  Plus,
+  Trash2,
+  Edit2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -52,10 +55,17 @@ import {
   getRundownSecciones,
   getReglaSugerenciaConfig,
   updateReglaSugerenciaConfig,
+  getCajasPedido,
+  createCajaPedido,
+  updateCajaPedido,
+  deleteCajaPedido,
+  searchMaterialesCatalogo,
   type MaterialConfigItem,
   type MaterialConfigListResponse,
   type RundownSeccionItem,
   type ReglaSugerenciaConfigApi,
+  type CajaPedidoOut,
+  type MaterialCatalogoItem,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
@@ -157,6 +167,150 @@ export function MaterialConfig() {
   const [reglaFactor, setReglaFactor] = useState<string>("0.65");
   const [isSavingRegla, setIsSavingRegla] = useState<boolean>(false);
 
+  const [cajasModalOpen, setCajasModalOpen] = useState<boolean>(false);
+  const [cajasList, setCajasList] = useState<CajaPedidoOut[]>([]);
+  const [loadingCajas, setLoadingCajas] = useState<boolean>(false);
+  const [editingCaja, setEditingCaja] = useState<CajaPedidoOut | null>(null);
+  const [cajaFormOpen, setCajaFormOpen] = useState<boolean>(false);
+  const [cajaNombre, setCajaNombre] = useState<string>("");
+  const [cajaCodigo, setCajaCodigo] = useState<string>("");
+  const [cajaItems, setCajaItems] = useState<
+    { id_material: string; nombre_material: string; unidad: string; cantidad: string }[]
+  >([]);
+  const [pnSearchQuery, setPnSearchQuery] = useState<string>("");
+  const [pnSearchResults, setPnSearchResults] = useState<MaterialCatalogoItem[]>([]);
+  const [searchingPn, setSearchingPn] = useState<boolean>(false);
+  const [savingCaja, setSavingCaja] = useState<boolean>(false);
+
+  const fetchCajas = useCallback(async () => {
+    setLoadingCajas(true);
+    try {
+      const list = await getCajasPedido();
+      setCajasList(list);
+    } catch {
+      toast.error("Error al cargar cajas de pedido");
+    } finally {
+      setLoadingCajas(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pnSearchQuery.trim()) {
+      setPnSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setSearchingPn(true);
+      try {
+        const res = await searchMaterialesCatalogo(pnSearchQuery.trim());
+        setPnSearchResults(res.filter((m) => m.categoria !== "CAJA_PEDIDO" && m.tipo_empaque !== "caja"));
+      } catch {
+        setPnSearchResults([]);
+      } finally {
+        setSearchingPn(false);
+      }
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [pnSearchQuery]);
+
+  const handleOpenNewCaja = () => {
+    setEditingCaja(null);
+    setCajaNombre("");
+    setCajaCodigo("");
+    setCajaItems([]);
+    setPnSearchQuery("");
+    setPnSearchResults([]);
+    setCajaFormOpen(true);
+  };
+
+  const handleOpenEditCaja = (caja: CajaPedidoOut) => {
+    setEditingCaja(caja);
+    setCajaNombre(caja.nombre);
+    setCajaCodigo(caja.codigo_caja);
+    setCajaItems(
+      caja.items.map((it) => ({
+        id_material: it.id_material,
+        nombre_material: it.nombre_material || it.id_material,
+        unidad: it.unidad || "UN",
+        cantidad: String(it.cantidad),
+      }))
+    );
+    setPnSearchQuery("");
+    setPnSearchResults([]);
+    setCajaFormOpen(true);
+  };
+
+  const handleAddPnToCaja = (mat: MaterialCatalogoItem) => {
+    if (cajaItems.some((it) => it.id_material === mat.id_material)) {
+      toast.info("El material ya está agregado a la caja");
+      return;
+    }
+    setCajaItems((prev) => [
+      ...prev,
+      {
+        id_material: mat.id_material,
+        nombre_material: mat.nombre,
+        unidad: mat.unidad || "UN",
+        cantidad: "1",
+      },
+    ]);
+    setPnSearchQuery("");
+    setPnSearchResults([]);
+  };
+
+  const handleSaveCaja = async () => {
+    if (!cajaNombre.trim()) {
+      toast.error("Ingrese el nombre de la caja");
+      return;
+    }
+    const validItems = cajaItems
+      .map((it) => ({
+        id_material: it.id_material,
+        cantidad: parseFloat(it.cantidad),
+      }))
+      .filter((it) => !isNaN(it.cantidad) && it.cantidad > 0);
+
+    if (validItems.length === 0) {
+      toast.error("Agregue al menos un PN con cantidad mayor a 0");
+      return;
+    }
+
+    setSavingCaja(true);
+    try {
+      if (editingCaja) {
+        await updateCajaPedido(editingCaja.id_caja, {
+          codigo_caja: cajaCodigo.trim() || undefined,
+          nombre: cajaNombre.trim(),
+          items: validItems,
+        });
+        toast.success(`Caja "${cajaNombre.trim()}" actualizada exitosamente`);
+      } else {
+        await createCajaPedido({
+          codigo_caja: cajaCodigo.trim() || undefined,
+          nombre: cajaNombre.trim(),
+          items: validItems,
+        });
+        toast.success(`Caja "${cajaNombre.trim()}" creada exitosamente`);
+      }
+      setCajaFormOpen(false);
+      await fetchCajas();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al guardar la caja");
+    } finally {
+      setSavingCaja(false);
+    }
+  };
+
+  const handleDeleteCaja = async (caja: CajaPedidoOut) => {
+    try {
+      await deleteCajaPedido(caja.id_caja);
+      toast.success(`Caja "${caja.nombre}" eliminada`);
+      await fetchCajas();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al eliminar la caja");
+    }
+  };
+
   const fetchReglaConfig = useCallback(async () => {
     try {
       const cfg = await getReglaSugerenciaConfig();
@@ -186,7 +340,8 @@ export function MaterialConfig() {
   useEffect(() => {
     fetchProveedores();
     fetchReglaConfig();
-  }, [fetchProveedores, fetchReglaConfig]);
+    fetchCajas();
+  }, [fetchProveedores, fetchReglaConfig, fetchCajas]);
 
   useEffect(() => {
     fetchConfigList();
@@ -308,6 +463,23 @@ export function MaterialConfig() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => {
+              setCajaFormOpen(false);
+              setCajasModalOpen(true);
+              fetchCajas();
+            }}
+            className="text-xs h-9 gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-xs"
+          >
+            <Boxes className="w-4 h-4" />
+            <span>Cajas</span>
+            {cajasList.length > 0 && (
+              <Badge className="ml-0.5 bg-indigo-800/80 text-white border-0 text-[10px] px-1.5 py-0">
+                {cajasList.length}
+              </Badge>
+            )}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -967,6 +1139,268 @@ export function MaterialConfig() {
               )}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cajasModalOpen} onOpenChange={setCajasModalOpen}>
+        <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between pr-6">
+              <div className="flex items-center gap-2">
+                <Boxes className="w-5 h-5 text-indigo-600" />
+                <span>Cajas para Pedidos</span>
+              </div>
+              {!cajaFormOpen && (
+                <Button
+                  size="sm"
+                  onClick={handleOpenNewCaja}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-8 gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Nueva Caja</span>
+                </Button>
+              )}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              Armá cajas con sets de Part Numbers (PN) y sus cantidades. En los pedidos se visualizará y confirmará por Caja, descontando internamente cada PN.
+            </DialogDescription>
+          </DialogHeader>
+
+          {cajaFormOpen ? (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">Nombre de la Caja *</Label>
+                  <Input
+                    value={cajaNombre}
+                    onChange={(e) => setCajaNombre(e.target.value)}
+                    placeholder="Ej: Caja 1"
+                    className="h-9 text-xs"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-700">
+                    Código Identificador <span className="font-normal text-slate-400">(opcional)</span>
+                  </Label>
+                  <Input
+                    value={cajaCodigo}
+                    onChange={(e) => setCajaCodigo(e.target.value.toUpperCase())}
+                    disabled={Boolean(editingCaja)}
+                    placeholder="Ej: CAJA-1 (se autogenera si queda vacío)"
+                    className="h-9 text-xs font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-slate-700">
+                  Buscar y agregar Part Numbers (PN) a la caja
+                </Label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <Input
+                    value={pnSearchQuery}
+                    onChange={(e) => setPnSearchQuery(e.target.value)}
+                    placeholder="Escribí código o nombre del PN para agregar..."
+                    className="pl-9 h-9 text-xs"
+                  />
+                  {pnSearchQuery.trim() && (
+                    <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto">
+                      {searchingPn ? (
+                        <div className="p-3 text-xs text-slate-500 text-center">Buscando materiales...</div>
+                      ) : pnSearchResults.length === 0 ? (
+                        <div className="p-3 text-xs text-slate-500 text-center">No se encontraron materiales</div>
+                      ) : (
+                        pnSearchResults.map((mat) => (
+                          <button
+                            key={mat.id_material}
+                            type="button"
+                            onClick={() => handleAddPnToCaja(mat)}
+                            className="w-full text-left px-3 py-2 text-xs hover:bg-indigo-50/70 flex items-center justify-between border-b border-slate-100 last:border-0"
+                          >
+                            <div>
+                              <span className="font-mono font-bold text-slate-900">{mat.id_material}</span>
+                              <span className="ml-2 text-slate-600">{mat.nombre}</span>
+                            </div>
+                            <Badge variant="outline" className="text-[10px] font-mono">
+                              {mat.unidad || "UN"}
+                            </Badge>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50 text-xs">
+                      <TableHead className="py-2 px-3 font-semibold">Part Number (PN)</TableHead>
+                      <TableHead className="py-2 px-3 font-semibold">Descripción</TableHead>
+                      <TableHead className="py-2 px-3 text-right font-semibold w-36">Cant. por 1 Caja</TableHead>
+                      <TableHead className="py-2 px-3 text-center font-semibold w-16"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody className="divide-y divide-slate-100 text-xs">
+                    {cajaItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-6 text-center text-slate-400">
+                          Aún no agregaste ningún PN a esta caja. Usá el buscador de arriba para agregarlos.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      cajaItems.map((item, idx) => (
+                        <TableRow key={item.id_material}>
+                          <TableCell className="py-2 px-3 font-mono font-bold text-slate-900">
+                            {item.id_material}
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-slate-600">{item.nombre_material}</TableCell>
+                          <TableCell className="py-2 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <Input
+                                type="number"
+                                min="0.01"
+                                step="any"
+                                value={item.cantidad}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCajaItems((prev) =>
+                                    prev.map((p, i) => (i === idx ? { ...p, cantidad: val } : p))
+                                  );
+                                }}
+                                className="h-8 w-24 text-right font-mono text-xs font-bold"
+                              />
+                              <span className="text-[11px] font-mono text-slate-500">{item.unidad}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2 px-3 text-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                setCajaItems((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              className="h-7 w-7 p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCajaFormOpen(false)}
+                  disabled={savingCaja}
+                >
+                  Volver al listado
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveCaja}
+                  disabled={savingCaja}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5"
+                >
+                  {savingCaja ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Guardar Caja</span>
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 py-2">
+              {loadingCajas ? (
+                <div className="py-8 text-center text-xs text-slate-500">Cargando cajas...</div>
+              ) : cajasList.length === 0 ? (
+                <div className="py-10 text-center space-y-2 border border-dashed border-slate-200 rounded-lg bg-slate-50/50">
+                  <Boxes className="w-8 h-8 text-slate-400 mx-auto" />
+                  <p className="text-xs font-medium text-slate-600">No hay cajas configuradas todavía</p>
+                  <p className="text-[11px] text-slate-400">
+                    Creá una caja para agrupar varios Part Numbers y pedirlos juntos en un solo ítem.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={handleOpenNewCaja}
+                    className="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-8 gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Crear Primera Caja</span>
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {cajasList.map((caja) => (
+                    <div
+                      key={caja.id_caja}
+                      className="p-3.5 rounded-lg border border-slate-200 bg-white hover:border-indigo-200 transition-all space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200 font-mono text-xs">
+                            {caja.codigo_caja}
+                          </Badge>
+                          <span className="font-bold text-sm text-slate-900">{caja.nombre}</span>
+                          <span className="text-xs text-slate-400">
+                            ({caja.items.length} {caja.items.length === 1 ? "PN" : "PNs"})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenEditCaja(caja)}
+                            className="h-7 px-2.5 text-xs gap-1"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Editar</span>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteCaja(caja)}
+                            className="h-7 px-2 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {caja.items.map((it) => (
+                          <Badge
+                            key={it.id_material}
+                            variant="outline"
+                            className="bg-slate-50 text-slate-700 border-slate-200 font-mono text-[11px] py-0.5 px-2"
+                          >
+                            <span className="font-bold text-slate-900">{it.id_material}</span>
+                            <span className="mx-1 text-slate-400">×</span>
+                            <span className="text-indigo-700 font-bold">
+                              {it.cantidad} {it.unidad}
+                            </span>
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

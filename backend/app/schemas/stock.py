@@ -118,3 +118,30 @@ class MaterialConfigUpdate(BaseModel):
     doh_sugerido_planta: float = Field(default=1.0, ge=0)
     unidad: Optional[str] = Field(default=None, max_length=20)
     en_cl2: Optional[bool] = None
+
+
+class CajaPedidoItemInput(BaseModel):
+    id_material: str = Field(min_length=1, max_length=50)
+    cantidad: float = Field(gt=0)
+
+
+class CajaPedidoItemOut(BaseModel):
+    id_material: str
+    nombre_material: Optional[str] = None
+    unidad: str = "UN"
+    cantidad: float
+
+
+class CajaPedidoCreate(BaseModel):
+    codigo_caja: Optional[str] = Field(default=None, max_length=50)
+    nombre: str = Field(min_length=1, max_length=150)
+    items: List[CajaPedidoItemInput] = Field(min_length=1)
+
+
+class CajaPedidoOut(BaseModel):
+    id_caja: int
+    codigo_caja: str
+    nombre: str
+    activo: bool = True
+    items: List[CajaPedidoItemOut] = []
+
