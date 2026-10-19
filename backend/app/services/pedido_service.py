@@ -129,6 +129,9 @@ class PedidoService:
             prod_map_sig = prod_map_prom_mes
 
         mat_ids = [m["id_material"] for m in materiales]
+        consumos_manuales_map = rundown_svc._repo.get_consumos_manuales(
+            mat_ids, min(today, fecha_req), max(today, fecha_sig)
+        )
         pedidos_raw_req = self._repo.get_pedidos_existentes_fecha(fecha_req, mat_ids)
         pedidos_por_mat: Dict[str, List[Dict[str, Any]]] = {}
         for p in pedidos_raw_req:
@@ -167,36 +170,45 @@ class PedidoService:
             mat_id = m["id_material"]
             stock_contado = counts_map.get(mat_id, float(m.get("stock_inicial_planta") or 0.0))
 
-            veh_prod_hoy = sum(
-                prod_map_hoy.get(p["id_producto"], 0.0) * p["factor_uso"]
-                for p in m["productos"]
-            )
-            consumo_hoy = round(
-                veh_prod_hoy * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
-                2,
-            )
+            if (mat_id, today) in consumos_manuales_map:
+                consumo_hoy = round(consumos_manuales_map[(mat_id, today)], 2)
+            else:
+                veh_prod_hoy = sum(
+                    prod_map_hoy.get(p["id_producto"], 0.0) * p["factor_uso"]
+                    for p in m["productos"]
+                )
+                consumo_hoy = round(
+                    veh_prod_hoy * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                    2,
+                )
 
-            veh_prod_req = sum(
-                prod_map_req.get(p["id_producto"], 0.0) * p["factor_uso"]
-                for p in m["productos"]
-            )
-            consumo_diario = round(
-                veh_prod_req * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
-                2,
-            )
-            if consumo_diario == 0 and consumo_hoy > 0:
-                consumo_diario = consumo_hoy
+            if (mat_id, fecha_req) in consumos_manuales_map:
+                consumo_diario = round(consumos_manuales_map[(mat_id, fecha_req)], 2)
+            else:
+                veh_prod_req = sum(
+                    prod_map_req.get(p["id_producto"], 0.0) * p["factor_uso"]
+                    for p in m["productos"]
+                )
+                consumo_diario = round(
+                    veh_prod_req * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                    2,
+                )
+                if consumo_diario == 0 and consumo_hoy > 0:
+                    consumo_diario = consumo_hoy
 
-            veh_prod_sig = sum(
-                prod_map_sig.get(p["id_producto"], 0.0) * p["factor_uso"]
-                for p in m["productos"]
-            )
-            consumo_sig = round(
-                veh_prod_sig * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
-                2,
-            )
-            if consumo_sig == 0 and consumo_diario > 0:
-                consumo_sig = consumo_diario
+            if (mat_id, fecha_sig) in consumos_manuales_map:
+                consumo_sig = round(consumos_manuales_map[(mat_id, fecha_sig)], 2)
+            else:
+                veh_prod_sig = sum(
+                    prod_map_sig.get(p["id_producto"], 0.0) * p["factor_uso"]
+                    for p in m["productos"]
+                )
+                consumo_sig = round(
+                    veh_prod_sig * m["factor_conversion"] * (1.0 + m["scrap_porcentaje"]),
+                    2,
+                )
+                if consumo_sig == 0 and consumo_diario > 0:
+                    consumo_sig = consumo_diario
 
             veh_prod_prom = sum(
                 prod_map_prom_mes.get(p["id_producto"], 0.0) * p["factor_uso"]

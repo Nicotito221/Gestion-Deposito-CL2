@@ -47,6 +47,30 @@ class RundownRepository:
                     ALTER TABLE dbo.proveedor ADD doh_sugerido_planta FLOAT NOT NULL DEFAULT 1.0;
                 END
             """)
+            cursor.execute("""
+                IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'rundown_diario')
+                BEGIN
+                    CREATE TABLE dbo.rundown_diario (
+                        id_material VARCHAR(50) NOT NULL FOREIGN KEY REFERENCES dbo.material(id_material),
+                        fecha DATE NOT NULL,
+                        stock_teorico_inicio DECIMAL(18,4) NOT NULL DEFAULT 0,
+                        conteo_real DECIMAL(18,4) NULL,
+                        desvio DECIMAL(18,4) NULL,
+                        consumo_estimado DECIMAL(18,4) NULL DEFAULT 0,
+                        consumo_real DECIMAL(18,4) NULL,
+                        entregas_recibidas DECIMAL(18,4) NULL DEFAULT 0,
+                        produccion_dia_siguiente DECIMAL(18,4) NULL DEFAULT 0,
+                        cantidad_sugerida_pedir DECIMAL(18,4) NULL DEFAULT 0,
+                        cantidad_editada_pedir DECIMAL(18,4) NULL,
+                        id_conteo INT NULL,
+                        id_pedido_generado INT NULL,
+                        semana_produccion_cargada DATE NULL,
+                        fecha_actualizacion DATETIME2 NULL DEFAULT SYSDATETIME(),
+                        id_usuario_actualizacion INT NOT NULL,
+                        CONSTRAINT PK_rundown_diario PRIMARY KEY (id_material, fecha)
+                    );
+                END
+            """)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -222,6 +246,99 @@ class RundownRepository:
             sql = f"SELECT DISTINCT fecha FROM dbo.produccion_planificada {where_sql} ORDER BY fecha"
             cursor.execute(sql, params)
             return [r[0] for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_consumos_manuales(
+        self, material_ids: List[str], fecha_desde: date, fecha_hasta: date
+    ) -> Dict[Tuple[str, date], float]:
+        if not material_ids:
+            return {}
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            placeholders = ",".join("?" for _ in material_ids)
+            sql = f"""
+                SELECT id_material, fecha, CAST(consumo_real AS FLOAT)
+                FROM dbo.rundown_diario
+                WHERE id_material IN ({placeholders})
+                  AND fecha >= ? AND fecha <= ?
+                  AND consumo_real IS NOT NULL
+            """
+            params: List[Any] = list(material_ids) + [fecha_desde, fecha_hasta]
+            cursor.execute(sql, params)
+            return {
+                (str(r[0]), r[1]): float(r[2])
+                for r in cursor.fetchall()
+                if r[0] is not None and r[1] is not None and r[2] is not None
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def upsert_consumo_diario_manual(
+        self,
+        id_material: str,
+        fecha: date,
+        cantidad: Optional[float],
+        id_usuario: Optional[int] = None,
+    ) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            user_id = id_usuario
+            if not user_id:
+                cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+                u_row = cursor.fetchone()
+                user_id = int(u_row[0]) if u_row else 1
+            else:
+                cursor.execute("SELECT 1 FROM dbo.usuario WHERE id_usuario = ?", (user_id,))
+                if not cursor.fetchone():
+                    cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
+                    u_row = cursor.fetchone()
+                    user_id = int(u_row[0]) if u_row else 1
+
+            if cantidad is None:
+                cursor.execute(
+                    """
+                    UPDATE dbo.rundown_diario
+                    SET consumo_real = NULL,
+                        fecha_actualizacion = SYSDATETIME(),
+                        id_usuario_actualizacion = ?
+                    WHERE id_material = ? AND fecha = ?
+                    """,
+                    (user_id, id_material, fecha),
+                )
+            else:
+                val = round(float(cantidad), 4)
+                cursor.execute(
+                    """
+                    MERGE dbo.rundown_diario WITH (HOLDLOCK) AS target
+                    USING (SELECT ? AS id_material, ? AS fecha, ? AS val, ? AS id_usuario) AS src
+                    ON target.id_material = src.id_material AND target.fecha = src.fecha
+                    WHEN MATCHED THEN
+                        UPDATE SET
+                            target.consumo_estimado = src.val,
+                            target.consumo_real = src.val,
+                            target.fecha_actualizacion = SYSDATETIME(),
+                            target.id_usuario_actualizacion = src.id_usuario
+                    WHEN NOT MATCHED BY TARGET THEN
+                        INSERT (
+                            id_material, fecha, stock_teorico_inicio,
+                            consumo_estimado, consumo_real,
+                            fecha_actualizacion, id_usuario_actualizacion
+                        )
+                        VALUES (
+                            src.id_material, src.fecha, 0,
+                            src.val, src.val,
+                            SYSDATETIME(), src.id_usuario
+                        );
+                    """,
+                    (id_material, fecha, val, user_id),
+                )
+            conn.commit()
+            return True
         finally:
             cursor.close()
             conn.close()

@@ -13,6 +13,7 @@ from app.schemas.rundown import (
     RundownSupplierReport,
     RundownTransitoCreate,
     RundownIngresoDiaUpdate,
+    RundownConsumoDiaUpdate,
     RundownCalendarioMesOut,
     RundownCalendarioMesSave,
     MaterialCatalogoItem,
@@ -222,6 +223,15 @@ def upsert_ingreso_dia(
 ):
     service.upsert_ingreso_dia(data)
     return {"mensaje": "Ingreso actualizado exitosamente"}
+
+
+@router.put("/consumo-dia")
+def upsert_consumo_dia(
+    data: RundownConsumoDiaUpdate,
+    service: RundownService = Depends(get_rundown_service),
+):
+    service.upsert_consumo_dia(data)
+    return {"mensaje": f"Producción/consumo de {data.id_material} para {data.fecha} actualizado correctamente"}
 
 
 @router.delete("/transito/{id_transito}")

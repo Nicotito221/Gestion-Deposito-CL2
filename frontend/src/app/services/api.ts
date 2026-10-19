@@ -1,4 +1,8 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8002";
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" && window.location.port === "5174"
+    ? `http://${window.location.hostname || "127.0.0.1"}:8002`
+    : "http://127.0.0.1:8000");
 const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
 
@@ -312,6 +316,7 @@ export interface RundownDayCell {
   dia_nombre: string;
   produccion_vehiculos: number;
   uso: number;
+  tiene_consumo_manual?: boolean;
   plan_maritimo: number;
   maritimo_po?: string | null;
   maritimo_factura?: string | null;
@@ -553,6 +558,23 @@ export async function updateRundownScrap(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al actualizar porcentaje de scrap");
+  }
+  return res.json();
+}
+
+export async function updateRundownConsumoDia(data: {
+  id_material: string;
+  fecha: string;
+  cantidad: number | null;
+}): Promise<{ mensaje: string }> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/consumo-dia`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al actualizar producción/consumo del día");
   }
   return res.json();
 }

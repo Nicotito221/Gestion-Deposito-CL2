@@ -77,6 +77,7 @@ import {
   updateRundownStockAjuste,
   deleteRundownStockAjuste,
   updateRundownScrap,
+  updateRundownConsumoDia,
   getRundownCalendarioMes,
   saveRundownCalendarioMes,
   searchMaterialesCatalogo,
@@ -681,6 +682,42 @@ export function RundownVivo() {
       toast.error(msg);
     } finally {
       setIsSavingTransito(false);
+    }
+  };
+
+  const [editingProdCell, setEditingProdCell] = useState<{
+    idMaterial: string;
+    fecha: string;
+    value: string;
+  } | null>(null);
+  const [savingProdCell, setSavingProdCell] = useState(false);
+
+  const handleSaveProdCell = async (idMaterial: string, fecha: string, newValStr: string) => {
+    setEditingProdCell(null);
+    const trimmed = newValStr.trim();
+    const numVal = trimmed === "" ? null : Number(trimmed);
+    if (numVal !== null && (isNaN(numVal) || numVal < 0)) {
+      toast.error("Ingrese una cantidad válida mayor o igual a 0");
+      return;
+    }
+
+    setSavingProdCell(true);
+    try {
+      await updateRundownConsumoDia({
+        id_material: idMaterial,
+        fecha,
+        cantidad: numVal,
+      });
+      toast.success(
+        numVal === null
+          ? `Producción restaurada al cálculo automático (${fecha})`
+          : `Producción manual actualizada para ${fecha}`
+      );
+      await fetchRundown(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al actualizar producción del día");
+    } finally {
+      setSavingProdCell(false);
     }
   };
 
@@ -2100,11 +2137,74 @@ export function RundownVivo() {
                             <span className="w-2 h-2 rounded-full bg-slate-300" />
                             <span>Producción</span>
                           </td>
-                          {mat.dias.map((d) => (
-                            <td key={d.fecha} className="px-2 py-1.5 text-center font-mono text-slate-700 border-r border-slate-100">
-                              {d.produccion_vehiculos > 0 ? d.produccion_vehiculos.toLocaleString() : "—"}
-                            </td>
-                          ))}
+                          {mat.dias.map((d) => {
+                            const isEditingProd =
+                              editingProdCell?.idMaterial === mat.id_material &&
+                              editingProdCell?.fecha === d.fecha;
+                            return (
+                              <td
+                                key={d.fecha}
+                                className={`px-1 py-1 text-center font-mono border-r border-slate-100 cursor-pointer transition-colors ${
+                                  d.tiene_consumo_manual
+                                    ? "bg-amber-50/70 hover:bg-amber-100/70 text-amber-900 font-bold"
+                                    : "text-slate-700 hover:bg-indigo-50/60"
+                                }`}
+                                title={
+                                  d.tiene_consumo_manual
+                                    ? "Producción/consumo editado manualmente (sin scrap). Clic para editar o vaciar para restaurar automático."
+                                    : "Clic para editar producción/consumo real del día"
+                                }
+                                onClick={() => {
+                                  if (!isEditingProd && !savingProdCell) {
+                                    setEditingProdCell({
+                                      idMaterial: mat.id_material,
+                                      fecha: d.fecha,
+                                      value: String(d.produccion_vehiculos || 0),
+                                    });
+                                  }
+                                }}
+                              >
+                                {isEditingProd ? (
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    autoFocus
+                                    value={editingProdCell.value}
+                                    onChange={(e) =>
+                                      setEditingProdCell({
+                                        ...editingProdCell,
+                                        value: e.target.value,
+                                      })
+                                    }
+                                    onBlur={() =>
+                                      handleSaveProdCell(
+                                        mat.id_material,
+                                        d.fecha,
+                                        editingProdCell.value
+                                      )
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        handleSaveProdCell(
+                                          mat.id_material,
+                                          d.fecha,
+                                          editingProdCell.value
+                                        );
+                                      } else if (e.key === "Escape") {
+                                        setEditingProdCell(null);
+                                      }
+                                    }}
+                                    className="w-16 text-center text-xs font-mono font-bold border border-indigo-400 rounded px-1 py-0.5 bg-white text-indigo-900 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                  />
+                                ) : d.produccion_vehiculos > 0 || d.tiene_consumo_manual ? (
+                                  d.produccion_vehiculos.toLocaleString()
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
 
                         <tr className="hover:bg-slate-50/50 bg-slate-50/30">
@@ -2113,8 +2213,18 @@ export function RundownVivo() {
                             <span>Uso Proyectado</span>
                           </td>
                           {mat.dias.map((d) => (
-                            <td key={d.fecha} className="px-2 py-1.5 text-center font-mono font-semibold text-red-600 border-r border-slate-100">
-                              {d.uso > 0 ? d.uso.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : "—"}
+                            <td
+                              key={d.fecha}
+                              className={`px-2 py-1.5 text-center font-mono font-semibold text-red-600 border-r border-slate-100 ${
+                                d.tiene_consumo_manual ? "bg-amber-50/40" : ""
+                              }`}
+                            >
+                              {d.uso > 0 || d.tiene_consumo_manual
+                                ? d.uso.toLocaleString(undefined, {
+                                    minimumFractionDigits: 1,
+                                    maximumFractionDigits: 1,
+                                  })
+                                : "—"}
                             </td>
                           ))}
                         </tr>
