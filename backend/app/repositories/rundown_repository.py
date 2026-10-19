@@ -283,26 +283,64 @@ class RundownRepository:
                     return {}
                 placeholders = ",".join("?" for _ in id_proveedor)
                 where_clause = f"rpm.id_proveedor IN ({placeholders})"
-                query_params = (*id_proveedor, fecha_desde, fecha_hasta)
+                prov_params: Tuple[Any, ...] = tuple(id_proveedor)
             else:
                 where_clause = "rpm.id_proveedor = ?"
-                query_params = (id_proveedor, fecha_desde, fecha_hasta)
+                prov_params = (id_proveedor,)
 
-            cursor.execute(
-                f"""
-                SELECT mr.id_material, CAST(r.fecha_entrega AS DATE), CAST(SUM(mr.cantidad) AS FLOAT),
-                       MAX(r.id_remito), MAX(r.id_pedido)
-                FROM dbo.material_remito mr
-                INNER JOIN dbo.remito r ON mr.id_remito = r.id_remito
-                INNER JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
-                WHERE {where_clause}
-                  AND r.estado = 'emitido'
-                  AND CAST(r.fecha_entrega AS DATE) >= ?
-                  AND CAST(r.fecha_entrega AS DATE) <= ?
-                GROUP BY mr.id_material, CAST(r.fecha_entrega AS DATE)
-                """,
-                query_params,
-            )
+            cursor.execute("SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'caja_pedido'")
+            has_cajas = bool(cursor.fetchone())
+
+            if has_cajas:
+                sql = f"""
+                    SELECT src.id_material, src.fecha_ent, CAST(SUM(src.cantidad) AS FLOAT),
+                           MAX(src.id_remito), MAX(src.id_pedido)
+                    FROM (
+                        SELECT mr.id_material AS id_material,
+                               CAST(r.fecha_entrega AS DATE) AS fecha_ent,
+                               CAST(mr.cantidad AS FLOAT) AS cantidad,
+                               r.id_remito,
+                               r.id_pedido
+                        FROM dbo.material_remito mr
+                        INNER JOIN dbo.remito r ON mr.id_remito = r.id_remito
+                        WHERE r.estado = 'emitido'
+                          AND CAST(r.fecha_entrega AS DATE) >= ?
+                          AND CAST(r.fecha_entrega AS DATE) <= ?
+                        UNION ALL
+                        SELECT cpi.id_material AS id_material,
+                               CAST(r.fecha_entrega AS DATE) AS fecha_ent,
+                               CAST(mr.cantidad * cpi.cantidad AS FLOAT) AS cantidad,
+                               r.id_remito,
+                               r.id_pedido
+                        FROM dbo.material_remito mr
+                        INNER JOIN dbo.remito r ON mr.id_remito = r.id_remito
+                        INNER JOIN dbo.caja_pedido cp ON mr.id_material = cp.codigo_caja AND cp.activo = 1
+                        INNER JOIN dbo.caja_pedido_item cpi ON cp.id_caja = cpi.id_caja
+                        WHERE r.estado = 'emitido'
+                          AND CAST(r.fecha_entrega AS DATE) >= ?
+                          AND CAST(r.fecha_entrega AS DATE) <= ?
+                    ) src
+                    INNER JOIN dbo.rundown_parametro_material rpm ON src.id_material = rpm.id_material AND rpm.activo = 1
+                    WHERE {where_clause}
+                    GROUP BY src.id_material, src.fecha_ent
+                """
+                query_params = (fecha_desde, fecha_hasta, fecha_desde, fecha_hasta, *prov_params)
+            else:
+                sql = f"""
+                    SELECT mr.id_material, CAST(r.fecha_entrega AS DATE), CAST(SUM(mr.cantidad) AS FLOAT),
+                           MAX(r.id_remito), MAX(r.id_pedido)
+                    FROM dbo.material_remito mr
+                    INNER JOIN dbo.remito r ON mr.id_remito = r.id_remito
+                    INNER JOIN dbo.rundown_parametro_material rpm ON mr.id_material = rpm.id_material AND rpm.activo = 1
+                    WHERE {where_clause}
+                      AND r.estado = 'emitido'
+                      AND CAST(r.fecha_entrega AS DATE) >= ?
+                      AND CAST(r.fecha_entrega AS DATE) <= ?
+                    GROUP BY mr.id_material, CAST(r.fecha_entrega AS DATE)
+                """
+                query_params = (*prov_params, fecha_desde, fecha_hasta)
+
+            cursor.execute(sql, query_params)
             rows = cursor.fetchall()
             return {
                 (str(r[0]), r[1]): {
