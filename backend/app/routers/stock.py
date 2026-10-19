@@ -60,7 +60,7 @@ def get_stock_deposito(
         raise HTTPException(status_code=500, detail=f"Error al obtener stock: {e}")
 
 
-@router.put("/deposito/{id_material}", response_model=StockAjusteResponse)
+@router.put("/deposito/{id_material:path}", response_model=StockAjusteResponse)
 def ajustar_stock_deposito(
     id_material: str,
     data: StockAjusteInput,

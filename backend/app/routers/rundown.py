@@ -91,7 +91,7 @@ def search_materiales_catalogo(
     return service.search_materiales_catalogo(q)
 
 
-@router.get("/materiales-catalogo/{id_material}", response_model=MaterialCatalogoItem)
+@router.get("/materiales-catalogo/{id_material:path}", response_model=MaterialCatalogoItem)
 def get_material_catalogo(
     id_material: str,
     service: RundownService = Depends(get_rundown_service),
