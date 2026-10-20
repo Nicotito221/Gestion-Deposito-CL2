@@ -2144,10 +2144,7 @@ class RundownRepository:
             conn.close()
 
     def get_sd_mappings_by_seccion(self, id_seccion: int) -> Dict[str, Dict[str, str]]:
-        from app.core.set_componente_seed import ensure_set_componente_seeded
-
         conn: pyodbc.Connection = self._get_connection()
-        ensure_set_componente_seeded(conn)
         cursor = conn.cursor()
         try:
             cursor.execute(

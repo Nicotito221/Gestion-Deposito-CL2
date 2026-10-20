@@ -58,6 +58,7 @@ import {
   createSetComponente,
   updateSetComponente,
   toggleSetComponente,
+  importSetComponentesFile,
   uploadBomFile,
   getSupplySummary,
   consolidateSupply,
@@ -509,6 +510,27 @@ export function SupplyOrderBom() {
       toast.error(msg);
     } finally {
       setIsSavingRelation(false);
+    }
+  };
+
+  const setsFileInputRef = useRef<HTMLInputElement>(null);
+  const [isImportingSets, setIsImportingSets] = useState<boolean>(false);
+
+  const handleImportSetsFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsImportingSets(true);
+    try {
+      const res = await importSetComponentesFile(file, false);
+      toast.success(res.mensaje);
+      const relRes = await getSetComponentes({ limit: 1000 });
+      setRelations(relRes.items);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Error al importar archivo de relaciones";
+      toast.error(msg);
+    } finally {
+      setIsImportingSets(false);
+      if (setsFileInputRef.current) setsFileInputRef.current.value = "";
     }
   };
 
@@ -1264,10 +1286,28 @@ export function SupplyOrderBom() {
                 </p>
               </div>
               {activeBomSubTab === "sets" && (
-                <Button onClick={openNewRelationDialog} className="flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  Nueva Relación
-                </Button>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={setsFileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.xlsm,.csv,.tsv,.txt"
+                    className="hidden"
+                    onChange={handleImportSetsFile}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => setsFileInputRef.current?.click()}
+                    disabled={isImportingSets}
+                    className="flex items-center gap-2"
+                  >
+                    <Upload className={`w-4 h-4 ${isImportingSets ? "animate-spin" : ""}`} />
+                    Importar Excel / CSV
+                  </Button>
+                  <Button onClick={openNewRelationDialog} className="flex items-center gap-2">
+                    <Plus className="w-4 h-4" />
+                    Nueva Relación
+                  </Button>
+                </div>
               )}
             </CardHeader>
             <CardContent>

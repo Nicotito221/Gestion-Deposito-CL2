@@ -190,6 +190,26 @@ export async function toggleSetComponente(
   return res.json();
 }
 
+export async function importSetComponentesFile(
+  file: File,
+  reemplazar: boolean = false
+): Promise<{ mensaje: string; total_importados: number }> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(
+    `${API_BASE_URL}/api/bom/relaciones/importar?reemplazar=${reemplazar ? "true" : "false"}`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al importar relaciones de sets/componentes");
+  }
+  return res.json();
+}
+
 export async function uploadBomFile(file: File): Promise<{
   id_version: number;
   nombre_archivo: string;

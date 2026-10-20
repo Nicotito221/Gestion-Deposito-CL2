@@ -2,7 +2,6 @@ from typing import List, Optional, Tuple
 import pyodbc
 
 from app.core.config import get_db_connection
-from app.core.set_componente_seed import ensure_set_componente_seeded
 from app.schemas.bom import (
     BomEstructuraItemOut,
     BomEstructuraResponse,
@@ -16,17 +15,6 @@ from app.schemas.bom import (
 class BomRepository:
     def __init__(self, connection_factory=get_db_connection) -> None:
         self._get_connection = connection_factory
-        self._ensure_seeded()
-
-    def _ensure_seeded(self) -> None:
-        try:
-            conn = self._get_connection()
-        except Exception:
-            return
-        try:
-            ensure_set_componente_seeded(conn)
-        finally:
-            conn.close()
 
     def get_versions(self) -> List[BomVersionOut]:
         conn: pyodbc.Connection = self._get_connection()
@@ -63,7 +51,6 @@ class BomRepository:
         offset: int = 0,
     ) -> Tuple[List[SetComponenteOut], int]:
         conn: pyodbc.Connection = self._get_connection()
-        ensure_set_componente_seeded(conn)
         cursor = conn.cursor()
         try:
             where_clauses: List[str] = []
@@ -285,6 +272,61 @@ class BomRepository:
                 return None
             conn.commit()
             return bool(row[0])
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+    def bulk_import_set_componentes(
+        self, rows: List[Tuple[str, str, str, str, str, float]], replace_all: bool = False
+    ) -> int:
+        if not rows:
+            return 0
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            if replace_all:
+                cursor.execute("DELETE FROM dbo.set_componente")
+                cursor.fast_executemany = True
+                cursor.executemany(
+                    """
+                    INSERT INTO dbo.set_componente (
+                        sector, sd, codigo_tasa, codigo_sap_padre, id_material_hijo, cantidad, activo
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, 1)
+                    """,
+                    rows,
+                )
+                conn.commit()
+                return len(rows)
+
+            count = 0
+            for sector, sd, tasa, sap_padre, hijo, cant in rows:
+                cursor.execute(
+                    """
+                    MERGE dbo.set_componente AS target
+                    USING (
+                        SELECT ? AS sector, ? AS sd, ? AS codigo_tasa, ? AS codigo_sap_padre, ? AS id_material_hijo, ? AS cantidad
+                    ) AS source
+                    ON (
+                        target.codigo_tasa = source.codigo_tasa
+                        AND target.codigo_sap_padre = source.codigo_sap_padre
+                        AND target.id_material_hijo = source.id_material_hijo
+                        AND ISNULL(target.sd, '') = ISNULL(source.sd, '')
+                    )
+                    WHEN MATCHED THEN
+                        UPDATE SET sector = source.sector, cantidad = source.cantidad, activo = 1
+                    WHEN NOT MATCHED THEN
+                        INSERT (sector, sd, codigo_tasa, codigo_sap_padre, id_material_hijo, cantidad, activo)
+                        VALUES (source.sector, source.sd, source.codigo_tasa, source.codigo_sap_padre, source.id_material_hijo, source.cantidad, 1);
+                    """,
+                    (sector, sd, tasa, sap_padre, hijo, cant),
+                )
+                count += 1
+            conn.commit()
+            return count
         except Exception:
             conn.rollback()
             raise
