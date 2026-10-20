@@ -40,11 +40,12 @@ class PedidoService:
 
         from app.services.rundown_service import RundownService
         rundown_svc = RundownService()
-        ref_date = min(today, fecha_req) - timedelta(days=1)
-        planta_stocks = rundown_svc.get_planta_stocks_map(ref_date)
-        for mat_id, st in planta_stocks.items():
-            counts_map[mat_id] = float(st)
-        fecha_conteo: date = request.fecha_conteo or ref_date
+        ref_date = min(today, fecha_req)
+        cierre_ayer_stocks = rundown_svc.get_cierre_ayer_stocks_map(ref_date)
+        for mat_id, st_dict in cierre_ayer_stocks.items():
+            counts_map[mat_id] = float(st_dict["stock_planta"])
+        cl2_stocks_map = {mat_id: float(st_dict["stock_cl2"]) for mat_id, st_dict in cierre_ayer_stocks.items()}
+        fecha_conteo: date = request.fecha_conteo or yesterday
 
         hora_conteo_dt: Optional[datetime] = None
 
@@ -65,8 +66,7 @@ class PedidoService:
                         pass
                 conteo_mat_ids = []
                 for it in conteo.get("items", []):
-                    if fecha_conteo >= ref_date:
-                        counts_map[it["id_material"]] = float(it["stock_contado"])
+                    counts_map[it["id_material"]] = float(it["stock_contado"])
                     conteo_mat_ids.append(it["id_material"])
                 if request.solo_conteo and conteo_mat_ids:
                     ids_to_query = conteo_mat_ids
@@ -85,7 +85,7 @@ class PedidoService:
                     try:
                         raw_f = conteo["fecha_impacto"]
                         f_imp = raw_f if isinstance(raw_f, date) else datetime.strptime(str(raw_f)[:10], "%Y-%m-%d").date()
-                        if f_imp >= ref_date:
+                        if f_imp >= yesterday:
                             fecha_conteo = f_imp
                             raw_fh = conteo.get("fecha_finalizacion") or conteo.get("fecha_inicio")
                             if isinstance(raw_fh, datetime):
@@ -360,7 +360,7 @@ class PedidoService:
                     id_proveedor=m["id_proveedor"],
                     nombre_proveedor=m["nombre_proveedor"],
                     stock_contado=stock_contado,
-                    stock_cl2=float(m.get("stock_cl2") or 0.0),
+                    stock_cl2=cl2_stocks_map.get(mat_id, float(m.get("stock_cl2") or 0.0)),
                     en_cl2=bool(m.get("en_cl2", True)),
                     consumo_diario=round(consumo_evaluar_hoy, 2) if fecha_req <= today else consumo_diario,
                     consumo_sig=consumo_sig,
