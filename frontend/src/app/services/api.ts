@@ -354,6 +354,8 @@ export interface RundownDayCell {
   local_estado?: "planificado" | "confirmado" | null;
   ajuste_scrap: number;
   stock_final: number;
+  stock_planta?: number;
+  stock_cl2?: number;
   dias_cobertura: number;
   alerta_quiebre: boolean;
   tiene_ajuste?: boolean;

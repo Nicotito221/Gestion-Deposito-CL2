@@ -990,21 +990,20 @@ export function RundownVivo() {
     const isDepPlanta = Boolean(activeSupplier?.deposito_en_planta);
     const provId = mat.id_proveedor || report.id_proveedor;
 
-    const cl2Actual = Math.max(
-      0,
-      Math.round(mat.stock_cl2_actual ?? Math.max(0, mat.stock_inicial_total - mat.stock_inicial_planta))
-    );
     let initPlanta = 0;
     let initCl2 = 0;
     if (isDepPlanta) {
       initPlanta = initialVal;
       initCl2 = 0;
+    } else if (dayCell && dayCell.stock_planta !== undefined && dayCell.stock_cl2 !== undefined) {
+      initPlanta = Math.round(dayCell.stock_planta);
+      initCl2 = Math.round(dayCell.stock_cl2);
     } else if (alcance === "planta") {
       initPlanta = initialVal;
-      initCl2 = cl2Actual;
+      initCl2 = Math.max(0, Math.round(mat.stock_cl2_actual ?? 0));
     } else {
-      initCl2 = Math.min(initialVal, cl2Actual);
-      initPlanta = Math.max(0, initialVal - initCl2);
+      initCl2 = Math.max(0, Math.round(mat.stock_cl2_actual ?? 0));
+      initPlanta = Math.round(initialVal - initCl2);
     }
 
     setStockForm({
@@ -1013,7 +1012,7 @@ export function RundownVivo() {
       id_material: mat.id_material,
       fecha: fechaToUse,
       material_label: `${mat.id_material} — ${mat.descripcion}`,
-      stock_inicial: initialVal,
+      stock_inicial: alcance === "planta" ? initPlanta : Math.round(initPlanta + initCl2),
       stock_planta: initPlanta,
       stock_cl2: initCl2,
       es_deposito_planta: isDepPlanta,
@@ -3773,12 +3772,13 @@ export function RundownVivo() {
                     onValueChange={(val) => {
                       const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
                       const dayCell = mat?.dias.find((d) => d.fecha === val);
-                      const valForDay = dayCell
-                        ? Math.round(dayCell.stock_final)
-                        : Math.round(stockForm.stock_inicial);
-                      const cl2Actual = Math.max(0, Math.round(mat?.stock_cl2_actual ?? stockForm.stock_cl2));
-                      const curCl2 = Math.min(valForDay, cl2Actual);
-                      const curPlanta = Math.max(0, valForDay - curCl2);
+                      const curPlanta = dayCell?.stock_planta !== undefined
+                        ? Math.round(dayCell.stock_planta)
+                        : Math.round(stockForm.stock_planta);
+                      const curCl2 = dayCell?.stock_cl2 !== undefined
+                        ? Math.round(dayCell.stock_cl2)
+                        : Math.round(stockForm.stock_cl2);
+                      const valForDay = Math.round(curPlanta + curCl2);
                       setStockForm({
                         ...stockForm,
                         fecha: val,
@@ -3812,10 +3812,9 @@ export function RundownVivo() {
                     <Input
                       type="number"
                       step="1"
-                      min="0"
                       value={Math.round(stockForm.stock_planta)}
                       onChange={(e) => {
-                        const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        const val = parseInt(e.target.value, 10) || 0;
                         setStockForm({
                           ...stockForm,
                           stock_planta: val,
@@ -3862,13 +3861,14 @@ export function RundownVivo() {
                     onValueChange={(val) => {
                       const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
                       const dayCell = mat?.dias.find((d) => d.fecha === val);
-                      const valForDay = dayCell
-                        ? Math.round(dayCell.stock_final)
-                        : Math.round(stockForm.stock_inicial);
+                      const curPlanta = dayCell?.stock_planta !== undefined
+                        ? Math.round(dayCell.stock_planta)
+                        : (dayCell ? Math.round(dayCell.stock_final) : Math.round(stockForm.stock_inicial));
                       setStockForm({
                         ...stockForm,
                         fecha: val,
-                        stock_inicial: valForDay,
+                        stock_inicial: curPlanta,
+                        stock_planta: curPlanta,
                       });
                     }}
                   >

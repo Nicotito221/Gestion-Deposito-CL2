@@ -237,10 +237,10 @@ class RundownService:
             s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw)))
             if es_dep_en_planta:
                 s_total = s_planta
-                s_inicial_periodo = s_planta
-            else:
-                s_inicial_periodo = s_planta if alcance == "planta" else s_total
-            stock_corriente = s_inicial_periodo
+            s_inicial_periodo = s_planta if alcance == "planta" else s_total
+
+            stock_corriente_planta = s_planta
+            stock_corriente_total = s_total
             cells: List[RundownDayCell] = []
             total_uso = 0.0
             total_ingresos = 0.0
@@ -248,27 +248,6 @@ class RundownService:
             for d in dates_timeline:
                 planta_key = (param["id_parametro"], d, "planta")
                 total_key = (param["id_parametro"], d, "total")
-
-                tiene_ajuste = False
-                stock_real = 0.0
-
-                if alcance == "planta":
-                    if planta_key in ajustes_map:
-                        tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[planta_key]))
-                    elif total_key in ajustes_map:
-                        tiene_ajuste = True
-                        if es_dep_en_planta:
-                            stock_real = float(round(ajustes_map[total_key]))
-                        else:
-                            stock_real = float(round(max(0.0, ajustes_map[total_key] - stock_cl2)))
-                else:
-                    if total_key in ajustes_map:
-                        tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[total_key]))
-                    elif es_dep_en_planta and planta_key in ajustes_map:
-                        tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[planta_key]))
 
                 manual_key = (param["id_material"], d)
                 if manual_key in consumos_manuales_map:
@@ -289,27 +268,49 @@ class RundownService:
                     )
 
                 ped_info = pedidos_planta_map.get((param["id_material"], d))
-                if alcance == "planta" and not es_dep_en_planta:
-                    maritimo = 0.0
-                    aereo = 0.0
-                    local = ped_info["cantidad"] if ped_info else 0.0
-                else:
-                    maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
-                    aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
-                    local = transito_map.get((param["id_material"], d, "Local"), 0.0)
-                    if alcance == "planta" and ped_info:
-                        local += ped_info["cantidad"]
+                entregas_planta = ped_info["cantidad"] if ped_info else 0.0
+
+                maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
+                aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
+                local_ext = transito_map.get((param["id_material"], d, "Local"), 0.0)
                 scrap = transito_map.get((param["id_material"], d, "AjusteScrap"), 0.0)
+                arribos_externos = maritimo + aereo + local_ext
 
-                ingresos_dia = maritimo + aereo + local
-                stock_teorico = float(round(stock_corriente - uso + ingresos_dia - scrap))
+                stk_teorico_planta = float(round(stock_corriente_planta - uso + entregas_planta))
+                stk_teorico_total = float(round(stock_corriente_total - uso + arribos_externos - scrap))
 
-                desvio = 0.0
-                if tiene_ajuste:
-                    desvio = float(round(stock_real - stock_teorico))
-                    stock_corriente = stock_real
+                tiene_ajuste_pl = planta_key in ajustes_map
+                tiene_ajuste_tot = total_key in ajustes_map
+
+                if tiene_ajuste_pl:
+                    stock_corriente_planta = float(round(ajustes_map[planta_key]))
                 else:
-                    stock_corriente = stock_teorico
+                    stock_corriente_planta = stk_teorico_planta
+
+                if es_dep_en_planta:
+                    stock_corriente_total = stock_corriente_planta
+                    stock_dia_cl2 = 0.0
+                    tiene_ajuste = tiene_ajuste_pl or tiene_ajuste_tot
+                    desvio = float(round(stock_corriente_planta - stk_teorico_planta)) if tiene_ajuste else 0.0
+                else:
+                    if tiene_ajuste_tot:
+                        stock_corriente_total = float(round(ajustes_map[total_key]))
+                    elif tiene_ajuste_pl:
+                        cl2_previo = max(0.0, stk_teorico_total - stk_teorico_planta)
+                        stock_corriente_total = float(round(stock_corriente_planta + cl2_previo))
+                    else:
+                        stock_corriente_total = stk_teorico_total
+
+                    stock_dia_cl2 = max(0.0, stock_corriente_total - stock_corriente_planta)
+
+                    if alcance == "planta":
+                        tiene_ajuste = tiene_ajuste_pl
+                        desvio = float(round(stock_corriente_planta - stk_teorico_planta)) if tiene_ajuste else 0.0
+                    else:
+                        tiene_ajuste = tiene_ajuste_tot or tiene_ajuste_pl
+                        desvio = float(round(stock_corriente_total - stk_teorico_total)) if tiene_ajuste else 0.0
+
+                stock_corriente = stock_corriente_planta if alcance == "planta" else stock_corriente_total
 
                 if uso > 0:
                     dias_cobertura = round(stock_corriente / uso, 2)
@@ -344,12 +345,22 @@ class RundownService:
                     local_po = f"Ped #{ped_info['id_pedido']}" if (ped_info and ped_info.get("id_pedido")) else None
                     local_factura = ped_info.get("id_remito") if ped_info else None
                     local_obs = f"Remito {ped_info['id_remito']}" if (ped_info and ped_info.get("id_remito")) else None
-                    local_estado = "confirmado" if local > 0 else None
+                    local_estado = "confirmado" if entregas_planta > 0 else None
+                    maritimo_mostrar = 0.0
+                    aereo_mostrar = 0.0
+                    local_mostrar = entregas_planta
                 else:
                     local_po = l_meta.get("po_numero")
                     local_factura = l_meta.get("factura_numero")
                     local_obs = l_meta.get("observacion")
                     local_estado = l_meta.get("estado")
+                    maritimo_mostrar = maritimo
+                    aereo_mostrar = aereo
+                    local_mostrar = local_ext
+                    if alcance == "planta" and ped_info:
+                        local_mostrar += ped_info["cantidad"]
+
+                ingresos_dia = local_mostrar if (alcance == "planta" and not es_dep_en_planta) else (maritimo + aereo + local_ext)
 
                 cells.append(
                     RundownDayCell(
@@ -358,23 +369,25 @@ class RundownService:
                         produccion_vehiculos=round(veh_prod, 2) if tiene_consumo_manual else round(veh_prod, 1),
                         uso=uso,
                         tiene_consumo_manual=tiene_consumo_manual,
-                        plan_maritimo=maritimo,
+                        plan_maritimo=maritimo_mostrar,
                         maritimo_po=m_meta.get("po_numero"),
                         maritimo_factura=m_meta.get("factura_numero"),
                         maritimo_obs=m_meta.get("observacion"),
                         maritimo_estado=m_meta.get("estado"),
-                        pedidos_aereos=aereo,
+                        pedidos_aereos=aereo_mostrar,
                         aereo_po=a_meta.get("po_numero"),
                         aereo_factura=a_meta.get("factura_numero"),
                         aereo_obs=a_meta.get("observacion"),
                         aereo_estado=a_meta.get("estado"),
-                        entregas_locales=local,
+                        entregas_locales=local_mostrar,
                         local_po=local_po,
                         local_factura=local_factura,
                         local_obs=local_obs,
                         local_estado=local_estado,
                         ajuste_scrap=scrap,
                         stock_final=stock_corriente,
+                        stock_planta=float(round(stock_corriente_planta)),
+                        stock_cl2=float(round(stock_dia_cl2)),
                         dias_cobertura=dias_cobertura,
                         alerta_quiebre=alerta_quiebre,
                         tiene_ajuste=tiene_ajuste,

@@ -95,6 +95,8 @@ class RundownDayCell(BaseModel):
     local_estado: Optional[str] = None
     ajuste_scrap: float
     stock_final: float
+    stock_planta: float = 0.0
+    stock_cl2: float = 0.0
     dias_cobertura: float
     alerta_quiebre: bool
     tiene_ajuste: bool = False
