@@ -266,9 +266,9 @@ class RundownService:
                     if total_key in ajustes_map:
                         tiene_ajuste = True
                         stock_real = float(round(ajustes_map[total_key]))
-                    elif planta_key in ajustes_map:
+                    elif es_dep_en_planta and planta_key in ajustes_map:
                         tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[planta_key] if es_dep_en_planta else (ajustes_map[planta_key] + stock_cl2)))
+                        stock_real = float(round(ajustes_map[planta_key]))
 
                 manual_key = (param["id_material"], d)
                 if manual_key in consumos_manuales_map:
@@ -795,8 +795,12 @@ class RundownService:
         for (adj_pid, adj_d, adj_tipo), val in prev_ajustes.items():
             if adj_pid != pid or adj_d > end_prev:
                 continue
-            if adj_tipo in ("planta", "total"):
-                applicable_adj_dates.append(adj_d)
+            if alcance == "planta":
+                if adj_tipo == "planta" or (dep_planta and adj_tipo == "total"):
+                    applicable_adj_dates.append(adj_d)
+            else:
+                if adj_tipo == "total" or (dep_planta and adj_tipo == "planta"):
+                    applicable_adj_dates.append(adj_d)
 
         if applicable_adj_dates:
             d_anchor = max(applicable_adj_dates)
@@ -814,8 +818,8 @@ class RundownService:
             else:
                 if tot_key in prev_ajustes:
                     s_val = float(round(prev_ajustes[tot_key]))
-                elif pl_key in prev_ajustes:
-                    s_val = float(round(prev_ajustes[pl_key] if dep_planta else (prev_ajustes[pl_key] + stock_cl2_val)))
+                elif dep_planta and pl_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[pl_key]))
                 else:
                     s_val = s_base
 

@@ -785,8 +785,26 @@ class RundownRepository:
                 valores_a_guardar = [("planta", target_planta), ("total", target_total)]
             elif tipo_stock == "planta" or (stock_planta is not None and stock_cl2 is None):
                 target_planta = float(stock_planta if stock_planta is not None else stock_ajustado)
-                target_total = target_planta + ant_cl2
-                valores_a_guardar = [("planta", target_planta), ("total", target_total)]
+                cursor.execute(
+                    """
+                    SELECT 
+                        MAX(CASE WHEN tipo_stock = 'total' THEN stock_ajustado END),
+                        MAX(CASE WHEN tipo_stock = 'planta' THEN stock_ajustado END)
+                    FROM dbo.rundown_stock_ajuste
+                    WHERE id_parametro = ? AND fecha = ?
+                    """,
+                    (id_parametro, fecha),
+                )
+                existing_row = cursor.fetchone()
+                existing_total = float(existing_row[0]) if (existing_row and existing_row[0] is not None) else None
+                existing_planta = float(existing_row[1]) if (existing_row and existing_row[1] is not None) else None
+
+                if existing_total is not None:
+                    date_cl2 = max(0.0, existing_total - (existing_planta if existing_planta is not None else ant_planta))
+                    target_total = target_planta + date_cl2
+                    valores_a_guardar = [("planta", target_planta), ("total", target_total)]
+                else:
+                    valores_a_guardar = [("planta", target_planta)]
             elif stock_planta is not None or stock_cl2 is not None:
                 target_planta = float(stock_planta if stock_planta is not None else ant_planta)
                 target_cl2 = float(stock_cl2 if stock_cl2 is not None else ant_cl2)

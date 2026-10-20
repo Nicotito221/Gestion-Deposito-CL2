@@ -346,14 +346,6 @@ class ConteoRepository:
                 )
 
                 cursor.execute(
-                    "SELECT ISNULL(stock_actual, 0.0) FROM dbo.stock_deposito WHERE id_material = ?",
-                    (mat_id,),
-                )
-                sd_row = cursor.fetchone()
-                cl2_actual = float(sd_row[0]) if sd_row else 0.0
-                total_contado = stock_contado if es_dep_planta else (stock_contado + cl2_actual)
-
-                cursor.execute(
                     "SELECT id_parametro, id_proveedor FROM dbo.rundown_parametro_material WHERE id_material = ?",
                     (mat_id,),
                 )
@@ -361,7 +353,27 @@ class ConteoRepository:
                 for r in rpm_rows:
                     rpm_id = int(r[0])
                     p_id = int(r[1])
-                    valores_conteo = [("planta", stock_contado), ("total", total_contado)]
+                    if es_dep_planta:
+                        valores_conteo = [("planta", stock_contado), ("total", stock_contado)]
+                    else:
+                        cursor.execute(
+                            """
+                            SELECT 
+                                MAX(CASE WHEN tipo_stock = 'total' THEN stock_ajustado END),
+                                MAX(CASE WHEN tipo_stock = 'planta' THEN stock_ajustado END)
+                            FROM dbo.rundown_stock_ajuste
+                            WHERE id_parametro = ? AND fecha = ?
+                            """,
+                            (rpm_id, target_date),
+                        )
+                        ex_row = cursor.fetchone()
+                        ex_total = float(ex_row[0]) if (ex_row and ex_row[0] is not None) else None
+                        ex_planta = float(ex_row[1]) if (ex_row and ex_row[1] is not None) else None
+                        if ex_total is not None:
+                            date_cl2 = max(0.0, ex_total - (ex_planta if ex_planta is not None else 0.0))
+                            valores_conteo = [("planta", stock_contado), ("total", stock_contado + date_cl2)]
+                        else:
+                            valores_conteo = [("planta", stock_contado)]
                     for t_stk, val_stk in valores_conteo:
                         cursor.execute(
                             """
