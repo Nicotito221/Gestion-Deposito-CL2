@@ -1021,30 +1021,43 @@ class RundownService:
             mensaje=f"Plan semanal para {seccion['nombre']} guardado exitosamente. Se sincronizaron {reg_plan} registros de producción.",
         )
 
-    def get_planta_stocks_map(self, target_date: Optional[date] = None) -> Dict[str, float]:
+    def get_cierre_ayer_stocks_map(self, target_date: Optional[date] = None) -> Dict[str, Dict[str, float]]:
         from app.core.time import get_fecha_operativa_stock
         t_date = target_date or get_fecha_operativa_stock()
         periodo_str = f"{t_date.year:04d}-{t_date.month:02d}"
-        report = self.get_supplier_rundown(identifier="TODOS", alcance="planta", periodo=periodo_str)
+        report = self.get_supplier_rundown(identifier="TODOS", alcance="total", periodo=periodo_str)
         t_str = t_date.strftime("%Y-%m-%d")
-        result: Dict[str, float] = {}
+        result: Dict[str, Dict[str, float]] = {}
         for m in report.materiales:
             idx = next((i for i, c in enumerate(m.dias) if c.fecha == t_str), None)
-            if idx is not None:
-                cell = m.dias[idx]
-                if cell.tiene_ajuste:
-                    result[m.id_material] = round(cell.stock_final, 2)
-                elif idx > 0:
-                    result[m.id_material] = round(m.dias[idx - 1].stock_final, 2)
-                else:
-                    result[m.id_material] = round(m.stock_inicial, 2)
+            if idx is not None and idx > 0:
+                cell_ayer = m.dias[idx - 1]
+                stk_pl = round(cell_ayer.stock_planta, 2)
+                stk_cl = round(cell_ayer.stock_cl2, 2)
+            elif idx == 0:
+                stk_pl = round(m.stock_inicial_planta, 2)
+                stk_cl = round(m.stock_cl2_actual if m.stock_cl2_actual is not None else max(0.0, m.stock_inicial_total - m.stock_inicial_planta), 2)
             elif m.dias:
                 if t_str < m.dias[0].fecha:
-                    result[m.id_material] = round(m.stock_inicial, 2)
+                    stk_pl = round(m.stock_inicial_planta, 2)
+                    stk_cl = round(m.stock_cl2_actual if m.stock_cl2_actual is not None else max(0.0, m.stock_inicial_total - m.stock_inicial_planta), 2)
                 else:
-                    result[m.id_material] = round(m.dias[-1].stock_final, 2)
+                    cell_last = m.dias[-1]
+                    stk_pl = round(cell_last.stock_planta, 2)
+                    stk_cl = round(cell_last.stock_cl2, 2)
             else:
-                result[m.id_material] = round(m.stock_inicial, 2)
+                stk_pl = round(m.stock_inicial_planta, 2)
+                stk_cl = round(m.stock_cl2_actual if m.stock_cl2_actual is not None else max(0.0, m.stock_inicial_total - m.stock_inicial_planta), 2)
+
+            result[m.id_material] = {
+                "stock_planta": stk_pl,
+                "stock_cl2": stk_cl,
+                "stock_total": round(stk_pl + stk_cl, 2),
+            }
         return result
+
+    def get_planta_stocks_map(self, target_date: Optional[date] = None) -> Dict[str, float]:
+        m = self.get_cierre_ayer_stocks_map(target_date)
+        return {k: v["stock_planta"] for k, v in m.items()}
 
 

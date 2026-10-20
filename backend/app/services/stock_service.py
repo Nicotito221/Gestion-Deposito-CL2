@@ -54,21 +54,27 @@ class StockService:
         )
 
         rs = self._get_rundown_service()
-        planta_stocks = rs.get_planta_stocks_map()
+        cierre_ayer_stocks = rs.get_cierre_ayer_stocks_map()
 
         for it in items_raw:
             mat_id = it["id_material"]
-            if mat_id in planta_stocks:
-                it["stock_planta"] = planta_stocks[mat_id]
             is_dep_planta = bool(it.get("deposito_en_planta", False))
-            stock_cl2 = 0.0 if is_dep_planta else float(it.get("stock_cl2", 0.0))
-            stock_planta = float(it.get("stock_planta", 0.0))
-            it["stock_cl2"] = stock_cl2
-            it["stock_total"] = stock_planta + (0.0 if is_dep_planta else stock_cl2)
+            if mat_id in cierre_ayer_stocks:
+                stk_ayer = cierre_ayer_stocks[mat_id]
+                it["stock_planta"] = stk_ayer["stock_planta"]
+                it["stock_cl2"] = 0.0 if is_dep_planta else stk_ayer["stock_cl2"]
+                it["stock_total"] = it["stock_planta"] + it["stock_cl2"]
+            else:
+                stock_cl2 = 0.0 if is_dep_planta else float(it.get("stock_cl2", 0.0))
+                stock_planta = float(it.get("stock_planta", 0.0))
+                it["stock_cl2"] = stock_cl2
+                it["stock_planta"] = stock_planta
+                it["stock_total"] = stock_planta + (0.0 if is_dep_planta else stock_cl2)
+
             if tipo_almacen == "cl2":
-                it["stock_actual"] = stock_cl2
+                it["stock_actual"] = it["stock_cl2"]
             elif tipo_almacen == "planta":
-                it["stock_actual"] = stock_planta
+                it["stock_actual"] = it["stock_planta"]
             else:
                 it["stock_actual"] = it["stock_total"]
 
