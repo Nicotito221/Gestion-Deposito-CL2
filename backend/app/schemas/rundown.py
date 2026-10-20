@@ -113,6 +113,7 @@ class RundownMaterialGrid(BaseModel):
     stock_inicial: float
     stock_inicial_planta: float = 0.0
     stock_inicial_total: float = 0.0
+    stock_cl2_actual: float = 0.0
     dias: List[RundownDayCell]
     total_uso: float
     total_ingresos: float

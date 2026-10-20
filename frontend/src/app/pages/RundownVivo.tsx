@@ -990,6 +990,10 @@ export function RundownVivo() {
     const isDepPlanta = Boolean(activeSupplier?.deposito_en_planta);
     const provId = mat.id_proveedor || report.id_proveedor;
 
+    const cl2Actual = Math.max(
+      0,
+      Math.round(mat.stock_cl2_actual ?? Math.max(0, mat.stock_inicial_total - mat.stock_inicial_planta))
+    );
     let initPlanta = 0;
     let initCl2 = 0;
     if (isDepPlanta) {
@@ -997,10 +1001,10 @@ export function RundownVivo() {
       initCl2 = 0;
     } else if (alcance === "planta") {
       initPlanta = initialVal;
-      initCl2 = Math.max(0, Math.round(mat.stock_inicial_total - mat.stock_inicial_planta));
+      initCl2 = cl2Actual;
     } else {
-      initPlanta = Math.max(0, Math.round(mat.stock_inicial_planta));
-      initCl2 = Math.max(0, initialVal - initPlanta);
+      initCl2 = Math.min(initialVal, cl2Actual);
+      initPlanta = Math.max(0, initialVal - initCl2);
     }
 
     setStockForm({
@@ -3772,8 +3776,9 @@ export function RundownVivo() {
                       const valForDay = dayCell
                         ? Math.round(dayCell.stock_final)
                         : Math.round(stockForm.stock_inicial);
-                      const curPlanta = Math.max(0, Math.round(mat?.stock_inicial_planta ?? stockForm.stock_planta));
-                      const curCl2 = Math.max(0, valForDay - curPlanta);
+                      const cl2Actual = Math.max(0, Math.round(mat?.stock_cl2_actual ?? stockForm.stock_cl2));
+                      const curCl2 = Math.min(valForDay, cl2Actual);
+                      const curPlanta = Math.max(0, valForDay - curCl2);
                       setStockForm({
                         ...stockForm,
                         fecha: val,
@@ -3790,9 +3795,10 @@ export function RundownVivo() {
                       {report?.columnas_fechas.map((f) => {
                         const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
                         const dayCell = mat?.dias.find((d) => d.fecha === f);
+                        const fechaFmt = f.split("-").reverse().join("/");
                         return (
                           <SelectItem key={f} value={f} className="text-xs font-mono">
-                            {f} ({dayCell?.dia_nombre || ""})
+                            {fechaFmt} ({dayCell?.dia_nombre || ""})
                           </SelectItem>
                         );
                       })}
@@ -3873,9 +3879,10 @@ export function RundownVivo() {
                       {report?.columnas_fechas.map((f) => {
                         const mat = report?.materiales.find((m) => m.id_parametro === stockForm.id_parametro);
                         const dayCell = mat?.dias.find((d) => d.fecha === f);
+                        const fechaFmt = f.split("-").reverse().join("/");
                         return (
                           <SelectItem key={f} value={f} className="text-xs font-mono">
-                            {f} ({dayCell?.dia_nombre || ""})
+                            {fechaFmt} ({dayCell?.dia_nombre || ""})
                           </SelectItem>
                         );
                       })}

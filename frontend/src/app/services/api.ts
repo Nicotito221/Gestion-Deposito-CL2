@@ -352,6 +352,7 @@ export interface RundownMaterialGrid {
   stock_inicial: number;
   stock_inicial_planta: number;
   stock_inicial_total: number;
+  stock_cl2_actual?: number;
   dias: RundownDayCell[];
   total_uso: number;
   total_ingresos: number;

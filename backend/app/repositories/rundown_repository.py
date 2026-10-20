@@ -671,15 +671,17 @@ class RundownRepository:
         try:
             cursor.execute(
                 """
-                SELECT ISNULL(p.deposito_en_planta, 0)
+                SELECT ISNULL(p.deposito_en_planta, 0), ISNULL(sd.stock_actual, 0.0)
                 FROM dbo.rundown_parametro_material m
                 JOIN dbo.proveedor p ON m.id_proveedor = p.id_proveedor
+                LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
                 WHERE m.id_parametro = ?
                 """,
                 (id_parametro,),
             )
             row = cursor.fetchone()
             dep_en_planta = bool(row[0]) if row else False
+            stock_cl2 = float(row[1]) if row and row[1] is not None else 0.0
 
             if dep_en_planta:
                 cursor.execute(
@@ -687,9 +689,10 @@ class RundownRepository:
                     (stock_inicial, stock_inicial, stock_inicial, id_parametro),
                 )
             elif tipo_stock == "planta":
+                nuevo_total = stock_inicial + stock_cl2
                 cursor.execute(
-                    "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ? WHERE id_parametro = ?",
-                    (stock_inicial, id_parametro),
+                    "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
+                    (stock_inicial, nuevo_total, nuevo_total, id_parametro),
                 )
             else:
                 cursor.execute(
@@ -763,26 +766,35 @@ class RundownRepository:
             fecha_init = row[0] if row else None
             dep_en_planta = bool(row[1]) if row else False
 
+            cursor.execute(
+                "SELECT ISNULL(stock_actual, 0.0), ISNULL(stock_planta, 0.0) FROM dbo.stock_deposito WHERE id_material = ?",
+                (id_material,),
+            )
+            sd_row = cursor.fetchone()
+            ant_cl2 = float(sd_row[0]) if sd_row else 0.0
+            ant_planta = float(sd_row[1]) if sd_row else 0.0
+
             target_planta: Optional[float] = None
             target_cl2: Optional[float] = None
             target_total: Optional[float] = None
 
-            if stock_planta is not None or stock_cl2 is not None:
-                target_planta = float(stock_planta or 0.0)
-                target_cl2 = 0.0 if dep_en_planta else float(stock_cl2 or 0.0)
-                target_total = target_planta if dep_en_planta else (target_planta + target_cl2)
-                valores_a_guardar = [("planta", target_planta), ("total", target_total)]
-            elif dep_en_planta:
-                target_planta = float(stock_ajustado)
+            if dep_en_planta:
+                target_planta = float(stock_planta if stock_planta is not None else stock_ajustado)
                 target_cl2 = 0.0
-                target_total = float(stock_ajustado)
-                valores_a_guardar = [("planta", stock_ajustado), ("total", stock_ajustado)]
-            elif tipo_stock == "planta":
-                target_planta = float(stock_ajustado)
-                valores_a_guardar = [("planta", stock_ajustado)]
+                target_total = target_planta
+                valores_a_guardar = [("planta", target_planta), ("total", target_total)]
+            elif tipo_stock == "planta" or (stock_planta is not None and stock_cl2 is None):
+                target_planta = float(stock_planta if stock_planta is not None else stock_ajustado)
+                target_total = target_planta + ant_cl2
+                valores_a_guardar = [("planta", target_planta), ("total", target_total)]
+            elif stock_planta is not None or stock_cl2 is not None:
+                target_planta = float(stock_planta if stock_planta is not None else ant_planta)
+                target_cl2 = float(stock_cl2 if stock_cl2 is not None else ant_cl2)
+                target_total = target_planta + target_cl2
+                valores_a_guardar = [("planta", target_planta), ("total", target_total)]
             else:
                 target_total = float(stock_ajustado)
-                valores_a_guardar = [("total", stock_ajustado)]
+                valores_a_guardar = [("total", target_total)]
 
             if fecha_init and fecha == fecha_init:
                 if target_planta is not None and target_total is not None:
@@ -790,15 +802,15 @@ class RundownRepository:
                         "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
                         (target_planta, target_total, target_total, id_parametro),
                     )
-                elif tipo_stock == "planta":
+                elif target_planta is not None:
                     cursor.execute(
                         "UPDATE dbo.rundown_parametro_material SET stock_inicial_planta = ? WHERE id_parametro = ?",
-                        (stock_ajustado, id_parametro),
+                        (target_planta, id_parametro),
                     )
-                else:
+                elif target_total is not None:
                     cursor.execute(
                         "UPDATE dbo.rundown_parametro_material SET stock_inicial_total = ?, stock_inicial_referencia = ? WHERE id_parametro = ?",
-                        (stock_ajustado, stock_ajustado, id_parametro),
+                        (target_total, target_total, id_parametro),
                     )
 
             for t_stock, val in valores_a_guardar:
@@ -819,14 +831,6 @@ class RundownRepository:
                         id_parametro, id_proveedor, id_material, fecha, t_stock, val, observacion,
                     ),
                 )
-
-            cursor.execute(
-                "SELECT ISNULL(stock_actual, 0.0), ISNULL(stock_planta, 0.0) FROM dbo.stock_deposito WHERE id_material = ?",
-                (id_material,),
-            )
-            sd_row = cursor.fetchone()
-            ant_cl2 = float(sd_row[0]) if sd_row else 0.0
-            ant_planta = float(sd_row[1]) if sd_row else 0.0
 
             cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
             u_row = cursor.fetchone()
@@ -912,32 +916,11 @@ class RundownRepository:
         try:
             cursor.execute(
                 """
-                SELECT ISNULL(p.deposito_en_planta, 0)
-                FROM dbo.rundown_parametro_material m
-                JOIN dbo.proveedor p ON m.id_proveedor = p.id_proveedor
-                WHERE m.id_parametro = ?
+                DELETE FROM dbo.rundown_stock_ajuste
+                WHERE id_parametro = ? AND fecha = ?
                 """,
-                (id_parametro,),
+                (id_parametro, fecha),
             )
-            row = cursor.fetchone()
-            dep_en_planta = bool(row[0]) if row else False
-
-            if dep_en_planta:
-                cursor.execute(
-                    """
-                    DELETE FROM dbo.rundown_stock_ajuste
-                    WHERE id_parametro = ? AND fecha = ?
-                    """,
-                    (id_parametro, fecha),
-                )
-            else:
-                cursor.execute(
-                    """
-                    DELETE FROM dbo.rundown_stock_ajuste
-                    WHERE id_parametro = ? AND fecha = ? AND tipo_stock = ?
-                    """,
-                    (id_parametro, fecha, tipo_stock),
-                )
             affected = cursor.rowcount
 
             conn.commit()

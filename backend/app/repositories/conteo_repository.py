@@ -346,6 +346,14 @@ class ConteoRepository:
                 )
 
                 cursor.execute(
+                    "SELECT ISNULL(stock_actual, 0.0) FROM dbo.stock_deposito WHERE id_material = ?",
+                    (mat_id,),
+                )
+                sd_row = cursor.fetchone()
+                cl2_actual = float(sd_row[0]) if sd_row else 0.0
+                total_contado = stock_contado if es_dep_planta else (stock_contado + cl2_actual)
+
+                cursor.execute(
                     "SELECT id_parametro, id_proveedor FROM dbo.rundown_parametro_material WHERE id_material = ?",
                     (mat_id,),
                 )
@@ -353,8 +361,8 @@ class ConteoRepository:
                 for r in rpm_rows:
                     rpm_id = int(r[0])
                     p_id = int(r[1])
-                    tipos_stock = ["planta", "total"] if es_dep_planta else ["planta"]
-                    for t_stk in tipos_stock:
+                    valores_conteo = [("planta", stock_contado), ("total", total_contado)]
+                    for t_stk, val_stk in valores_conteo:
                         cursor.execute(
                             """
                             MERGE dbo.rundown_stock_ajuste AS target
@@ -368,8 +376,8 @@ class ConteoRepository:
                             """,
                             (
                                 rpm_id, target_date, t_stk,
-                                stock_contado, f"Conteo #{id_conteo} (desvío: {desvio:+0.1f})", now_ba,
-                                rpm_id, p_id, mat_id, target_date, t_stk, stock_contado, f"Conteo #{id_conteo} (desvío: {desvio:+0.1f})", now_ba,
+                                val_stk, f"Conteo #{id_conteo} (desvío: {desvio:+0.1f})", now_ba,
+                                rpm_id, p_id, mat_id, target_date, t_stk, val_stk, f"Conteo #{id_conteo} (desvío: {desvio:+0.1f})", now_ba,
                             ),
                         )
 

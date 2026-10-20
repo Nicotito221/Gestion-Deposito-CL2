@@ -266,9 +266,9 @@ class RundownService:
                     if total_key in ajustes_map:
                         tiene_ajuste = True
                         stock_real = float(round(ajustes_map[total_key]))
-                    elif es_dep_en_planta and planta_key in ajustes_map:
+                    elif planta_key in ajustes_map:
                         tiene_ajuste = True
-                        stock_real = float(round(ajustes_map[planta_key]))
+                        stock_real = float(round(ajustes_map[planta_key] if es_dep_en_planta else (ajustes_map[planta_key] + stock_cl2)))
 
                 manual_key = (param["id_material"], d)
                 if manual_key in consumos_manuales_map:
@@ -398,6 +398,7 @@ class RundownService:
                     stock_inicial=s_inicial_periodo,
                     stock_inicial_planta=s_planta,
                     stock_inicial_total=s_total,
+                    stock_cl2_actual=stock_cl2,
                     dias=cells,
                     total_uso=round(total_uso, 2),
                     total_ingresos=round(total_ingresos, 2),
@@ -794,12 +795,8 @@ class RundownService:
         for (adj_pid, adj_d, adj_tipo), val in prev_ajustes.items():
             if adj_pid != pid or adj_d > end_prev:
                 continue
-            if alcance == "planta":
-                if adj_tipo == "planta" or (dep_planta and adj_tipo == "total"):
-                    applicable_adj_dates.append(adj_d)
-            else:
-                if adj_tipo == "total" or (dep_planta and adj_tipo == "planta"):
-                    applicable_adj_dates.append(adj_d)
+            if adj_tipo in ("planta", "total"):
+                applicable_adj_dates.append(adj_d)
 
         if applicable_adj_dates:
             d_anchor = max(applicable_adj_dates)
@@ -810,13 +807,15 @@ class RundownService:
                     s_val = float(round(prev_ajustes[pl_key]))
                 elif dep_planta and tot_key in prev_ajustes:
                     s_val = float(round(prev_ajustes[tot_key]))
-                else:
+                elif tot_key in prev_ajustes:
                     s_val = float(round(max(0.0, prev_ajustes[tot_key] - stock_cl2_val)))
+                else:
+                    s_val = s_base
             else:
                 if tot_key in prev_ajustes:
                     s_val = float(round(prev_ajustes[tot_key]))
-                elif dep_planta and pl_key in prev_ajustes:
-                    s_val = float(round(prev_ajustes[pl_key]))
+                elif pl_key in prev_ajustes:
+                    s_val = float(round(prev_ajustes[pl_key] if dep_planta else (prev_ajustes[pl_key] + stock_cl2_val)))
                 else:
                     s_val = s_base
 

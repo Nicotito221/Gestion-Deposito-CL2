@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -44,6 +44,7 @@ import {
   ChevronRight,
   Package,
   SlidersHorizontal,
+  Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -99,6 +100,7 @@ export function Stock() {
   const [adjustOpen, setAdjustOpen] = useState<boolean>(false);
   const [isSavingAdjust, setIsSavingAdjust] = useState<boolean>(false);
   const [selectedMaterial, setSelectedMaterial] = useState<StockMaterialItem | null>(null);
+  const dateInputRef = useRef<HTMLInputElement>(null);
   const [adjustForm, setAdjustForm] = useState<{
     fecha: string;
     nuevo_stock_planta: string;
@@ -865,13 +867,37 @@ export function Stock() {
                     <span>Fecha del Ajuste / Conteo</span>
                     <span className="text-[10px] text-slate-500 font-normal">Día al cual aplica</span>
                   </Label>
-                  <Input
-                    id="stock-fecha-val"
-                    type="date"
-                    value={adjustForm.fecha}
-                    onChange={(e) => setAdjustForm({ ...adjustForm, fecha: e.target.value })}
-                    className="font-mono text-xs h-9 bg-white"
-                  />
+                  <div className="relative">
+                    <input
+                      ref={dateInputRef}
+                      id="stock-fecha-val"
+                      type="date"
+                      value={adjustForm.fecha}
+                      onChange={(e) => setAdjustForm({ ...adjustForm, fecha: e.target.value })}
+                      className="absolute inset-0 opacity-0 pointer-events-none"
+                      tabIndex={-1}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (dateInputRef.current) {
+                          if (typeof dateInputRef.current.showPicker === "function") {
+                            dateInputRef.current.showPicker();
+                          } else {
+                            dateInputRef.current.focus();
+                          }
+                        }
+                      }}
+                      className="flex items-center justify-between w-full h-9 px-3 rounded-md border border-slate-200 bg-white font-mono text-xs text-slate-900 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <span>
+                        {adjustForm.fecha
+                          ? adjustForm.fecha.split("-").reverse().join("/")
+                          : "dd/mm/aaaa"}
+                      </span>
+                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="space-y-1.5">
