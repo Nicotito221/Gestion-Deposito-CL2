@@ -132,6 +132,7 @@ class RundownService:
         anio, mes = [int(x) for x in target_periodo.split("-")]
         mes_info = next((m for m in meses_raw if m["periodo"] == target_periodo), None)
         es_mes_firme = mes_info["es_firme"] if mes_info else (mes == 9 and anio == 2026)
+        es_mes_finalizado = bool(mes_info.get("es_finalizado", False)) if mes_info else False
 
         d_start = date(anio, mes, 1)
         d_next = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
@@ -158,7 +159,7 @@ class RundownService:
             if sum(raw_prod_map.get(p, {}).get(d, 0.0) for p in all_products) > 0
         ]
 
-        if dias_con_prod or es_mes_firme:
+        if es_mes_firme or es_mes_finalizado:
             avg_per_prod = {}
             if dias_con_prod:
                 for p in all_products:
