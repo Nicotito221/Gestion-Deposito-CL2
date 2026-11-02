@@ -1,7 +1,7 @@
 from datetime import date
 import os
 import tempfile
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.repositories.supply_repository import SupplyRepository
 from app.schemas.supply import DemandRowOut, SupplyConsolidateResult, SupplySummaryOut
@@ -122,6 +122,7 @@ class SupplyService:
             clean_code,
             find_default_file,
             format_part_number,
+            get_second_wednesday,
         )
 
         consolidator = ProductionConsolidator()
@@ -160,7 +161,11 @@ class SupplyService:
                 if col_name not in consolidator.tentative_columns_f2:
                     consolidator.tentative_columns_f2.append(col_name)
                 item.tentative_values[col_name] = item.tentative_values.get(col_name, 0.0) + float(cant)
-                consolidator.custom_tentative_dates[fecha_dt.month] = f"{fecha_dt.day:02d}.{fecha_dt.month:02d}.{fecha_dt.year}"
+                sec_wed = get_second_wednesday(fecha_dt.year, fecha_dt.month)
+                sec_wed_str = f"{sec_wed.day:02d}.{sec_wed.month:02d}.{sec_wed.year}"
+                consolidator.custom_tentative_dates[col_name] = sec_wed_str
+                consolidator.custom_tentative_dates[f"{fecha_dt.year}-{fecha_dt.month:02d}"] = sec_wed_str
+                consolidator.custom_tentative_dates[fecha_dt.month] = sec_wed_str
             consolidator.register_demand_item(item)
 
         return consolidator, filename
@@ -176,8 +181,27 @@ class SupplyService:
         out_name = f"{base_name}_Demanda_BOM_Consumo.xlsx"
         return temp_path, out_name
 
-    def export_sap_txt(self, fecha_corte: Optional[datetime.date] = None) -> Tuple[str, str]:
+    def export_sap_txt(
+        self,
+        fecha_corte: Optional[date] = None,
+        fechas_tentativas: Optional[Dict[str, str]] = None,
+    ) -> Tuple[str, str]:
         consolidator, filename = self._build_consolidator_from_db()
+        if fechas_tentativas:
+            for col_key, iso_val in fechas_tentativas.items():
+                val_clean = str(iso_val or "").strip()
+                if not val_clean:
+                    continue
+                if "-" in val_clean and len(val_clean) >= 10:
+                    parts = val_clean[:10].split("-")
+                    if len(parts) == 3 and len(parts[0]) == 4:
+                        fmt_date = f"{parts[2]}.{parts[1]}.{parts[0]}"
+                    else:
+                        fmt_date = val_clean.replace("-", ".")
+                else:
+                    fmt_date = val_clean.replace("/", ".")
+                consolidator.custom_tentative_dates[col_key] = fmt_date
+
         temp_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
         temp_path = temp_file.name
         temp_file.close()

@@ -36,12 +36,15 @@ MONTHS_LOOKUP = {
 
 DEFAULT_BOM_CANDIDATES: List[str] = []
 
+def get_second_wednesday(year: int, month: int) -> datetime.date:
+    first_day = datetime.date(year, month, 1)
+    days_to_first_wed = (2 - first_day.weekday()) % 7
+    return datetime.date(year, month, 1 + days_to_first_wed + 7)
+
+
 DEFAULT_TENTATIVE_DATES = {
-    10: '19.10.2026',
-    11: '19.11.2026',
-    12: '14.12.2026',
-    1: '18.01.2027',
-    2: '15.02.2027'
+    m: get_second_wednesday(2026 if m >= 9 else 2027, m).strftime('%d.%m.%Y')
+    for m in (10, 11, 12, 1, 2, 3, 4)
 }
 
 DEFAULT_MATERIALS_CANDIDATES: List[str] = []
@@ -734,8 +737,9 @@ class ProductionConsolidator:
                 if m_key in c_clean:
                     if m_val != firm_month and m_val not in seen_m:
                         seen_m.add(m_val)
-                        year = self.plan_year + (1 if m_val < firm_month else 0)
-                        default_date = f'01.{m_val:02d}.{year}'
+                        m_yr = re.search(r'(20\d{2})', c_clean)
+                        year = int(m_yr.group(1)) if m_yr else self.plan_year + (1 if m_val < firm_month else 0)
+                        default_date = get_second_wednesday(year, m_val).strftime('%d.%m.%Y')
                         label = f'{month_names_es.get(m_val, f"Mes {m_val}")} {year}'
                         tentative_list.append((m_val, year, default_date, label))
                     break
@@ -743,6 +747,9 @@ class ProductionConsolidator:
         return tentative_list
 
     def resolve_date_str(self, col_name: str) -> str:
+        if col_name in self.custom_tentative_dates:
+            return self.custom_tentative_dates[col_name]
+
         c_clean = col_name.strip().lower()
 
         m_daily = re.match(r'^(\d{1,2})-([a-z]+)', c_clean)
@@ -762,12 +769,19 @@ class ProductionConsolidator:
 
         for m_key, m_val in MONTHS_LOOKUP.items():
             if m_key in c_clean:
+                m_yr = re.search(r'(20\d{2})', c_clean)
+                if m_yr:
+                    year = int(m_yr.group(1))
+                else:
+                    year = self.plan_year
+                    if m_val < 8:
+                        year += 1
+                ym_key = f"{year}-{m_val:02d}"
+                if ym_key in self.custom_tentative_dates:
+                    return self.custom_tentative_dates[ym_key]
                 if m_val in self.custom_tentative_dates:
                     return self.custom_tentative_dates[m_val]
-                year = self.plan_year
-                if m_val < 8:
-                    year += 1
-                return f'01.{m_val:02d}.{year}'
+                return get_second_wednesday(year, m_val).strftime('%d.%m.%Y')
 
         return f'01.09.{self.plan_year}'
 
@@ -1016,37 +1030,28 @@ class ProductionConsolidator:
             if total_pn <= 1.0:
                 continue
 
-            mat_code = format_part_number(item.n_parte or item.canonical_pn)
+            mat_code = format_part_number(item.n_parte or item.canonical_pn).strip()
             if not mat_code:
                 continue
             meta = self.materials_metadata.get(item.canonical_pn, MaterialMetadata(canonical_hijo=item.canonical_pn))
-            centro = getattr(item, 'centro', None) or meta.centro or default_centro
+            centro = str(getattr(item, 'centro', None) or meta.centro or default_centro).strip()
 
             for col in all_val_cols:
                 if col in sorted_daily:
                     cant = item.daily_values.get(col, 0.0)
-                    periodo_tipo = 'D'
                 else:
                     cant = item.tentative_values.get(col, 0.0)
-                    periodo_tipo = 'M'
+                periodo_tipo = 'D'
 
                 col_date = self.resolve_date_obj(col)
                 fecha_str = self.resolve_date_str(col)
 
                 if fecha_corte is not None and col_date is not None and col_date < fecha_corte:
-                    output_rows.append([
-                        'X',
-                        mat_code,
-                        centro,
-                        default_version,
-                        fecha_str,
-                        periodo_tipo,
-                        '0'
-                    ])
+                    continue
                 elif col_date is not None and col_date == hoy:
                     _, fraccion_restante = get_avance_jornada_produccion(corte_dt)
                     cant_rem = int(round(cant * fraccion_restante))
-                    if cant > 0 or (fecha_corte is not None and col_date >= fecha_corte):
+                    if cant_rem > 0:
                         output_rows.append([
                             'X',
                             mat_code,
@@ -1056,18 +1061,20 @@ class ProductionConsolidator:
                             periodo_tipo,
                             str(cant_rem)
                         ])
-                elif cant > 0:
-                    output_rows.append([
-                        'X',
-                        mat_code,
-                        centro,
-                        default_version,
-                        fecha_str,
-                        periodo_tipo,
-                        str(int(round(cant)))
-                    ])
+                else:
+                    cant_int = int(round(cant))
+                    if cant_int > 0:
+                        output_rows.append([
+                            'X',
+                            mat_code,
+                            centro,
+                            default_version,
+                            fecha_str,
+                            periodo_tipo,
+                            str(cant_int)
+                        ])
 
-        with open(output_txt_path, mode='w', encoding='utf-8', newline='') as f:
+        with open(output_txt_path, mode='w', encoding='cp1252', errors='replace', newline='') as f:
             writer = csv.writer(f, delimiter='\t', lineterminator='\r\n')
             writer.writerow(headers)
             writer.writerows(output_rows)

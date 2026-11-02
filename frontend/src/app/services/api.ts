@@ -307,8 +307,19 @@ export async function downloadExcelConsolidado(): Promise<void> {
   window.URL.revokeObjectURL(url);
 }
 
-export async function downloadSapPirTxt(fechaCorte?: string): Promise<void> {
-  const q = fechaCorte ? `?fecha_corte=${encodeURIComponent(fechaCorte)}` : "";
+export async function downloadSapPirTxt(
+  fechaCorte?: string,
+  fechasTentativas?: Record<string, string>
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (fechaCorte) {
+    params.set("fecha_corte", fechaCorte);
+  }
+  if (fechasTentativas && Object.keys(fechasTentativas).length > 0) {
+    params.set("fechas_tentativas", JSON.stringify(fechasTentativas));
+  }
+  const qs = params.toString();
+  const q = qs ? `?${qs}` : "";
   const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/sap-pir${q}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

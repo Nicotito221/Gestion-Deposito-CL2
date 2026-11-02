@@ -449,8 +449,8 @@ class SupplyRepository:
                     prods_to_insert,
                 )
 
+            from consolidate_production import get_second_wednesday
             planned_dict: Dict[Tuple[str, datetime.date], float] = {}
-            tentative_day_map = {10: 19, 11: 19, 12: 14, 1: 18, 2: 15}
 
             firm_month_detected = 9
             for it in items:
@@ -500,8 +500,7 @@ class SupplyRepository:
                                     break
                                 has_any_qty = True
                                 year = plan_year + (1 if m_val < firm_month_detected else 0)
-                                day = tentative_day_map.get(m_val, 1)
-                                fecha_date = datetime.date(year, m_val, day)
+                                fecha_date = get_second_wednesday(year, m_val)
                                 key = (it.part_number, fecha_date)
                                 planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
                                 break

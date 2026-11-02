@@ -72,6 +72,42 @@ import {
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
+const TENTATIVE_MONTHS_LOOKUP: Record<string, number> = {
+  ene: 1, enero: 1, jan: 1,
+  feb: 2, febrero: 2,
+  mar: 3, marzo: 3,
+  abr: 4, abril: 4, apr: 4,
+  may: 5, mayo: 5,
+  jun: 6, junio: 6,
+  jul: 7, julio: 7,
+  ago: 8, agosto: 8, aug: 8,
+  sep: 9, sept: 9, septiembre: 9,
+  oct: 10, octubre: 10,
+  nov: 11, noviembre: 11,
+  dic: 12, diciembre: 12, dec: 12,
+};
+
+function getSecondWednesdayIso(year: number, month: number): string {
+  const firstDayDow = new Date(year, month - 1, 1).getDay();
+  const daysToFirstWed = (3 - firstDayDow + 7) % 7;
+  const secondWedDay = 1 + daysToFirstWed + 7;
+  return `${year}-${String(month).padStart(2, "0")}-${String(secondWedDay).padStart(2, "0")}`;
+}
+
+function resolveDefaultSecondWednesdayIso(colName: string, fallbackYear: number): string {
+  const clean = colName.trim().toLowerCase();
+  const yrMatch = clean.match(/(20\d{2})/);
+  let month = 12;
+  for (const [k, mVal] of Object.entries(TENTATIVE_MONTHS_LOOKUP)) {
+    if (clean.includes(k)) {
+      month = mVal;
+      break;
+    }
+  }
+  const year = yrMatch ? parseInt(yrMatch[1], 10) : month < 8 ? fallbackYear + 1 : fallbackYear;
+  return getSecondWednesdayIso(year, month);
+}
+
 export function SupplyOrderBom() {
   const { user: currentUser } = useAuth();
   const canEdit = Boolean(
@@ -118,6 +154,7 @@ export function SupplyOrderBom() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   });
+  const [sapFechasTentativas, setSapFechasTentativas] = useState<Record<string, string>>({});
 
   const [bomFile, setBomFile] = useState<File | null>(null);
   const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
@@ -391,7 +428,40 @@ export function SupplyOrderBom() {
     }
   };
 
+  const buildDefaultTentativeDates = useCallback(
+    (cols: string[], baseYear: number): Record<string, string> => {
+      const map: Record<string, string> = {};
+      for (const col of cols) {
+        if (!col.toUpperCase().includes("TOTAL")) {
+          map[col] = resolveDefaultSecondWednesdayIso(col, baseYear);
+        }
+      }
+      return map;
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (tentativeColumns.length > 0) {
+      setSapFechasTentativas((prev) => {
+        const defaults = buildDefaultTentativeDates(tentativeColumns, calAnio);
+        const merged: Record<string, string> = {};
+        for (const col of Object.keys(defaults)) {
+          merged[col] = prev[col] || defaults[col];
+        }
+        return merged;
+      });
+    }
+  }, [tentativeColumns, calAnio, buildDefaultTentativeDates]);
+
+  const handleResetSecondWednesdays = () => {
+    setSapFechasTentativas(buildDefaultTentativeDates(tentativeColumns, calAnio));
+  };
+
   const handleOpenSapModal = () => {
+    if (Object.keys(sapFechasTentativas).length === 0 && tentativeColumns.length > 0) {
+      setSapFechasTentativas(buildDefaultTentativeDates(tentativeColumns, calAnio));
+    }
     setSapModalOpen(true);
   };
 
@@ -399,10 +469,10 @@ export function SupplyOrderBom() {
     setIsDownloadingSap(true);
     try {
       const corteParam = sapAplicarCorte && sapFechaCorte ? sapFechaCorte : undefined;
-      await downloadSapPirTxt(corteParam);
+      await downloadSapPirTxt(corteParam, sapFechasTentativas);
       toast.success(
         corteParam
-          ? `Archivo SAP PIR descargado (días anteriores a ${corteParam} en 0)`
+          ? `Archivo SAP PIR descargado (desde ${corteParam}, solo valores > 0)`
           : "Archivo SAP PIR descargado (mes completo)"
       );
       setSapModalOpen(false);
@@ -1669,7 +1739,7 @@ export function SupplyOrderBom() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900">
               <FileText className="w-5 h-5 text-blue-600" />
-              <span>Exportar Demanda a SAP PIR (.txt)</span>
+              <span>Exportar Demanda a SAP PIR (.txt · Formato ANSI)</span>
             </DialogTitle>
           </DialogHeader>
 
@@ -1677,12 +1747,10 @@ export function SupplyOrderBom() {
             <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-blue-900 space-y-1.5">
               <p className="font-semibold flex items-center gap-1.5 text-xs text-blue-950">
                 <AlertCircle className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>Actualización a SAP a mitad de período:</span>
+                <span>Formato SAP PIR (ANSI Windows-1252 · Solo valores &gt; 0):</span>
               </p>
               <p className="text-[11px] text-blue-800 leading-relaxed">
-                Al cargar una actualización en SAP (por ejemplo, tras agregar un sábado o reajustar turnos),
-                SAP requiere recibir las fechas pasadas con <b>cantidad 0</b> para evitar duplicar consumos
-                ya ejecutados.
+                El archivo se exporta en codificación <b>ANSI</b> delimitado por tabulaciones, omitiendo cualquier registro en <code>0</code> o previo a la fecha de corte.
               </p>
               <p className="text-[11px] text-emerald-800 font-medium">
                 ✓ El Rundown Vivo y la base de datos permanecerán intactos, conservando su histórico real sin alteraciones.
@@ -1699,10 +1767,10 @@ export function SupplyOrderBom() {
                 />
                 <div className="space-y-0.5">
                   <span className="font-semibold text-slate-900 text-xs block">
-                    Poner en 0 los días anteriores a la fecha de corte
+                    Aplicar fecha de corte (omitir días anteriores y valores en 0)
                   </span>
                   <span className="text-[11px] text-slate-500 block">
-                    Exporta con 0 los días ya consumidos y envía la producción planificada completa desde la fecha elegida hasta fin de mes.
+                    Excluye del TXT los días previos a la fecha elegida y deja únicamente las cantidades &gt; 0.
                   </span>
                 </div>
               </label>
@@ -1721,12 +1789,65 @@ export function SupplyOrderBom() {
                     />
                   </div>
                   <div className="p-2 bg-amber-50/70 border border-amber-200 rounded text-[11px] text-amber-900">
-                    • <b>Días anteriores al {sapFechaCorte}:</b> se exportarán con cantidad <code>0</code> a SAP.<br />
-                    • <b>Días desde el {sapFechaCorte}:</b> se exportarán con las cantidades planificadas completas.
+                    • <b>Días anteriores al {sapFechaCorte} y valores en 0:</b> no aparecerán en el TXT.<br />
+                    • <b>Días desde el {sapFechaCorte}:</b> se exportarán únicamente los valores <code>&gt; 0</code>.
                   </div>
                 </div>
               )}
             </div>
+
+            {tentativeColumns.length > 0 && (
+              <div className="space-y-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="font-semibold text-slate-900 text-xs block">
+                      Fechas de meses extendidos (por defecto: 2° miércoles del mes)
+                    </span>
+                    <span className="text-[11px] text-slate-500 block">
+                      Calculadas automáticamente en el segundo miércoles de cada mes; podés ajustarlas si hay feriados.
+                    </span>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleResetSecondWednesdays}
+                    className="h-7 px-2 text-[11px] text-blue-700 hover:text-blue-800 hover:bg-blue-50 shrink-0"
+                  >
+                    Restaurar 2° miércoles
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-44 overflow-y-auto">
+                  {tentativeColumns
+                    .filter((c) => !c.toUpperCase().includes("TOTAL"))
+                    .map((col) => (
+                      <div
+                        key={col}
+                        className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded border border-slate-200"
+                      >
+                        <Label className="text-xs font-semibold text-slate-700 truncate">
+                          {col}
+                        </Label>
+                        <Input
+                          type="date"
+                          value={
+                            sapFechasTentativas[col] ||
+                            resolveDefaultSecondWednesdayIso(col, calAnio)
+                          }
+                          onChange={(e) =>
+                            setSapFechasTentativas((prev) => ({
+                              ...prev,
+                              [col]: e.target.value,
+                            }))
+                          }
+                          className="h-7 text-xs font-mono max-w-[140px] bg-white px-2"
+                        />
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <DialogFooter className="pt-2 flex items-center justify-between">

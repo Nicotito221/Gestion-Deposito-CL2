@@ -1,8 +1,9 @@
+import json
 import os
 import shutil
 import tempfile
 from datetime import date
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -126,14 +127,24 @@ def export_excel_consolidado():
 
 @router.get("/exportar/sap-pir")
 def export_sap_pir_txt(
-    fecha_corte: Optional[date] = Query(None, description="Fecha de corte. Días anteriores irán en 0 para SAP."),
+    fecha_corte: Optional[date] = Query(None, description="Fecha de corte. Solo se exportarán fechas >= fecha_corte con cantidad > 0."),
+    fechas_tentativas: Optional[str] = Query(None, description="JSON de fechas personalizadas por mes extendido."),
 ):
     try:
-        temp_path, file_name = _service.export_sap_txt(fecha_corte=fecha_corte)
+        parsed_tentativas: Optional[Dict[str, str]] = None
+        if fechas_tentativas:
+            loaded = json.loads(fechas_tentativas)
+            if isinstance(loaded, dict):
+                parsed_tentativas = {str(k): str(v) for k, v in loaded.items() if v}
+
+        temp_path, file_name = _service.export_sap_txt(
+            fecha_corte=fecha_corte,
+            fechas_tentativas=parsed_tentativas,
+        )
         return FileResponse(
             path=temp_path,
             filename=file_name,
-            media_type="text/plain; charset=utf-8",
+            media_type="text/plain; charset=windows-1252",
             background=BackgroundTask(lambda: os.remove(temp_path) if os.path.exists(temp_path) else None),
         )
     except Exception as err:
