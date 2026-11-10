@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 
 from app.core.time import get_argentina_today, get_turno_sugerido_actual, get_avance_jornada_produccion
 from app.repositories.conteo_repository import ConteoRepository
+from app.repositories.despacho_repository import DespachoRepository
 from app.repositories.pedido_repository import PedidoRepository
 from app.schemas.pedido import (
     CalcularSugerenciaRequest,
@@ -28,6 +29,7 @@ class PedidoService:
     def __init__(self) -> None:
         self._repo = PedidoRepository()
         self._conteo_repo = ConteoRepository()
+        self._despacho_repo = DespachoRepository()
 
     def calcular_sugerencia(self, request: CalcularSugerenciaRequest) -> CalcularSugerenciaResponse:
         today = get_argentina_today()
@@ -127,6 +129,25 @@ class PedidoService:
         prod_map_sig = self._repo.get_produccion_planificada_dia(fecha_sig, all_products)
         if sum(prod_map_sig.values()) == 0:
             prod_map_sig = prod_map_prom_mes
+
+        desp_desde = min(today, fecha_req, fecha_sig).replace(day=1)
+        desp_hasta = max(today, fecha_req, fecha_sig)
+        despachos = self._despacho_repo.get_diario(all_products, desp_desde, desp_hasta)
+        cuota_mes_req = {
+            p: max((c for d, c in por_dia.items() if (d.year, d.month) == (fecha_req.year, fecha_req.month)), default=0.0)
+            for p, por_dia in despachos.items()
+        }
+
+        def con_despacho(base: Dict[str, float], extra: Dict[str, float]) -> Dict[str, float]:
+            combinado = dict(base)
+            for p, c in extra.items():
+                combinado[p] = combinado.get(p, 0.0) + c
+            return combinado
+
+        prod_map_hoy = con_despacho(prod_map_hoy, {p: d.get(today, 0.0) for p, d in despachos.items()})
+        prod_map_req = con_despacho(prod_map_req, {p: d.get(fecha_req, 0.0) for p, d in despachos.items()})
+        prod_map_sig = con_despacho(prod_map_sig, {p: d.get(fecha_sig, 0.0) for p, d in despachos.items()})
+        prod_map_prom_mes = con_despacho(prod_map_prom_mes, cuota_mes_req)
 
         mat_ids = [m["id_material"] for m in materiales]
         consumos_manuales_map = rundown_svc._repo.get_consumos_manuales(

@@ -48,10 +48,21 @@ class RundownRepository:
                 END
             """)
             cursor.execute("""
+                IF COL_LENGTH('dbo.rundown_transito_arribo', 'destino') IS NULL
+                BEGIN
+                    ALTER TABLE dbo.rundown_transito_arribo
+                        ADD destino VARCHAR(10) NOT NULL
+                            CONSTRAINT DF_rundown_transito_arribo_destino DEFAULT 'total'
+                            CONSTRAINT CK_rundown_transito_arribo_destino CHECK (destino IN ('total', 'planta'));
+                END
+            """)
+            cursor.execute("SELECT COL_LENGTH('dbo.material', 'id_material')")
+            largo_material = int(cursor.fetchone()[0] or 50)
+            cursor.execute(f"""
                 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'rundown_diario')
                 BEGIN
                     CREATE TABLE dbo.rundown_diario (
-                        id_material VARCHAR(50) NOT NULL FOREIGN KEY REFERENCES dbo.material(id_material),
+                        id_material VARCHAR({largo_material}) NOT NULL FOREIGN KEY REFERENCES dbo.material(id_material),
                         fecha DATE NOT NULL,
                         stock_teorico_inicio DECIMAL(18,4) NOT NULL DEFAULT 0,
                         conteo_real DECIMAL(18,4) NULL,
@@ -362,7 +373,7 @@ class RundownRepository:
             cursor.execute(
                 f"""
                 SELECT id_transito, id_proveedor, id_material, fecha_eta, tipo_via,
-                       po_numero, factura_numero, CAST(cantidad AS FLOAT), observacion, estado
+                       po_numero, factura_numero, CAST(cantidad AS FLOAT), observacion, estado, destino
                 FROM dbo.rundown_transito_arribo
                 WHERE {where_clause} AND fecha_eta >= ? AND fecha_eta <= ?
                 ORDER BY fecha_eta
@@ -382,9 +393,24 @@ class RundownRepository:
                     cantidad=float(r[7]),
                     observacion=str(r[8]) if r[8] else None,
                     estado=str(r[9]) if len(r) > 9 and r[9] else "planificado",
+                    destino=str(r[10]) if r[10] else "total",
                 )
                 for r in rows
             ]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def es_deposito_en_planta(self, id_proveedor: int) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT ISNULL(deposito_en_planta, 0) FROM dbo.proveedor WHERE id_proveedor = ?",
+                (id_proveedor,),
+            )
+            row = cursor.fetchone()
+            return bool(row[0]) if row else False
         finally:
             cursor.close()
             conn.close()
@@ -479,9 +505,9 @@ class RundownRepository:
             cursor.execute(
                 """
                 INSERT INTO dbo.rundown_transito_arribo
-                (id_proveedor, id_material, fecha_eta, tipo_via, po_numero, factura_numero, cantidad, observacion, estado)
+                (id_proveedor, id_material, fecha_eta, tipo_via, po_numero, factura_numero, cantidad, observacion, estado, destino)
                 OUTPUT INSERTED.id_transito
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data.id_proveedor,
@@ -493,11 +519,12 @@ class RundownRepository:
                     data.cantidad,
                     data.observacion,
                     data.estado,
+                    data.destino,
                 ),
             )
             new_id = int(cursor.fetchone()[0])
 
-            if data.estado == "confirmado" and data.cantidad > 0:
+            if data.estado == "confirmado" and data.cantidad > 0 and data.destino == "total":
                 cursor.execute(
                     "SELECT ISNULL(deposito_en_planta, 0) FROM dbo.proveedor WHERE id_proveedor = ?",
                     (data.id_proveedor,),
@@ -597,7 +624,7 @@ class RundownRepository:
             cursor.execute(
                 """
                 SELECT t.id_material, t.id_proveedor, CAST(t.cantidad AS FLOAT), t.estado,
-                       ISNULL(p.deposito_en_planta, 0)
+                       ISNULL(p.deposito_en_planta, 0), t.destino
                 FROM dbo.rundown_transito_arribo t
                 JOIN dbo.proveedor p ON t.id_proveedor = p.id_proveedor
                 WHERE t.id_transito = ?
@@ -610,7 +637,7 @@ class RundownRepository:
 
             id_mat, id_prov, cant, est, dep_planta = str(t_row[0]), int(t_row[1]), float(t_row[2] or 0.0), str(t_row[3]), bool(t_row[4])
 
-            if est == "confirmado" and cant > 0:
+            if est == "confirmado" and cant > 0 and str(t_row[5]) == "total":
                 cursor.execute("SELECT TOP 1 id_usuario FROM dbo.usuario WHERE activo = 1 ORDER BY id_usuario ASC")
                 u_row = cursor.fetchone()
                 default_uid = int(u_row[0]) if u_row else 1
@@ -974,6 +1001,7 @@ class RundownRepository:
         observacion: Optional[str] = None,
         fecha_origen: Optional[date] = None,
         estado: str = "planificado",
+        destino: str = "total",
     ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -982,42 +1010,42 @@ class RundownRepository:
                 cursor.execute(
                     """
                     DELETE FROM dbo.rundown_transito_arribo
-                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ?
+                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ? AND destino = ?
                     """,
-                    (id_proveedor, id_material, fecha_origen, tipo_via),
+                    (id_proveedor, id_material, fecha_origen, tipo_via, destino),
                 )
                 if cursor.rowcount == 0:
                     cursor.execute(
                         """
                         DELETE FROM dbo.rundown_transito_arribo
-                        WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ?
+                        WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND destino = ?
                         """,
-                        (id_proveedor, id_material, fecha_origen),
+                        (id_proveedor, id_material, fecha_origen, destino),
                     )
 
             if cantidad == 0:
                 cursor.execute(
                     """
                     DELETE FROM dbo.rundown_transito_arribo
-                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ?
+                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ? AND destino = ?
                     """,
-                    (id_proveedor, id_material, fecha_eta, tipo_via),
+                    (id_proveedor, id_material, fecha_eta, tipo_via, destino),
                 )
                 if cursor.rowcount == 0:
                     cursor.execute(
                         """
                         DELETE FROM dbo.rundown_transito_arribo
-                        WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ?
+                        WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND destino = ?
                         """,
-                        (id_proveedor, id_material, fecha_eta),
+                        (id_proveedor, id_material, fecha_eta, destino),
                     )
             else:
                 cursor.execute(
                     """
                     SELECT id_transito FROM dbo.rundown_transito_arribo
-                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ?
+                    WHERE id_proveedor = ? AND id_material = ? AND fecha_eta = ? AND tipo_via = ? AND destino = ?
                     """,
-                    (id_proveedor, id_material, fecha_eta, tipo_via),
+                    (id_proveedor, id_material, fecha_eta, tipo_via, destino),
                 )
                 row = cursor.fetchone()
                 if row:
@@ -1037,10 +1065,10 @@ class RundownRepository:
                     cursor.execute(
                         """
                         INSERT INTO dbo.rundown_transito_arribo
-                        (id_proveedor, id_material, fecha_eta, tipo_via, po_numero, factura_numero, cantidad, observacion, estado)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (id_proveedor, id_material, fecha_eta, tipo_via, po_numero, factura_numero, cantidad, observacion, estado, destino)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (id_proveedor, id_material, fecha_eta, tipo_via, po_numero, factura_numero, cantidad, observacion, estado),
+                        (id_proveedor, id_material, fecha_eta, tipo_via, po_numero, factura_numero, cantidad, observacion, estado, destino),
                     )
             conn.commit()
             return True

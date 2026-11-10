@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { DateInputAR } from "../components/DateInputAR";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -847,8 +848,7 @@ export function Remitos() {
                   <Calendar className="w-3.5 h-3.5 text-slate-500" />
                   <span>Fecha de Emisión / Factura</span>
                 </Label>
-                <Input
-                  type="date"
+                <DateInputAR
                   value={newForm.fecha_emision}
                   onChange={(e) => setNewForm({ ...newForm, fecha_emision: e.target.value })}
                   className="h-9 text-xs font-mono"
@@ -1062,8 +1062,7 @@ export function Remitos() {
                     <Calendar className="w-3.5 h-3.5 text-slate-500" />
                     <span>Fecha Real de Llegada a Depósito:</span>
                   </Label>
-                  <Input
-                    type="date"
+                  <DateInputAR
                     value={recepcionFecha}
                     onChange={(e) => setRecepcionFecha(e.target.value)}
                     className="h-8 text-xs font-mono w-40"

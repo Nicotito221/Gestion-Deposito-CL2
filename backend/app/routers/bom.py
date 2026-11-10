@@ -1,20 +1,26 @@
 import os
 import shutil
 import tempfile
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+
+from app.core.auth_deps import require_editor_planificacion, require_user
 
 from app.repositories.bom_repository import BomRepository
 from app.schemas.bom import (
     BomEstructuraResponse,
+    BomExtensionImportResult,
+    BomExtensionItem,
+    BomExtensionResult,
+    BomExtensionUpsert,
     BomImportResult,
     BomVersionOut,
     SetComponenteCreate,
     SetComponenteOut,
     SetComponenteUpdate,
 )
-from app.services.bom_service import BomService
+from app.services.bom_service import BomExtensionError, BomService
 
 router = APIRouter(prefix="/api/bom", tags=["BOM"])
 _repository = BomRepository()
@@ -198,6 +204,65 @@ def upload_bom(file: UploadFile = File(...)) -> BomImportResult:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Fallo durante la importación de la receta BOM: {err}",
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        if os.path.exists(temp_dir):
+            os.rmdir(temp_dir)
+
+
+@router.get("/extension", response_model=List[BomExtensionItem])
+def listar_extension(_: Dict[str, Any] = Depends(require_user)) -> List[BomExtensionItem]:
+    return _bom_service.listar_extension()
+
+
+@router.put("/extension", response_model=BomExtensionResult)
+def guardar_extension(
+    data: BomExtensionUpsert,
+    payload: Dict[str, Any] = Depends(require_editor_planificacion),
+) -> BomExtensionResult:
+    if data.id_padre == data.id_hijo:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El padre y el componente no pueden ser el mismo PN.")
+    id_usuario = payload.get("id_usuario")
+    try:
+        return _bom_service.guardar_extension(data, int(id_usuario) if id_usuario is not None else None)
+    except BomExtensionError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+
+
+@router.delete("/extension/{id_extension}", response_model=BomExtensionResult)
+def eliminar_extension(
+    id_extension: int,
+    _: Dict[str, Any] = Depends(require_editor_planificacion),
+) -> BomExtensionResult:
+    try:
+        return _bom_service.eliminar_extension(id_extension)
+    except BomExtensionError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+
+
+@router.post("/extension/importar", response_model=BomExtensionImportResult)
+def importar_extension(
+    file: UploadFile = File(...),
+    payload: Dict[str, Any] = Depends(require_editor_planificacion),
+) -> BomExtensionImportResult:
+    temp_dir = tempfile.mkdtemp()
+    nombre = os.path.basename(file.filename or "bom_complementaria.xlsx")
+    temp_path = os.path.join(temp_dir, nombre)
+    id_usuario = payload.get("id_usuario")
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return _bom_service.importar_extension(
+            temp_path, nombre, int(id_usuario) if id_usuario is not None else None
+        )
+    except BomExtensionError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Fallo durante la importación de la BOM complementaria: {err}",
         )
     finally:
         if os.path.exists(temp_path):

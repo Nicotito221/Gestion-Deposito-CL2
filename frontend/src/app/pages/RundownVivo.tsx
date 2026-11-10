@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { DateInputAR } from "../components/DateInputAR";
 import { useSearchParams } from "react-router";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -673,7 +674,7 @@ export function RundownVivo() {
     }
     setIsSavingTransito(true);
     try {
-      const res = await createRundownTransito(transitoForm);
+      const res = await createRundownTransito({ ...transitoForm, destino: alcance });
       toast.success(res.mensaje);
       setTransitoModalOpen(false);
       await fetchRundown();
@@ -801,6 +802,7 @@ export function RundownVivo() {
         observacion: ingresoEditForm.observacion.trim() || undefined,
         fecha_origen: isShifted ? ingresoEditForm.fecha_origen : undefined,
         estado: ingresoEditForm.estado,
+        destino: alcance,
       });
       toast.success(
         isShifted
@@ -832,6 +834,7 @@ export function RundownVivo() {
             fecha_eta: ingresoEditForm.fecha_eta,
             tipo_via: ingresoEditForm.tipo_via,
             cantidad: 0,
+            destino: alcance,
           });
           if (ingresoEditForm.fecha_origen && ingresoEditForm.fecha_origen !== ingresoEditForm.fecha_eta) {
             await upsertRundownIngresoDia({
@@ -840,6 +843,7 @@ export function RundownVivo() {
               fecha_eta: ingresoEditForm.fecha_origen,
               tipo_via: ingresoEditForm.tipo_via,
               cantidad: 0,
+              destino: alcance,
             });
           }
           toast.success("Pedido eliminado correctamente");
@@ -956,6 +960,7 @@ export function RundownVivo() {
         tipo_via,
         cantidad,
         fecha_origen,
+        destino: alcance,
       });
       toast.success(`Pedido desplazado del ${fecha_origen} al ${targetFecha}`);
       await fetchRundown(true);
@@ -2779,8 +2784,7 @@ export function RundownVivo() {
                   >
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </Button>
-                  <Input
-                    type="date"
+                  <DateInputAR
                     value={ingresoEditForm.fecha_eta}
                     onChange={(e) => handleDirectDateChange(e.target.value)}
                     className="h-8 text-xs font-mono flex-1 text-center"
@@ -3674,8 +3678,7 @@ export function RundownVivo() {
 
               <div className="space-y-1">
                 <Label>Fecha ETA (Arribo) *</Label>
-                <Input
-                  type="date"
+                <DateInputAR
                   value={transitoForm.fecha_eta}
                   onChange={(e) => setTransitoForm({ ...transitoForm, fecha_eta: e.target.value })}
                 />
@@ -4243,8 +4246,7 @@ export function RundownVivo() {
               <div className="space-y-2">
                 <Label className="text-xs font-semibold text-slate-700">Lunes de Inicio (Semana)</Label>
                 <div className="flex gap-1.5">
-                  <Input
-                    type="date"
+                  <DateInputAR
                     value={planOverrideFecha}
                     onChange={(e) => setPlanOverrideFecha(e.target.value)}
                     className="text-xs h-10 bg-white"

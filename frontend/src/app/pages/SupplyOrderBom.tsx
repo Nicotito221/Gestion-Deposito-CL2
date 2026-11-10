@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { DateInputAR } from "../components/DateInputAR";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -87,6 +88,11 @@ const TENTATIVE_MONTHS_LOOKUP: Record<string, number> = {
   dic: 12, diciembre: 12, dec: 12,
 };
 
+function isoADdMmAaaa(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}
+
 function getSecondWednesdayIso(year: number, month: number): string {
   const firstDayDow = new Date(year, month - 1, 1).getDay();
   const daysToFirstWed = (3 - firstDayDow + 7) % 7;
@@ -149,6 +155,7 @@ export function SupplyOrderBom() {
   const [isDownloadingExcel, setIsDownloadingExcel] = useState<boolean>(false);
   const [isDownloadingSap, setIsDownloadingSap] = useState<boolean>(false);
   const [sapModalOpen, setSapModalOpen] = useState<boolean>(false);
+  const [excelModalOpen, setExcelModalOpen] = useState<boolean>(false);
   const [sapAplicarCorte, setSapAplicarCorte] = useState<boolean>(true);
   const [sapFechaCorte, setSapFechaCorte] = useState<string>(() => {
     const now = new Date();
@@ -416,11 +423,17 @@ export function SupplyOrderBom() {
     }
   };
 
-  const handleDownloadExcel = async () => {
+  const handleConfirmDownloadExcel = async () => {
     setIsDownloadingExcel(true);
     try {
-      await downloadExcelConsolidado();
-      toast.success("Libro Excel consolidado descargado correctamente");
+      const corteParam = sapAplicarCorte && sapFechaCorte ? sapFechaCorte : undefined;
+      await downloadExcelConsolidado(corteParam, sapFechasTentativas);
+      toast.success(
+        corteParam
+          ? `Libro Excel descargado (desde ${isoADdMmAaaa(corteParam)})`
+          : "Libro Excel consolidado descargado (mes completo)"
+      );
+      setExcelModalOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Error al descargar Excel");
     } finally {
@@ -472,7 +485,7 @@ export function SupplyOrderBom() {
       await downloadSapPirTxt(corteParam, sapFechasTentativas);
       toast.success(
         corteParam
-          ? `Archivo SAP PIR descargado (desde ${corteParam}, solo valores > 0)`
+          ? `Archivo SAP PIR descargado (desde ${isoADdMmAaaa(corteParam)}, solo valores > 0)`
           : "Archivo SAP PIR descargado (mes completo)"
       );
       setSapModalOpen(false);
@@ -618,6 +631,58 @@ export function SupplyOrderBom() {
       toast.error(msg);
     }
   };
+
+  const fechasTentativasEditor = tentativeColumns.length > 0 && (
+    <div className="space-y-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <span className="font-semibold text-slate-900 text-xs block">
+            Fechas de meses extendidos (por defecto: 2° miércoles del mes)
+          </span>
+          <span className="text-[11px] text-slate-500 block">
+            Calculadas automáticamente en el segundo miércoles de cada mes; podés ajustarlas si hay feriados.
+          </span>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={handleResetSecondWednesdays}
+          className="h-7 px-2 text-[11px] text-blue-700 hover:text-blue-800 hover:bg-blue-50 shrink-0"
+        >
+          Restaurar 2° miércoles
+        </Button>
+      </div>
+  
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-44 overflow-y-auto">
+        {tentativeColumns
+          .filter((c) => !c.toUpperCase().includes("TOTAL"))
+          .map((col) => (
+            <div
+              key={col}
+              className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded border border-slate-200"
+            >
+              <Label className="text-xs font-semibold text-slate-700 truncate">
+                {col}
+              </Label>
+              <DateInputAR
+                value={
+                  sapFechasTentativas[col] ||
+                  resolveDefaultSecondWednesdayIso(col, calAnio)
+                }
+                onChange={(e) =>
+                  setSapFechasTentativas((prev) => ({
+                    ...prev,
+                    [col]: e.target.value,
+                  }))
+                }
+                className="h-7 text-xs font-mono max-w-[140px] bg-white px-2"
+              />
+            </div>
+          ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="p-4 sm:p-8">
@@ -927,7 +992,12 @@ export function SupplyOrderBom() {
                   variant="outline"
                   size="sm"
                   disabled={isDownloadingExcel || filteredDemand.length === 0}
-                  onClick={handleDownloadExcel}
+                  onClick={() => {
+                    if (Object.keys(sapFechasTentativas).length === 0 && tentativeColumns.length > 0) {
+                      setSapFechasTentativas(buildDefaultTentativeDates(tentativeColumns, calAnio));
+                    }
+                    setExcelModalOpen(true);
+                  }}
                   className="flex items-center gap-2 border-emerald-600 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
                 >
                   <FileSpreadsheet className={`w-4 h-4 ${isDownloadingExcel ? "animate-spin" : ""}`} />
@@ -1409,20 +1479,19 @@ export function SupplyOrderBom() {
                           <TableHead>Descripción Hijo</TableHead>
                           <TableHead className="text-right">Cantidad / Uso</TableHead>
                           <TableHead>Unidad</TableHead>
-                          <TableHead className="text-center w-20">Secuencia</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {loadingEstructura ? (
                           <TableRow>
-                            <TableCell colSpan={8} className="text-center text-slate-400 py-10">
+                            <TableCell colSpan={7} className="text-center text-slate-400 py-10">
                               <RefreshCw className="w-5 h-5 animate-spin mx-auto text-blue-600 mb-2" />
                               <span className="text-xs">Cargando componentes de la página {pageEstructura}...</span>
                             </TableCell>
                           </TableRow>
                         ) : bomEstructura.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={8} className="text-center text-slate-400 py-8">
+                            <TableCell colSpan={7} className="text-center text-slate-400 py-8">
                               No se encontraron componentes en la versión activa de BOM
                             </TableCell>
                           </TableRow>
@@ -1461,7 +1530,6 @@ export function SupplyOrderBom() {
                                 {it.cantidad.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                               </TableCell>
                               <TableCell className="text-xs text-slate-600">{it.unidad}</TableCell>
-                              <TableCell className="text-center font-mono text-xs text-slate-400">{it.orden}</TableCell>
                             </TableRow>
                           ))
                         )}
@@ -1733,6 +1801,65 @@ export function SupplyOrderBom() {
         onSaved={fetchData}
       />
 
+      <Dialog open={excelModalOpen} onOpenChange={setExcelModalOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-900">
+              <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+              <span>Exportar Demanda, BOM y Consumo (.xlsx)</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div className="space-y-3 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sapAplicarCorte}
+                  onChange={(e) => setSapAplicarCorte(e.target.checked)}
+                  className="mt-0.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 h-4 w-4"
+                />
+                <div className="space-y-0.5">
+                  <span className="font-semibold text-slate-900 text-xs block">Aplicar fecha de corte</span>
+                  <span className="text-[11px] text-slate-500 block">
+                    Omite del Excel los días anteriores a la fecha elegida; los totales se recalculan sin ellos.
+                  </span>
+                </div>
+              </label>
+
+              {sapAplicarCorte && (
+                <div className="pl-6 pt-1 flex items-center gap-2">
+                  <Label className="text-xs font-semibold text-slate-700 whitespace-nowrap">
+                    Fecha de corte (desde):
+                  </Label>
+                  <DateInputAR
+                    value={sapFechaCorte}
+                    onChange={(e) => setSapFechaCorte(e.target.value)}
+                    className="h-8 text-xs font-mono max-w-[160px] bg-white"
+                  />
+                </div>
+              )}
+            </div>
+            {fechasTentativasEditor}
+          </div>
+
+          <DialogFooter className="pt-2 flex items-center justify-between">
+            <Button variant="outline" size="sm" onClick={() => setExcelModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmDownloadExcel}
+              disabled={isDownloadingExcel}
+              className="bg-emerald-600 text-white hover:bg-emerald-700 gap-1.5"
+            >
+              <FileSpreadsheet className={`w-3.5 h-3.5 ${isDownloadingExcel ? "animate-spin" : ""}`} />
+              <span>{isDownloadingExcel ? "Generando Excel..." : "Descargar Excel"}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* MODAL EXPORTACIÓN SAP PIR CON CORTE DE FECHA */}
       <Dialog open={sapModalOpen} onOpenChange={setSapModalOpen}>
         <DialogContent className="sm:max-w-lg">
@@ -1781,73 +1908,21 @@ export function SupplyOrderBom() {
                     <Label className="text-xs font-semibold text-slate-700 whitespace-nowrap">
                       Fecha de corte (desde):
                     </Label>
-                    <Input
-                      type="date"
+                    <DateInputAR
                       value={sapFechaCorte}
                       onChange={(e) => setSapFechaCorte(e.target.value)}
                       className="h-8 text-xs font-mono max-w-[160px] bg-white"
                     />
                   </div>
                   <div className="p-2 bg-amber-50/70 border border-amber-200 rounded text-[11px] text-amber-900">
-                    • <b>Días anteriores al {sapFechaCorte} y valores en 0:</b> no aparecerán en el TXT.<br />
-                    • <b>Días desde el {sapFechaCorte}:</b> se exportarán únicamente los valores <code>&gt; 0</code>.
+                    • <b>Días anteriores al {isoADdMmAaaa(sapFechaCorte)} y valores en 0:</b> no aparecerán en el TXT.<br />
+                    • <b>Días desde el {isoADdMmAaaa(sapFechaCorte)}:</b> se exportarán únicamente los valores <code>&gt; 0</code>.
                   </div>
                 </div>
               )}
             </div>
 
-            {tentativeColumns.length > 0 && (
-              <div className="space-y-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <span className="font-semibold text-slate-900 text-xs block">
-                      Fechas de meses extendidos (por defecto: 2° miércoles del mes)
-                    </span>
-                    <span className="text-[11px] text-slate-500 block">
-                      Calculadas automáticamente en el segundo miércoles de cada mes; podés ajustarlas si hay feriados.
-                    </span>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleResetSecondWednesdays}
-                    className="h-7 px-2 text-[11px] text-blue-700 hover:text-blue-800 hover:bg-blue-50 shrink-0"
-                  >
-                    Restaurar 2° miércoles
-                  </Button>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 max-h-44 overflow-y-auto">
-                  {tentativeColumns
-                    .filter((c) => !c.toUpperCase().includes("TOTAL"))
-                    .map((col) => (
-                      <div
-                        key={col}
-                        className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 rounded border border-slate-200"
-                      >
-                        <Label className="text-xs font-semibold text-slate-700 truncate">
-                          {col}
-                        </Label>
-                        <Input
-                          type="date"
-                          value={
-                            sapFechasTentativas[col] ||
-                            resolveDefaultSecondWednesdayIso(col, calAnio)
-                          }
-                          onChange={(e) =>
-                            setSapFechasTentativas((prev) => ({
-                              ...prev,
-                              [col]: e.target.value,
-                            }))
-                          }
-                          className="h-7 text-xs font-mono max-w-[140px] bg-white px-2"
-                        />
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
+            {fechasTentativasEditor}
           </div>
 
           <DialogFooter className="pt-2 flex items-center justify-between">

@@ -2,11 +2,11 @@ import csv
 import io
 import os
 from decimal import Decimal, InvalidOperation
-from typing import BinaryIO, Dict, Iterator, List, Optional, Tuple, Union
+from typing import BinaryIO, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import openpyxl
 
-from app.schemas.bom import BomParseResult, BomRelationRecord, MaterialRecord
+from app.schemas.bom import BomComponenteDirecto, BomParseResult, BomRelationRecord, MaterialRecord
 
 
 def clean_quantity(raw: Union[str, float, int, None]) -> Decimal:
@@ -76,6 +76,9 @@ class BomParser:
         materiales: Dict[str, MaterialRecord] = {}
         relaciones: List[BomRelationRecord] = []
         current_stack: Dict[int, str] = {}
+        ocurrencia_stack: Dict[int, int] = {}
+        hijos_por_ocurrencia: Dict[int, List[BomComponenteDirecto]] = {}
+        pieza_por_ocurrencia: Dict[int, str] = {}
         current_root_product: Optional[str] = None
         total_lineas = 0
         orden_secuencia = 0
@@ -106,21 +109,30 @@ class BomParser:
             elif desc and materiales[part_number].nombre == part_number:
                 materiales[part_number].nombre = desc
 
+            pieza_por_ocurrencia[total_lineas] = part_number
+
             if level == 0:
                 current_root_product = part_number
                 current_stack = {0: part_number}
+                ocurrencia_stack = {0: total_lineas}
             else:
                 if not current_root_product:
                     current_root_product = current_stack.get(0, part_number)
 
                 id_padre = current_stack.get(level - 1)
+                ocurrencia_padre = ocurrencia_stack.get(level - 1)
                 if not id_padre:
                     for l in range(level - 1, -1, -1):
                         if l in current_stack:
                             id_padre = current_stack[l]
+                            ocurrencia_padre = ocurrencia_stack.get(l)
                             break
 
                 if id_padre and id_padre != part_number:
+                    if ocurrencia_padre is not None:
+                        hijos_por_ocurrencia.setdefault(ocurrencia_padre, []).append(
+                            BomComponenteDirecto(id_hijo=part_number, cantidad=qty, unidad=unit)
+                        )
                     orden_secuencia += 1
                     relaciones.append(
                         BomRelationRecord(
@@ -136,12 +148,92 @@ class BomParser:
 
                 current_stack[level] = part_number
                 current_stack = {k: v for k, v in current_stack.items() if k <= level}
+                ocurrencia_stack[level] = total_lineas
+                ocurrencia_stack = {k: v for k, v in ocurrencia_stack.items() if k <= level}
+
+        hijos_por_padre: Dict[str, List[BomComponenteDirecto]] = {}
+        for ocurrencia in sorted(hijos_por_ocurrencia):
+            pieza = pieza_por_ocurrencia[ocurrencia]
+            if pieza not in hijos_por_padre:
+                hijos_por_padre[pieza] = hijos_por_ocurrencia[ocurrencia]
 
         return BomParseResult(
             materiales=materiales,
             relaciones=relaciones,
-            total_lineas_archivo=total_lineas
+            total_lineas_archivo=total_lineas,
+            hijos_por_padre=hijos_por_padre,
         )
+
+    @staticmethod
+    def parse_relaciones_planas(source: Union[str, BinaryIO, io.BytesIO]) -> BomParseResult:
+        materiales: Dict[str, MaterialRecord] = {}
+        hijos_por_padre: Dict[str, List[BomComponenteDirecto]] = {}
+        total_lineas = 0
+        padre_actual: Optional[str] = None
+
+        for raw_cols in BomParser._get_row_iterator(source):
+            total_lineas += 1
+            cols = [str(c).strip() if c is not None else "" for c in raw_cols] + [""] * 5
+            padre_raw, hijo_raw, desc, qty_raw, unidad_raw = cols[0], cols[1], cols[2], cols[3], cols[4]
+
+            if padre_raw:
+                padre_actual = padre_raw.upper()[:30]
+            if not padre_actual or not hijo_raw:
+                continue
+
+            hijo = hijo_raw.upper()[:30]
+            if hijo == padre_actual:
+                continue
+            unidad = (unidad_raw or "UN")[:10]
+            cantidad = clean_quantity(qty_raw)
+            if cantidad <= 0:
+                continue
+
+            if padre_actual not in materiales:
+                materiales[padre_actual] = MaterialRecord(id_material=padre_actual, nombre=padre_actual, unidad="UN")
+            if hijo not in materiales:
+                materiales[hijo] = MaterialRecord(id_material=hijo, nombre=(desc or hijo)[:100], unidad=unidad)
+            elif desc and materiales[hijo].nombre == hijo:
+                materiales[hijo].nombre = desc[:100]
+
+            hijos_por_padre.setdefault(padre_actual, []).append(
+                BomComponenteDirecto(id_hijo=hijo, cantidad=cantidad, unidad=unidad)
+            )
+
+        return BomParseResult(
+            materiales=materiales,
+            relaciones=[],
+            total_lineas_archivo=total_lineas,
+            hijos_por_padre=hijos_por_padre,
+        )
+
+    @staticmethod
+    def explotar(
+        hijos_por_padre: Dict[str, List[BomComponenteDirecto]],
+    ) -> Dict[str, Dict[str, Tuple[Decimal, str]]]:
+        memo: Dict[str, Dict[str, Tuple[Decimal, str]]] = {}
+
+        def explotar_pieza(pieza: str, en_curso: Set[str]) -> Dict[str, Tuple[Decimal, str]]:
+            if pieza in memo:
+                return memo[pieza]
+            en_curso.add(pieza)
+            resultado: Dict[str, Tuple[Decimal, str]] = {}
+
+            def acumular(insumo: str, factor: Decimal, unidad: str) -> None:
+                previo = resultado.get(insumo)
+                resultado[insumo] = (previo[0] + factor, previo[1]) if previo else (factor, unidad)
+
+            for comp in hijos_por_padre.get(pieza, []):
+                acumular(comp.id_hijo, comp.cantidad, comp.unidad)
+                if comp.id_hijo in hijos_por_padre and comp.id_hijo not in en_curso:
+                    for insumo, (factor, unidad) in explotar_pieza(comp.id_hijo, en_curso).items():
+                        acumular(insumo, factor * comp.cantidad, unidad)
+
+            en_curso.discard(pieza)
+            memo[pieza] = resultado
+            return resultado
+
+        return {pieza: explotar_pieza(pieza, set()) for pieza in hijos_por_padre}
 
     @staticmethod
     def _get_row_iterator(source: Union[str, BinaryIO, io.BytesIO]) -> Iterator[List[str]]:

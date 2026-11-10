@@ -18,6 +18,7 @@ import { Remitos } from "./pages/Remitos";
 import { OrderDetail } from "./pages/OrderDetail";
 import { CyclicCount } from "./pages/CyclicCount";
 import { SupplyOrderBom } from "./pages/SupplyOrderBom";
+import { DespachosTerceros } from "./pages/DespachosTerceros";
 import { MaterialConfig } from "./pages/MaterialConfig";
 import { UserManagement } from "./pages/UserManagement";
 
@@ -158,6 +159,18 @@ export const router = createBrowserRouter([
             blockedSectors={["CL2"]}
           >
             <SupplyOrderBom />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "despachos-terceros",
+        element: (
+          <ProtectedRoute
+            roles={["administrador", "gerente", "jefe", "analista", "operario_planta", "supervisor"]}
+            blockedRoles={["deposito", "operario_deposito"]}
+            blockedSectors={["CL2"]}
+          >
+            <DespachosTerceros />
           </ProtectedRoute>
         ),
       },

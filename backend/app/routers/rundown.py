@@ -20,6 +20,7 @@ from app.schemas.rundown import (
     RundownParametroMaterialCreate,
     RundownParametroMaterialItem,
     RundownLoteMaterialUpdate,
+    RundownPeriodoItem,
     RundownPeriodoProyeccionItem,
     RundownPeriodoProyeccionCreate,
     PlanSemanalPreviewOut,
@@ -180,6 +181,13 @@ def save_calendario(
 ):
     service.save_calendario_mes(data)
     return {"mensaje": f"Calendario productivo para {data.anio}-{data.mes:02d} guardado exitosamente"}
+
+
+@router.get("/meses-disponibles", response_model=List[RundownPeriodoItem])
+def get_meses_disponibles(
+    service: RundownService = Depends(get_rundown_service),
+) -> List[RundownPeriodoItem]:
+    return service.get_meses_disponibles()
 
 
 @router.get("/periodos-proyeccion", response_model=List[RundownPeriodoProyeccionItem])

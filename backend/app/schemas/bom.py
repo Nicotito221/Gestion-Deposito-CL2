@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Dict, List, Optional
 
@@ -22,10 +22,18 @@ class BomRelationRecord:
 
 
 @dataclass(slots=True)
+class BomComponenteDirecto:
+    id_hijo: str
+    cantidad: Decimal
+    unidad: str
+
+
+@dataclass(slots=True)
 class BomParseResult:
     materiales: Dict[str, MaterialRecord]
     relaciones: List[BomRelationRecord]
     total_lineas_archivo: int
+    hijos_por_padre: Dict[str, List[BomComponenteDirecto]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -40,6 +48,53 @@ class BomImportResult:
 
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class BomExtensionItem(BaseModel):
+    id_extension: int
+    id_padre: str
+    nombre_padre: str
+    id_hijo: str
+    nombre_hijo: str
+    cantidad: float
+    unidad: str
+    observacion: Optional[str] = None
+
+
+class BomExtensionUpsert(BaseModel):
+    id_padre: str = Field(..., min_length=1, max_length=30)
+    nombre_padre: Optional[str] = Field(None, max_length=100)
+    id_hijo: str = Field(..., min_length=1, max_length=30)
+    nombre_hijo: Optional[str] = Field(None, max_length=100)
+    cantidad: float = Field(..., gt=0)
+    unidad: str = Field("UN", min_length=1, max_length=10)
+    observacion: Optional[str] = Field(None, max_length=250)
+
+    @field_validator("id_padre", "id_hijo")
+    @classmethod
+    def _codigo(cls, v: str) -> str:
+        limpio = v.strip().upper()
+        if not limpio:
+            raise ValueError("El código no puede estar vacío.")
+        return limpio
+
+    @field_validator("unidad")
+    @classmethod
+    def _unidad(cls, v: str) -> str:
+        return v.strip().upper() or "UN"
+
+
+class BomExtensionResult(BaseModel):
+    ok: bool
+    filas_explosion: int
+
+
+class BomExtensionImportResult(BaseModel):
+    nombre_archivo: str
+    productos_importados: int
+    lineas_importadas: int
+    nuevos_materiales_registrados: int
+    filas_explosion: int
 
 
 class BomVersionOut(BaseModel):

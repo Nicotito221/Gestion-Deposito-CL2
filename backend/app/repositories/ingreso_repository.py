@@ -459,6 +459,7 @@ class IngresoRepository:
                         SELECT TOP 1 id_transito, fecha_eta, cantidad
                         FROM dbo.rundown_transito_arribo
                         WHERE id_material = ?
+                          AND destino = 'total'
                           AND (
                             (factura_numero IS NOT NULL AND LTRIM(RTRIM(factura_numero)) = ?)
                             OR (po_numero IS NOT NULL AND ? IS NOT NULL AND LTRIM(RTRIM(po_numero)) = ?)

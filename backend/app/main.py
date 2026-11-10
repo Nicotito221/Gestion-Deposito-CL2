@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_db_connection, CORS_ORIGINS, CL2_SYNC_ENABLED, CL2_SYNC_INTERVAL_SECONDS
-from app.routers import auth, bom, supply, rundown, stock, conteo, pedidos, usuarios, dashboard, ingreso, auditoria
+from app.routers import auth, bom, supply, rundown, stock, conteo, pedidos, usuarios, dashboard, ingreso, auditoria, despacho
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ app.include_router(pedidos.router)
 app.include_router(dashboard.router)
 app.include_router(ingreso.router, prefix="/api/ingresos")
 app.include_router(auditoria.router)
+app.include_router(despacho.router)
 
 
 @app.get("/api/health", tags=["Health"])

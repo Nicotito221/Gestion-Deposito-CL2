@@ -33,9 +33,40 @@ MONTHS_LOOKUP = {
 }
 
 
+_DDL_PLAN_MES_DIARIO = """
+IF OBJECT_ID('dbo.plan_mes_diario', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.plan_mes_diario (
+        anio INT NOT NULL,
+        mes INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+        id_importacion INT NULL,
+        fecha_carga DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+        CONSTRAINT PK_plan_mes_diario PRIMARY KEY (anio, mes)
+    );
+END
+"""
+
+
 class SupplyRepository:
     def __init__(self, connection_factory=get_db_connection) -> None:
         self._get_connection = connection_factory
+
+    @staticmethod
+    def _leer_meses_diarios(cursor: pyodbc.Cursor) -> set[Tuple[int, int]]:
+        cursor.execute(_DDL_PLAN_MES_DIARIO)
+        cursor.execute("SELECT anio, mes FROM dbo.plan_mes_diario")
+        return {(int(r[0]), int(r[1])) for r in cursor.fetchall()}
+
+    def get_meses_diarios(self) -> set[Tuple[int, int]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            meses = self._leer_meses_diarios(cursor)
+            conn.commit()
+            return meses
+        finally:
+            cursor.close()
+            conn.close()
 
     def get_consolidated_summary(self) -> SupplySummaryOut:
         conn: pyodbc.Connection = self._get_connection()
@@ -96,20 +127,8 @@ class SupplyRepository:
             rows = cursor.fetchall()
 
             if rows:
-                cursor.execute(
-                    """
-                    SELECT YEAR(fecha) AS anio, MONTH(fecha) AS mes, COUNT(DISTINCT fecha) AS cant_fechas
-                    FROM dbo.produccion_planificada
-                    WHERE fecha >= ?
-                    GROUP BY YEAR(fecha), MONTH(fecha)
-                    """,
-                    (firm_start_date,),
-                )
-                meses_info = cursor.fetchall()
-                daily_months_set = {
-                    (int(r[0]), int(r[1]))
-                    for r in meses_info
-                    if int(r[2]) > 1 or (int(r[0]), int(r[1])) == (firm_year, firm_month)
+                daily_months_set = {(firm_year, firm_month)} | {
+                    ym for ym in self._leer_meses_diarios(cursor) if ym >= (firm_year, firm_month)
                 }
 
                 daily_dates: Dict[datetime.date, str] = {}
@@ -465,6 +484,8 @@ class SupplyRepository:
                     break
 
             daily_dates_seen: set[datetime.date] = set()
+            meses_tentativos: set[Tuple[int, int]] = set()
+            meses_ya_diarios = self._leer_meses_diarios(cursor)
 
             for it in items:
                 has_any_qty = False
@@ -500,7 +521,10 @@ class SupplyRepository:
                                     break
                                 has_any_qty = True
                                 year = plan_year + (1 if m_val < firm_month_detected else 0)
+                                if (year, m_val) in meses_ya_diarios:
+                                    break
                                 fecha_date = get_second_wednesday(year, m_val)
+                                meses_tentativos.add((year, m_val))
                                 key = (it.part_number, fecha_date)
                                 planned_dict[key] = planned_dict.get(key, 0.0) + float(qty)
                                 break
@@ -511,6 +535,21 @@ class SupplyRepository:
                         planned_dict[key] = 0.0
 
             daily_months = {(d.year, d.month) for d in daily_dates_seen}
+            if daily_months:
+                cursor.execute(_DDL_PLAN_MES_DIARIO)
+                for anio_d, mes_d in daily_months:
+                    cursor.execute(
+                        """
+                        MERGE dbo.plan_mes_diario AS target
+                        USING (SELECT ? AS anio, ? AS mes) AS source
+                        ON target.anio = source.anio AND target.mes = source.mes
+                        WHEN MATCHED THEN
+                            UPDATE SET id_importacion = ?, fecha_carga = SYSDATETIME()
+                        WHEN NOT MATCHED THEN
+                            INSERT (anio, mes, id_importacion) VALUES (?, ?, ?);
+                        """,
+                        (anio_d, mes_d, id_importacion, anio_d, mes_d, id_importacion),
+                    )
             if not daily_months:
                 daily_months = {(plan_year, firm_month_detected)}
 
@@ -573,6 +612,27 @@ class SupplyRepository:
                     """,
                     staging_rows,
                 )
+
+                for anio_t, mes_t in meses_tentativos - daily_months:
+                    cursor.execute(
+                        """
+                        DELETE pp
+                        FROM dbo.produccion_planificada pp
+                        WHERE pp.fecha >= ? AND pp.fecha < ?
+                          AND EXISTS (
+                              SELECT 1 FROM #staging_plan s
+                              WHERE s.id_producto = pp.id_producto
+                                AND s.fecha >= ? AND s.fecha < ?
+                                AND s.fecha <> pp.fecha
+                          )
+                        """,
+                        (
+                            datetime.date(anio_t, mes_t, 1),
+                            datetime.date(anio_t + (mes_t // 12), mes_t % 12 + 1, 1),
+                            datetime.date(anio_t, mes_t, 1),
+                            datetime.date(anio_t + (mes_t // 12), mes_t % 12 + 1, 1),
+                        ),
+                    )
 
                 cursor.execute(
                     """

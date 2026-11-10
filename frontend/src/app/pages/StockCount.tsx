@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { DateInputAR } from "../components/DateInputAR";
 import { useNavigate } from "react-router";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -938,9 +939,8 @@ export function StockCount() {
                   >
                     Hoy
                   </Button>
-                  <Input
+                  <DateInputAR
                     id="fecha-impacto"
-                    type="date"
                     value={fechaImpacto}
                     onChange={(e) => setFechaImpacto(e.target.value)}
                     className="w-32 sm:w-36 h-9 text-xs font-mono"
@@ -2149,8 +2149,7 @@ export function StockCount() {
                 <Label className="text-[11px] font-bold text-slate-600 block mb-1">
                   Fecha Requerida
                 </Label>
-                <Input
-                  type="date"
+                <DateInputAR
                   value={sugerenciaFecha}
                   onChange={(e) => {
                     setSugerenciaFecha(e.target.value);

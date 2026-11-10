@@ -1,7 +1,8 @@
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
 
+from app.repositories.despacho_repository import DespachoRepository
 from app.repositories.rundown_repository import RundownRepository
 from app.schemas.rundown import (
     RundownDayCell,
@@ -40,8 +41,33 @@ DIAS_ESP = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
 
 class RundownService:
-    def __init__(self, repository: Optional[RundownRepository] = None) -> None:
+    def __init__(
+        self,
+        repository: Optional[RundownRepository] = None,
+        despacho_repository: Optional[DespachoRepository] = None,
+    ) -> None:
         self._repo = repository or RundownRepository()
+        self._despacho_repo = despacho_repository or DespachoRepository()
+
+    @staticmethod
+    def _a_periodos(meses_raw: List[Dict[str, object]]) -> List[RundownPeriodoItem]:
+        return [
+            RundownPeriodoItem(
+                periodo=str(m["periodo"]),
+                anio=int(m["anio"]),
+                mes=int(m["mes"]),
+                label=str(m["label"]),
+                es_firme=bool(m["es_firme"]),
+                es_finalizado=bool(m.get("es_finalizado", False)),
+                es_proyectado_manual=bool(m.get("es_proyectado_manual", False)),
+                periodo_copia=m.get("periodo_copia"),
+                total_volumen=float(m.get("total_volumen", 0.0)),
+            )
+            for m in meses_raw
+        ]
+
+    def get_meses_disponibles(self) -> List[RundownPeriodoItem]:
+        return self._a_periodos(self._repo.get_meses_disponibles())
 
     def get_supplier_rundown(
         self,
@@ -106,20 +132,7 @@ class RundownService:
         )
 
         meses_raw = self._repo.get_meses_disponibles()
-        meses_disponibles = [
-            RundownPeriodoItem(
-                periodo=m["periodo"],
-                anio=m["anio"],
-                mes=m["mes"],
-                label=m["label"],
-                es_firme=m["es_firme"],
-                es_finalizado=bool(m.get("es_finalizado", False)),
-                es_proyectado_manual=bool(m.get("es_proyectado_manual", False)),
-                periodo_copia=m.get("periodo_copia"),
-                total_volumen=float(m.get("total_volumen", 0.0)),
-            )
-            for m in meses_raw
-        ]
+        meses_disponibles = self._a_periodos(meses_raw)
 
         if periodo:
             target_periodo = periodo
@@ -190,6 +203,12 @@ class RundownService:
                 daily_p = round(tot_p / cant_laborales, 2) if cant_laborales > 0 else 0.0
                 prod_map[p] = {d: (daily_p if d in dias_laborales else 0.0) for d in dates_timeline}
 
+        despachos_map = self._despacho_repo.get_diario(all_products, d_start, d_end)
+        for p, por_dia in despachos_map.items():
+            destino = prod_map.setdefault(p, {})
+            for d, cant in por_dia.items():
+                destino[d] = destino.get(d, 0.0) + cant
+
         transitos = self._repo.get_transitos(prov_ids, d_start, d_end)
         ajustes_map = self._repo.get_stock_ajustes(prov_ids, d_start, d_end)
         consumos_manuales_map = self._repo.get_consumos_manuales(
@@ -203,8 +222,18 @@ class RundownService:
 
         transito_map: Dict[Tuple[str, date, str], float] = {}
         transito_meta_map: Dict[Tuple[str, date, str], Dict[str, Any]] = {}
+        envios_planta_map: Dict[Tuple[str, date], float] = {}
+        envios_planta_meta: Dict[Tuple[str, date], Dict[str, Any]] = {}
         for t in transitos:
             t_date = date.fromisoformat(t.fecha_eta)
+            if t.destino == "planta":
+                key_envio = (t.id_material, t_date)
+                envios_planta_map[key_envio] = envios_planta_map.get(key_envio, 0.0) + t.cantidad
+                envios_planta_meta.setdefault(
+                    key_envio,
+                    {"po_numero": t.po_numero, "factura_numero": t.factura_numero, "observacion": t.observacion, "estado": t.estado},
+                )
+                continue
             key = (t.id_material, t_date, t.tipo_via)
             transito_map[key] = transito_map.get(key, 0.0) + t.cantidad
             if key not in transito_meta_map:
@@ -270,6 +299,12 @@ class RundownService:
 
                 ped_info = pedidos_planta_map.get((param["id_material"], d))
                 entregas_planta = ped_info["cantidad"] if ped_info else 0.0
+                envio_planificado = (
+                    envios_planta_map.get((param["id_material"], d), 0.0)
+                    if alcance == "planta" and not ped_info and not es_dep_en_planta
+                    else 0.0
+                )
+                entregas_planta += envio_planificado
 
                 maritimo = transito_map.get((param["id_material"], d, "Maritimo"), 0.0)
                 aereo = transito_map.get((param["id_material"], d, "Aereo"), 0.0)
@@ -342,7 +377,16 @@ class RundownService:
                 a_meta = transito_meta_map.get((param["id_material"], d, "Aereo"), {})
                 l_meta = transito_meta_map.get((param["id_material"], d, "Local"), {})
 
-                if alcance == "planta" and not es_dep_en_planta:
+                if alcance == "planta" and not es_dep_en_planta and envio_planificado > 0:
+                    envio_meta = envios_planta_meta.get((param["id_material"], d), {})
+                    local_po = envio_meta.get("po_numero")
+                    local_factura = envio_meta.get("factura_numero")
+                    local_obs = envio_meta.get("observacion")
+                    local_estado = envio_meta.get("estado")
+                    maritimo_mostrar = 0.0
+                    aereo_mostrar = 0.0
+                    local_mostrar = entregas_planta
+                elif alcance == "planta" and not es_dep_en_planta:
                     local_po = f"Ped #{ped_info['id_pedido']}" if (ped_info and ped_info.get("id_pedido")) else None
                     local_factura = ped_info.get("id_remito") if ped_info else None
                     local_obs = f"Remito {ped_info['id_remito']}" if (ped_info and ped_info.get("id_remito")) else None
@@ -440,8 +484,17 @@ class RundownService:
             doh_sugerido_planta=float(proveedor.get("doh_sugerido_planta", 1.0)) if not is_multi_prov else 1.0,
         )
 
+    def _resolver_destino(self, id_proveedor: int, destino: str) -> str:
+        if destino == "planta" and self._repo.es_deposito_en_planta(id_proveedor):
+            return "total"
+        return destino
+
     def add_transito(self, data: RundownTransitoCreate) -> int:
-        return self._repo.create_transito(data)
+        destino = self._resolver_destino(data.id_proveedor, data.destino)
+        cambios: Dict[str, Any] = {"destino": destino}
+        if destino == "planta":
+            cambios["tipo_via"] = "Local"
+        return self._repo.create_transito(data.model_copy(update=cambios))
 
     def delete_transito(self, id_transito: int) -> bool:
         deleted = self._repo.delete_transito(id_transito)
@@ -492,17 +545,19 @@ class RundownService:
         return True
 
     def upsert_ingreso_dia(self, data: RundownIngresoDiaUpdate) -> bool:
+        destino = self._resolver_destino(data.id_proveedor, data.destino)
         return self._repo.upsert_ingreso_dia(
             id_proveedor=data.id_proveedor,
             id_material=data.id_material,
             fecha_eta=data.fecha_eta,
-            tipo_via=data.tipo_via,
+            tipo_via="Local" if destino == "planta" else data.tipo_via,
             cantidad=data.cantidad,
             po_numero=data.po_numero,
             factura_numero=data.factura_numero,
             observacion=data.observacion,
             fecha_origen=data.fecha_origen,
             estado=data.estado,
+            destino=destino,
         )
 
     def upsert_consumo_dia(self, data: RundownConsumoDiaUpdate, id_usuario: Optional[int] = None) -> bool:
@@ -849,8 +904,13 @@ class RundownService:
 
         prev_transitos = self._repo.get_transitos(param["id_proveedor"], start_sim, end_prev)
         transito_map: Dict[Tuple[str, date, str], float] = {}
+        envios_planta_prev: Dict[date, float] = {}
         for t in prev_transitos:
             t_date = date.fromisoformat(t.fecha_eta)
+            if t.destino == "planta":
+                if t.id_material == param["id_material"]:
+                    envios_planta_prev[t_date] = envios_planta_prev.get(t_date, 0.0) + t.cantidad
+                continue
             transito_map[(t.id_material, t_date, t.tipo_via)] = transito_map.get((t.id_material, t_date, t.tipo_via), 0.0) + t.cantidad
 
         pedidos_planta_map = (
@@ -861,6 +921,7 @@ class RundownService:
 
         firm_prod_map = self._repo.get_produccion_planificada(all_products, start_sim, end_prev)
         prev_consumos_manuales = self._repo.get_consumos_manuales([param["id_material"]], start_sim, end_prev)
+        prev_despachos = self._despacho_repo.get_diario(all_products, start_sim, end_prev)
         forecast_cache: Dict[Tuple[int, int], Dict[date, float]] = {}
         cal_overrides_cache: Dict[Tuple[int, int], Dict[date, Tuple[bool, Optional[str]]]] = {}
 
@@ -912,12 +973,16 @@ class RundownService:
                             )
                     veh_prod = forecast_cache[m_key].get(curr, 0.0)
 
+                veh_prod += sum(
+                    prev_despachos.get(p["id_producto"], {}).get(curr, 0.0) * p["factor_uso"]
+                    for p in param["productos"]
+                )
                 uso = round(veh_prod * param["factor_conversion"] * (1.0 + param["scrap_porcentaje"]), 2)
             ped_info = pedidos_planta_map.get((param["id_material"], curr))
             if alcance == "planta" and not dep_planta:
                 maritimo = 0.0
                 aereo = 0.0
-                local = ped_info["cantidad"] if ped_info else 0.0
+                local = ped_info["cantidad"] if ped_info else envios_planta_prev.get(curr, 0.0)
             else:
                 maritimo = transito_map.get((param["id_material"], curr, "Maritimo"), 0.0)
                 aereo = transito_map.get((param["id_material"], curr, "Aereo"), 0.0)

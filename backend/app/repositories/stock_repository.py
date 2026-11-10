@@ -824,8 +824,10 @@ class StockRepository:
             conn.close()
 
     def _ensure_caja_tables(self, cursor: Any) -> None:
+        cursor.execute("SELECT COL_LENGTH('dbo.material', 'id_material')")
+        largo_material = int(cursor.fetchone()[0] or 50)
         cursor.execute(
-            """
+            f"""
             IF OBJECT_ID('dbo.caja_pedido', 'U') IS NULL
             BEGIN
                 CREATE TABLE dbo.caja_pedido (
@@ -841,7 +843,7 @@ class StockRepository:
                 CREATE TABLE dbo.caja_pedido_item (
                     id_caja_item INT IDENTITY(1,1) PRIMARY KEY,
                     id_caja INT NOT NULL REFERENCES dbo.caja_pedido(id_caja) ON DELETE CASCADE,
-                    id_material VARCHAR(50) NOT NULL REFERENCES dbo.material(id_material),
+                    id_material VARCHAR({largo_material}) NOT NULL REFERENCES dbo.material(id_material),
                     cantidad DECIMAL(18,4) NOT NULL
                 );
             END;

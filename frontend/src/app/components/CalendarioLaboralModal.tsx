@@ -14,6 +14,7 @@ import { CalendarDays, RefreshCw, AlertCircle, Percent, CheckCircle2 } from "luc
 import { toast } from "sonner";
 import {
   getRundownCalendarioMes,
+  getRundownMesesDisponibles,
   saveRundownCalendarioMes,
   type RundownCalendarioMesOut,
   type RundownCalendarioDia,
@@ -54,6 +55,14 @@ export function CalendarioLaboralModal({
   const [factorModalOpen, setFactorModalOpen] = useState<boolean>(false);
   const [targetDia, setTargetDia] = useState<RundownCalendarioDia | null>(null);
   const [inputFactor, setInputFactor] = useState<number>(1.0);
+  const [mesesCargados, setMesesCargados] = useState<MesDisponibleItem[]>([]);
+
+  useEffect(() => {
+    if (!open || mesesDisponibles) return;
+    getRundownMesesDisponibles()
+      .then(setMesesCargados)
+      .catch((err) => toast.error(err instanceof Error ? err.message : "Error al cargar los meses disponibles"));
+  }, [open, mesesDisponibles]);
 
   const loadCalendario = useCallback(async (anio: number, mes: number) => {
     setLoading(true);
@@ -181,14 +190,7 @@ export function CalendarioLaboralModal({
     }
   };
 
-  const listaMeses: MesDisponibleItem[] = mesesDisponibles || [
-    { periodo: "2026-09", anio: 2026, mes: 9, label: "Septiembre 2026", es_firme: true },
-    { periodo: "2026-10", anio: 2026, mes: 10, label: "Octubre 2026", es_firme: false },
-    { periodo: "2026-11", anio: 2026, mes: 11, label: "Noviembre 2026", es_firme: false },
-    { periodo: "2026-12", anio: 2026, mes: 12, label: "Diciembre 2026", es_firme: false },
-    { periodo: "2027-01", anio: 2027, mes: 1, label: "Enero 2027", es_firme: false },
-    { periodo: "2027-02", anio: 2027, mes: 2, label: "Febrero 2027", es_firme: false },
-  ];
+  const listaMeses: MesDisponibleItem[] = mesesDisponibles || mesesCargados;
 
   return (
     <>
@@ -231,7 +233,7 @@ export function CalendarioLaboralModal({
             </div>
           ) : calData ? (
             <div className="space-y-4 py-2">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div className="p-2.5 bg-emerald-50/60 border border-emerald-200 rounded-lg">
                   <span className="text-[10px] font-semibold uppercase text-emerald-700">Días Laborales</span>
                   <p className="text-xl font-black text-emerald-900 mt-0.5">{calData.dias_laborales_count}</p>
@@ -243,20 +245,6 @@ export function CalendarioLaboralModal({
                     {calData.dias.length - calData.dias_laborales_count}
                   </p>
                   <p className="text-[10px] text-slate-500">Descansos o feriados</p>
-                </div>
-                <div className="p-2.5 bg-blue-50/60 border border-blue-200 rounded-lg">
-                  <span className="text-[10px] font-semibold uppercase text-blue-700">Volumen Planificado</span>
-                  <p className="text-xl font-black text-blue-950 mt-0.5">
-                    {calData.volumen_total_planificado.toLocaleString("es-AR")}
-                  </p>
-                  <p className="text-[10px] text-blue-600">Unidades vehiculares</p>
-                </div>
-                <div className="p-2.5 bg-indigo-50/60 border border-indigo-200 rounded-lg">
-                  <span className="text-[10px] font-semibold uppercase text-indigo-700">Promedio Diario</span>
-                  <p className="text-xl font-black text-indigo-950 mt-0.5">
-                    {calData.promedio_diario_estimado.toLocaleString("es-AR")}
-                  </p>
-                  <p className="text-[10px] text-indigo-600">Vehículos / día laboral</p>
                 </div>
               </div>
 

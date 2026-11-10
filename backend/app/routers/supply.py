@@ -109,9 +109,17 @@ def consolidate_supply(
 
 
 @router.get("/exportar/excel")
-def export_excel_consolidado():
+def export_excel_consolidado(
+    fecha_corte: Optional[date] = Query(None, description="Fecha de corte. Se omiten las columnas anteriores a esta fecha."),
+    fechas_tentativas: Optional[str] = Query(None, description="JSON de fechas personalizadas por mes extendido."),
+):
     try:
-        temp_path, file_name = _service.export_excel()
+        parsed_tentativas: Optional[Dict[str, str]] = None
+        if fechas_tentativas:
+            loaded = json.loads(fechas_tentativas)
+            if isinstance(loaded, dict):
+                parsed_tentativas = {str(k): str(v) for k, v in loaded.items() if v}
+        temp_path, file_name = _service.export_excel(fecha_corte=fecha_corte, fechas_tentativas=parsed_tentativas)
         return FileResponse(
             path=temp_path,
             filename=file_name,

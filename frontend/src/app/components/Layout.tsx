@@ -13,6 +13,7 @@ import {
   Shield,
   RefreshCw,
   FileSpreadsheet,
+  Truck,
   SlidersHorizontal,
   Users,
   LogOut,
@@ -51,6 +52,7 @@ const navGroups: NavGroup[] = [
       { path: "/conteo", label: "Conteo de planta", icon: ClipboardList, roles: ["administrador", "gerente", "jefe", "analista", "contador_ciclico", "operario_planta"] },
       { path: "/rundown", label: "Rundown vivo", icon: BarChart2, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
       { path: "/suministro-bom", label: "Suministro y BOM", icon: FileSpreadsheet, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
+      { path: "/despachos-terceros", label: "Despachos a terceros", icon: Truck, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
       { path: "/stock", label: "Control Stock TBAR", icon: Layers, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
     ],
   },
@@ -118,6 +120,7 @@ function NavContent({
               item.path === "/conteo" ||
               item.path === "/rundown" ||
               item.path === "/suministro-bom" ||
+              item.path === "/despachos-terceros" ||
               item.path === "/stock" ||
               item.path === "/nuevo-pedido" ||
               item.path === "/materiales"

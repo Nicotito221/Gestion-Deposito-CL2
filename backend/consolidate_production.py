@@ -385,7 +385,7 @@ class ProductionConsolidator:
             cursor.execute(
                 """
                 SELECT TOP 1 id_version
-                FROM dbo.bom_version WITH (NOLOCK)
+                FROM dbo.bom_version
                 ORDER BY es_vigente DESC, id_version DESC
                 """
             )
@@ -394,39 +394,19 @@ class ProductionConsolidator:
                 target_version_id = int(v_row[0])
                 cursor.execute(
                     """
-                    SELECT 
-                        b.id_producto_raiz,
-                        b.id_hijo,
-                        SUM(b.cantidad),
+                    SELECT
+                        e.id_producto_raiz,
+                        e.id_material_insumo,
+                        e.factor_consumo_total,
                         COALESCE(m.nombre, ''),
                         COALESCE(m.centro, '1000')
-                    FROM dbo.bom_estructura b WITH (NOLOCK)
-                    LEFT JOIN dbo.material m WITH (NOLOCK) ON b.id_hijo = m.id_material
-                    WHERE b.id_version = ?
-                      AND b.nivel = 1
-                    GROUP BY b.id_producto_raiz, b.id_hijo, m.nombre, m.centro
+                    FROM dbo.bom_explosion_plana e
+                    LEFT JOIN dbo.material m ON e.id_material_insumo = m.id_material
+                    WHERE e.id_version = ?
                     """,
                     (target_version_id,)
                 )
                 rows = cursor.fetchall()
-
-                if not rows:
-                    cursor.execute(
-                        """
-                        SELECT 
-                            b.id_producto_raiz,
-                            b.id_hijo,
-                            SUM(b.cantidad),
-                            COALESCE(m.nombre, ''),
-                            COALESCE(m.centro, '1000')
-                        FROM dbo.bom_estructura b WITH (NOLOCK)
-                        LEFT JOIN dbo.material m WITH (NOLOCK) ON b.id_hijo = m.id_material
-                        WHERE b.id_version = ?
-                        GROUP BY b.id_producto_raiz, b.id_hijo, m.nombre, m.centro
-                        """,
-                        (target_version_id,)
-                    )
-                    rows = cursor.fetchall()
 
                 if rows:
                     for r in rows:
@@ -518,8 +498,6 @@ class ProductionConsolidator:
                         descripcion=desc,
                         centro=centro,
                     )
-        except Exception:
-            pass
         finally:
             if cursor:
                 try:
@@ -701,13 +679,6 @@ class ProductionConsolidator:
         ):
             if candidate and candidate in self.demand_lookup:
                 return self.demand_lookup[candidate]
-
-        for cand in (clean_code(b_item.codigo_tasa), clean_code(b_item.codigo_sap_padre)):
-            if len(cand) >= 10:
-                p10 = cand[:10]
-                for k, it in self.demand_lookup.items():
-                    if len(k) >= 10 and k[:10] == p10:
-                        return it
         return None
 
     def get_tentative_months(self) -> List[Tuple[int, int, str, str]]:
@@ -824,6 +795,10 @@ class ProductionConsolidator:
 
         rows: List[List[Union[str, float]]] = []
         for b in self.bom_items:
+            parent_demand = self.find_parent_demand(b)
+            if parent_demand is None:
+                b.daily_calculated = {}
+                continue
             row: List[Union[str, float]] = [
                 b.sector,
                 b.sd,
@@ -834,18 +809,13 @@ class ProductionConsolidator:
                 b.clave
             ]
             row_total = 0.0
-            parent_demand = self.find_parent_demand(b)
-
             b.daily_calculated = {}
             for col in all_val_cols:
-                if parent_demand:
-                    if col in sorted_daily:
-                        val = parent_demand.daily_values.get(col, 0.0)
-                    else:
-                        val = parent_demand.tentative_values.get(col, 0.0)
-                    calculated = val * b.uso
+                if col in sorted_daily:
+                    val = parent_demand.daily_values.get(col, 0.0)
                 else:
-                    calculated = 0.0
+                    val = parent_demand.tentative_values.get(col, 0.0)
+                calculated = val * b.uso
                 b.daily_calculated[col] = calculated
                 row.append(calculated)
                 row_total += calculated
@@ -854,21 +824,56 @@ class ProductionConsolidator:
             rows.append(row)
         return headers, rows
 
-    def calculate_consumption(self) -> Tuple[List[str], List[List[Union[str, float]]]]:
-        self.consolidate_bom()
+    def cargar_proveedores_materiales(self) -> Dict[str, str]:
+        try:
+            from app.core.config import get_db_connection
+            conn = get_db_connection()
+        except Exception:
+            return {}
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT m.id_material, prov.nombre
+                FROM dbo.material m WITH (NOLOCK)
+                CROSS APPLY (
+                    SELECT TOP 1 p.nombre
+                    FROM (
+                        SELECT m.id_proveedor_principal AS id_proveedor, 1 AS prioridad
+                        WHERE m.id_proveedor_principal IS NOT NULL
+                        UNION ALL
+                        SELECT id_proveedor, 2 FROM dbo.rundown_parametro_material WITH (NOLOCK)
+                        WHERE id_material = m.id_material AND activo = 1
+                        UNION ALL
+                        SELECT id_proveedor, 3 FROM dbo.proveedor_material WITH (NOLOCK)
+                        WHERE id_material = m.id_material AND activo = 1
+                    ) src
+                    INNER JOIN dbo.proveedor p WITH (NOLOCK) ON p.id_proveedor = src.id_proveedor
+                    ORDER BY src.prioridad
+                ) prov
+                """
+            )
+            return {clean_code(r[0]): str(r[1] or '') for r in cursor.fetchall()}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def calculate_consumption(self, recalcular_bom: bool = True) -> Tuple[List[str], List[List[Union[str, float]]]]:
+        if recalcular_bom:
+            self.consolidate_bom()
 
         sorted_daily, all_tentative = self.get_sorted_columns()
         all_val_cols = sorted_daily + all_tentative
 
-        headers = [
-            'Nº Parte', 'Codigo TASA+TBAR', 'Descripción', 'Nº Interno',
-            'Tipo Caja', 'Cant x Caja', 'Dock', 'Destino'
-        ] + all_val_cols + ['Total']
+        headers = ['Nº Parte', 'Descripción', 'Proveedor'] + all_val_cols + ['Total']
+        proveedores = self.cargar_proveedores_materiales()
 
         bom_by_canon_hijo: Dict[str, List[BomItem]] = defaultdict(list)
         unique_hijos: List[str] = []
         hijo_seen: Set[str] = set()
         for b in self.bom_items:
+            if not b.daily_calculated:
+                continue
             canon = clean_code(b.hijo)
             if canon:
                 bom_by_canon_hijo[canon].append(b)
@@ -883,13 +888,8 @@ class ProductionConsolidator:
             formatted_hijo = format_part_number(meta.n_parte or raw_hijo)
             row: List[Union[str, float]] = [
                 formatted_hijo,
-                meta.codigo_tasa_tbar or formatted_hijo,
                 meta.descripcion,
-                meta.n_interno,
-                meta.tipo_caja,
-                meta.cant_x_caja,
-                meta.dock,
-                meta.destino,
+                proveedores.get(canon_hijo, ''),
             ]
 
             hijo_total = 0.0
@@ -926,14 +926,23 @@ class ProductionConsolidator:
                 'title': '3. Consumo Materiales',
                 'tab_color': 'C65911',
                 'header_bg': 'C65911',
-                'freeze': 'I2'
+                'freeze': 'D2'
             }
         }
 
         datasets = [
             ('Demanda', self.consolidate_demand()),
             ('BOM', self.consolidate_bom()),
-            ('Consumo', self.calculate_consumption())
+            ('Consumo', self.calculate_consumption(recalcular_bom=False))
+        ]
+
+        _, columnas_tentativas = self.get_sorted_columns()
+        etiquetas_tentativas = {
+            c: f"{c} ({self.resolve_date_str(c).replace('.', '/')})" for c in columnas_tentativas if 'TOTAL' not in c.upper()
+        }
+        datasets = [
+            (key, ([etiquetas_tentativas.get(h, h) for h in headers], rows))
+            for key, (headers, rows) in datasets
         ]
 
         body_font = Font(name='Segoe UI', size=9)
@@ -983,6 +992,22 @@ class ProductionConsolidator:
         wb.save(output_filepath)
         wb.close()
 
+    def aplicar_fecha_corte(self, fecha_corte: datetime.date) -> None:
+        def vigente(col: str) -> bool:
+            d = self.resolve_date_obj(col)
+            return d is None or d >= fecha_corte
+
+        quitar_diarias = {c for c in self.daily_columns if not vigente(c)}
+        quitar_tentativas = {c for c in self.tentative_columns_f1 + self.tentative_columns_f2 if not vigente(c)}
+        self.daily_columns = [c for c in self.daily_columns if c not in quitar_diarias]
+        self.tentative_columns_f1 = [c for c in self.tentative_columns_f1 if c not in quitar_tentativas]
+        self.tentative_columns_f2 = [c for c in self.tentative_columns_f2 if c not in quitar_tentativas]
+        for item in self.demand_items.values():
+            for c in quitar_diarias:
+                item.daily_values.pop(c, None)
+            for c in quitar_tentativas:
+                item.tentative_values.pop(c, None)
+
     def resolve_date_obj(self, col_name: str) -> Optional[datetime.date]:
         fecha_str = self.resolve_date_str(col_name)
         try:
@@ -1025,9 +1050,18 @@ class ProductionConsolidator:
         headers = ['Radio button Material', 'Material', 'Centro', 'Versión de plan', 'fecha', 'Tipo formato fecha', 'Cantidad']
         output_rows: List[List[str]] = []
 
+        demanda_en_bom: Set[int] = set()
+        for b in self.bom_items:
+            parent = self.find_parent_demand(b)
+            if parent is not None:
+                demanda_en_bom.add(id(parent))
+
         for item in self.demand_items.values():
-            total_pn = sum(item.daily_values.values()) + sum(item.tentative_values.values())
-            if total_pn <= 1.0:
+            if self.bom_items and id(item) not in demanda_en_bom:
+                continue
+            valores = list(item.daily_values.values()) + list(item.tentative_values.values())
+            total_firme = sum(item.daily_values.values())
+            if sum(valores) <= 1.0 or 0.0 < total_firme <= 1.0 or max(valores, default=0.0) <= 1.0:
                 continue
 
             mat_code = format_part_number(item.n_parte or item.canonical_pn).strip()

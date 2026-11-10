@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { DateInputAR } from "../components/DateInputAR";
 import { useNavigate, useLocation } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -766,9 +767,8 @@ export function NewOrder() {
                   <Label htmlFor="fecha-req" className="text-xs font-semibold text-slate-700">
                     Fecha Requerida de Entrega
                   </Label>
-                  <Input
+                  <DateInputAR
                     id="fecha-req"
-                    type="date"
                     min={todayStr}
                     value={fechaRequerida}
                     onChange={(e) => {

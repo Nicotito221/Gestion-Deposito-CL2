@@ -284,8 +284,19 @@ export async function updateSupplyDailyProduction(data: {
   return res.json();
 }
 
-export async function downloadExcelConsolidado(): Promise<void> {
-  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/excel`);
+export async function downloadExcelConsolidado(
+  fechaCorte?: string,
+  fechasTentativas?: Record<string, string>
+): Promise<void> {
+  const params = new URLSearchParams();
+  if (fechaCorte) {
+    params.set("fecha_corte", fechaCorte);
+  }
+  if (fechasTentativas && Object.keys(fechasTentativas).length > 0) {
+    params.set("fechas_tentativas", JSON.stringify(fechasTentativas));
+  }
+  const qs = params.toString();
+  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/excel${qs ? `?${qs}` : ""}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al descargar el archivo Excel consolidado");
@@ -434,6 +445,7 @@ export interface RundownTransitoInput {
   cantidad: number;
   observacion?: string;
   estado?: "planificado" | "confirmado";
+  destino?: "total" | "planta";
 }
 
 export interface RundownIngresoDiaInput {
@@ -447,6 +459,7 @@ export interface RundownIngresoDiaInput {
   observacion?: string;
   fecha_origen?: string;
   estado?: "planificado" | "confirmado";
+  destino?: "total" | "planta";
 }
 
 export async function getSupplierRundown(
@@ -3216,3 +3229,156 @@ export async function getAuditoriaPedidos(params?: {
 
 
 
+
+export interface DespachoItem {
+  id_despacho: number;
+  id_producto: string;
+  empresa_destino: string;
+  anio: number;
+  mes: number;
+  cantidad: number;
+  observacion: string | null;
+}
+
+export interface DespachoUpsertInput {
+  id_producto: string;
+  empresa_destino: string;
+  anio: number;
+  mes: number;
+  cantidad: number;
+  observacion?: string | null;
+}
+
+export interface DespachoUpsertResult {
+  guardados: number;
+  eliminados: number;
+  productos_no_encontrados: string[];
+}
+
+export async function getDespachos(
+  anioDesde: number,
+  mesDesde: number,
+  anioHasta: number,
+  mesHasta: number
+): Promise<DespachoItem[]> {
+  const params = new URLSearchParams({
+    anio_desde: String(anioDesde),
+    mes_desde: String(mesDesde),
+    anio_hasta: String(anioHasta),
+    mes_hasta: String(mesHasta),
+  });
+  const res = await fetch(`${API_BASE_URL}/api/despachos?${params.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cargar despachos a terceros");
+  }
+  return res.json();
+}
+
+export async function guardarDespachos(items: DespachoUpsertInput[]): Promise<DespachoUpsertResult> {
+  const res = await fetch(`${API_BASE_URL}/api/despachos`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al guardar despachos a terceros");
+  }
+  return res.json();
+}
+
+export interface BomExtensionItem {
+  id_extension: number;
+  id_padre: string;
+  nombre_padre: string;
+  id_hijo: string;
+  nombre_hijo: string;
+  cantidad: number;
+  unidad: string;
+  observacion: string | null;
+}
+
+export interface BomExtensionInput {
+  id_padre: string;
+  nombre_padre?: string | null;
+  id_hijo: string;
+  nombre_hijo?: string | null;
+  cantidad: number;
+  unidad: string;
+  observacion?: string | null;
+}
+
+export interface BomExtensionResult {
+  ok: boolean;
+  filas_explosion: number;
+}
+
+export async function getBomExtension(): Promise<BomExtensionItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/bom/extension`, { headers: getAuthHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cargar la extensión de BOM");
+  }
+  return res.json();
+}
+
+export async function guardarBomExtension(data: BomExtensionInput): Promise<BomExtensionResult> {
+  const res = await fetch(`${API_BASE_URL}/api/bom/extension`, {
+    method: "PUT",
+    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al guardar la extensión de BOM");
+  }
+  return res.json();
+}
+
+export async function eliminarBomExtension(idExtension: number): Promise<BomExtensionResult> {
+  const res = await fetch(`${API_BASE_URL}/api/bom/extension/${idExtension}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al eliminar la línea de extensión");
+  }
+  return res.json();
+}
+
+export interface BomExtensionImportResult {
+  nombre_archivo: string;
+  productos_importados: number;
+  lineas_importadas: number;
+  nuevos_materiales_registrados: number;
+  filas_explosion: number;
+}
+
+export async function importarBomExtension(file: File): Promise<BomExtensionImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const token = localStorage.getItem("auth_token");
+  const res = await fetch(`${API_BASE_URL}/api/bom/extension/importar`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al importar la BOM complementaria");
+  }
+  return res.json();
+}
+
+export async function getRundownMesesDisponibles(): Promise<RundownPeriodoItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/rundown/meses-disponibles`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cargar los meses disponibles");
+  }
+  return res.json();
+}

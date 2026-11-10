@@ -13,6 +13,7 @@ class RundownTransitoCreate(BaseModel):
     cantidad: float
     observacion: Optional[str] = Field(default=None, max_length=255)
     estado: str = Field(default="planificado", pattern=r"^(planificado|confirmado)$")
+    destino: str = Field(default="total", pattern=r"^(total|planta)$")
 
 
 class RundownTransitoOut(BaseModel):
@@ -28,6 +29,7 @@ class RundownTransitoOut(BaseModel):
     cantidad: float
     observacion: Optional[str] = None
     estado: str = "planificado"
+    destino: str = "total"
 
 
 class RundownStockInicialUpdate(BaseModel):
@@ -64,6 +66,7 @@ class RundownIngresoDiaUpdate(BaseModel):
     observacion: Optional[str] = Field(default=None, max_length=255)
     fecha_origen: Optional[date] = None
     estado: str = Field(default="planificado", pattern=r"^(planificado|confirmado)$")
+    destino: str = Field(default="total", pattern=r"^(total|planta)$")
 
 
 class RundownConsumoDiaUpdate(BaseModel):
