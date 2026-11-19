@@ -2,7 +2,7 @@ DECLARE @ConstraintName nvarchar(200);
 SELECT @ConstraintName = name 
 FROM sys.check_constraints 
 WHERE parent_object_id = OBJECT_ID('dbo.usuario') 
-  AND definition LIKE '%rol%';
+  AND name = 'CK_usuario_rol';
 
 IF @ConstraintName IS NOT NULL
 BEGIN
@@ -11,7 +11,10 @@ END;
 
 ALTER TABLE dbo.usuario 
 ADD CONSTRAINT CK_usuario_rol 
-CHECK (rol IN ('administrador', 'supervisor', 'operario_deposito', 'operario_planta', 'solicitante'));
+CHECK (rol IN (
+    'administrador', 'gerente', 'jefe', 'analista', 'deposito', 'contador_ciclico',
+    'operario_deposito', 'operario_planta', 'supervisor', 'solicitante'
+));
 
 IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'usuario' AND COLUMN_NAME = 'sector')
 BEGIN

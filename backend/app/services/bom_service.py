@@ -20,7 +20,7 @@ from app.schemas.bom import (
 from app.services.bom_parser import BomParser
 
 BATCH_SIZE: int = 5000
-FACTOR_QUANTUM: Decimal = Decimal("0.0001")
+FACTOR_QUANTUM: Decimal = Decimal("0.00000001")
 
 
 class BomExtensionError(ValueError):

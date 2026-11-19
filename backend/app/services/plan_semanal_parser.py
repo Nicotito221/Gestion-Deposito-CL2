@@ -3,6 +3,7 @@ import re
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 import openpyxl
+from app.core.time import get_argentina_today
 
 DAY_KEYWORDS: List[Tuple[str, int, re.Pattern]] = [
     ("LUNES", 0, re.compile(r"\b(LUNES|LUN)\b", re.IGNORECASE)),
@@ -134,7 +135,7 @@ def parse_plan_semanal_excel(
         first_d = raw_days[0]
         if first_d.get("date_tuple"):
             d_d, d_m, d_y = first_d["date_tuple"]
-            y_use = d_y if d_y else 2026
+            y_use = d_y if d_y else get_argentina_today().year
             fecha_inicio = date(y_use, d_m, d_d)
         else:
             raise ValueError("No se pudo detectar el rango de fechas en la cabecera del archivo.")

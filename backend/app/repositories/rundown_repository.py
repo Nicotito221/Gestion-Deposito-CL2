@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import pyodbc
 
 from app.core.config import get_db_connection
+from app.core.time import get_argentina_today
 from app.schemas.rundown import (
     PlanSemanalItemConfirm,
     RundownTransitoCreate,
@@ -1608,7 +1609,8 @@ class RundownRepository:
         latest = cursor.fetchone()
         if latest:
             return int(latest[0]), int(latest[1])
-        return 2026, 9
+        hoy = get_argentina_today()
+        return hoy.year, hoy.month
 
     def search_materiales_catalogo(
         self, query: str, limit: int = 50

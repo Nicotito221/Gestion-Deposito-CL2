@@ -1,5 +1,5 @@
 from datetime import date, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
 
 from app.repositories.despacho_repository import DespachoRepository
@@ -37,6 +37,7 @@ from app.schemas.rundown import (
 )
 from app.services.plan_semanal_parser import parse_plan_semanal_excel
 from app.core.errors import error_interno
+from app.core.time import get_argentina_today
 
 DIAS_ESP = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
@@ -141,11 +142,11 @@ class RundownService:
             target_periodo = f"{fecha_desde.year:04d}-{fecha_desde.month:02d}"
         else:
             firme_p = next((m["periodo"] for m in meses_raw if m.get("es_firme")), None)
-            target_periodo = firme_p or (meses_raw[0]["periodo"] if meses_raw else "2026-10")
+            target_periodo = firme_p or (meses_raw[0]["periodo"] if meses_raw else get_argentina_today().strftime("%Y-%m"))
 
         anio, mes = [int(x) for x in target_periodo.split("-")]
         mes_info = next((m for m in meses_raw if m["periodo"] == target_periodo), None)
-        es_mes_firme = mes_info["es_firme"] if mes_info else (mes == 9 and anio == 2026)
+        es_mes_firme = mes_info["es_firme"] if mes_info else ((anio, mes) == (get_argentina_today().year, get_argentina_today().month))
         es_mes_finalizado = bool(mes_info.get("es_finalizado", False)) if mes_info else False
 
         d_start = date(anio, mes, 1)
@@ -256,6 +257,7 @@ class RundownService:
 
         columnas_fechas = [d.strftime("%Y-%m-%d") for d in dates_timeline]
         material_grids: List[RundownMaterialGrid] = []
+        cache_arrastre: Dict[Tuple[Any, ...], Any] = {}
 
         for param in parametros:
             p_info = prov_map.get(param["id_proveedor"], {})
@@ -264,8 +266,8 @@ class RundownService:
             es_dep_en_planta = bool(p_info.get("deposito_en_planta", False))
             stock_cl2 = 0.0 if es_dep_en_planta else float(param.get("stock_cl2", 0.0))
 
-            s_planta = float(round(self._compute_carryover_stock(param, all_products, d_start, "planta", meses_raw)))
-            s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw)))
+            s_planta = float(round(self._compute_carryover_stock(param, all_products, d_start, "planta", meses_raw, cache_arrastre)))
+            s_total = float(round(self._compute_carryover_stock(param, all_products, d_start, "total", meses_raw, cache_arrastre)))
             if es_dep_en_planta:
                 s_total = s_planta
             s_inicial_periodo = s_planta if alcance == "planta" else s_total
@@ -744,7 +746,7 @@ class RundownService:
         overrides = self._repo.get_calendario_overrides(d_start, d_end)
         meses_disp = self._repo.get_meses_disponibles()
         mes_info = next((m for m in meses_disp if m["anio"] == anio and m["mes"] == mes), None)
-        es_firme = mes_info["es_firme"] if mes_info else (mes == 9 and anio == 2026)
+        es_firme = mes_info["es_firme"] if mes_info else ((anio, mes) == (get_argentina_today().year, get_argentina_today().month))
         volumen_total = mes_info["total_volumen"] if mes_info else 0.0
 
         dias: List[RundownCalendarioDia] = []
@@ -847,19 +849,30 @@ class RundownService:
         target_start: date,
         alcance: str,
         meses_raw: List[Dict[str, Any]],
+        cache: Optional[Dict[Tuple[Any, ...], Any]] = None,
     ) -> float:
+        def memo(clave: Tuple[Any, ...], consulta: Callable[[], Any]) -> Any:
+            if cache is None:
+                return consulta()
+            if clave not in cache:
+                cache[clave] = consulta()
+            return cache[clave]
+
         end_prev = target_start - timedelta(days=1)
         pid = int(param["id_parametro"])
         dep_planta = bool(param.get("deposito_en_planta", False))
         stock_cl2_val = float(param.get("stock_cl2", 0.0))
 
-        init_date = param.get("fecha_stock_inicial") or self._repo.get_fecha_inicio_firme()
+        init_date = param.get("fecha_stock_inicial") or memo(("fecha_firme",), self._repo.get_fecha_inicio_firme)
         init_stock_field = "stock_inicial_planta" if alcance == "planta" else "stock_inicial_total"
         raw_val = param.get(init_stock_field)
         s_base = float(raw_val) if raw_val is not None else float(param.get("stock_inicial_referencia") or 0.0)
 
         query_min = min(init_date, target_start - timedelta(days=90))
-        prev_ajustes = self._repo.get_stock_ajustes(param["id_proveedor"], query_min, end_prev)
+        prev_ajustes = memo(
+            ("ajustes", param["id_proveedor"], query_min, end_prev),
+            lambda: self._repo.get_stock_ajustes(param["id_proveedor"], query_min, end_prev),
+        )
 
         applicable_adj_dates: List[date] = []
         for (adj_pid, adj_d, adj_tipo), val in prev_ajustes.items():
@@ -903,7 +916,10 @@ class RundownService:
         if start_sim > end_prev:
             return float(round(s_val))
 
-        prev_transitos = self._repo.get_transitos(param["id_proveedor"], start_sim, end_prev)
+        prev_transitos = memo(
+            ("transitos", param["id_proveedor"], start_sim, end_prev),
+            lambda: self._repo.get_transitos(param["id_proveedor"], start_sim, end_prev),
+        )
         transito_map: Dict[Tuple[str, date, str], float] = {}
         envios_planta_prev: Dict[date, float] = {}
         for t in prev_transitos:
@@ -915,14 +931,27 @@ class RundownService:
             transito_map[(t.id_material, t_date, t.tipo_via)] = transito_map.get((t.id_material, t_date, t.tipo_via), 0.0) + t.cantidad
 
         pedidos_planta_map = (
-            self._repo.get_entregas_pedidos_planta(param["id_proveedor"], start_sim, end_prev)
+            memo(
+                ("entregas_planta", param["id_proveedor"], start_sim, end_prev),
+                lambda: self._repo.get_entregas_pedidos_planta(param["id_proveedor"], start_sim, end_prev),
+            )
             if alcance == "planta"
             else {}
         )
 
-        firm_prod_map = self._repo.get_produccion_planificada(all_products, start_sim, end_prev)
-        prev_consumos_manuales = self._repo.get_consumos_manuales([param["id_material"]], start_sim, end_prev)
-        prev_despachos = self._despacho_repo.get_diario(all_products, start_sim, end_prev)
+        productos_clave = tuple(all_products)
+        firm_prod_map = memo(
+            ("produccion", productos_clave, start_sim, end_prev),
+            lambda: self._repo.get_produccion_planificada(all_products, start_sim, end_prev),
+        )
+        prev_consumos_manuales = memo(
+            ("consumos_manuales", param["id_material"], start_sim, end_prev),
+            lambda: self._repo.get_consumos_manuales([param["id_material"]], start_sim, end_prev),
+        )
+        prev_despachos = memo(
+            ("despachos", productos_clave, start_sim, end_prev),
+            lambda: self._despacho_repo.get_diario(all_products, start_sim, end_prev),
+        )
         forecast_cache: Dict[Tuple[int, int], Dict[date, float]] = {}
         cal_overrides_cache: Dict[Tuple[int, int], Dict[date, Tuple[bool, Optional[str]]]] = {}
 
@@ -934,7 +963,7 @@ class RundownService:
             else:
                 m_key = (curr.year, curr.month)
                 m_info = next((m for m in meses_raw if m["anio"] == curr.year and m["mes"] == curr.month), None)
-                is_firm = m_info["es_firme"] if m_info else (curr.month == 9 and curr.year == 2026)
+                is_firm = m_info["es_firme"] if m_info else ((curr.year, curr.month) == (get_argentina_today().year, get_argentina_today().month))
 
                 m_start = date(curr.year, curr.month, 1)
                 m_next = date(curr.year + 1, 1, 1) if curr.month == 12 else date(curr.year, curr.month + 1, 1)

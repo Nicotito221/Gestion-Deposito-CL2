@@ -1,4 +1,5 @@
 import os
+import secrets
 import sys
 import re
 from pathlib import Path
@@ -55,46 +56,32 @@ def execute_sql_file(file_path: Path) -> None:
         conn.close()
 
 
-def seed_admin_user(password: str = "admin123") -> None:
+def seed_admin_user() -> None:
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        pwd_hash = hash_password(password)
         cursor.execute("SELECT id_usuario FROM dbo.usuario WHERE username = 'admin'")
-        row = cursor.fetchone()
-        if row:
-            cursor.execute(
-                """
-                UPDATE dbo.usuario
-                SET password_hash = ?,
-                    nombre = 'Administrador',
-                    apellido = 'Sistema',
-                    rol = 'administrador',
-                    sector = 'TODOS',
-                    activo = 1,
-                    eliminado = 0
-                WHERE username = 'admin'
-                """,
-                (pwd_hash,),
+        if cursor.fetchone():
+            return
+        password = os.getenv("INIT_ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+        cursor.execute(
+            """
+            INSERT INTO dbo.usuario (
+                username, password_hash, nombre, apellido, rol, activo, sector, email, eliminado
             )
-        else:
-            cursor.execute(
-                """
-                INSERT INTO dbo.usuario (
-                    username, password_hash, nombre, apellido, rol, activo, sector, email, eliminado
-                )
-                VALUES ('admin', ?, 'Administrador', 'Sistema', 'administrador', 1, 'TODOS', 'admin@gestiondeposito.com', 0)
-                """,
-                (pwd_hash,),
-            )
+            VALUES ('admin', ?, 'Administrador', 'Sistema', 'administrador', 1, 'TODOS', 'admin@gestiondeposito.com', 0)
+            """,
+            (hash_password(password),),
+        )
         conn.commit()
+        if not os.getenv("INIT_ADMIN_PASSWORD"):
+            print(f"Usuario 'admin' creado con la contraseña temporal: {password} (cambiala al ingresar)")
     except Exception:
         conn.rollback()
         raise
     finally:
         cursor.close()
         conn.close()
-
 
 def seed_default_configuration() -> None:
     conn = get_db_connection()
@@ -184,16 +171,23 @@ def reset_clean_state(wipe_operational_data: bool = False) -> None:
         conn.close()
 
 
-def init_database(reset_other_users: bool = True, wipe_operational_data: bool = False) -> None:
+def init_database(reset_other_users: bool = False, wipe_operational_data: bool = False) -> None:
     ensure_database_exists()
     execute_sql_file(SQL_INIT_FILE)
     seed_default_configuration()
-    seed_admin_user("admin123")
+    seed_admin_user()
     if reset_other_users:
         reset_clean_state(wipe_operational_data=wipe_operational_data)
 
 
 if __name__ == "__main__":
     wipe = "--wipe" in sys.argv
-    init_database(reset_other_users=True, wipe_operational_data=wipe)
+    reset = "--reset-usuarios" in sys.argv or wipe
+    if reset:
+        accion = "BORRAR todos los datos operativos y usuarios" if wipe else "borrar todos los usuarios salvo admin"
+        confirmacion = input(f"Esto va a {accion} de la base '{os.getenv('DB_NAME', 'GestionDeposito')}'. Escribí CONFIRMAR para seguir: ")
+        if confirmacion.strip() != "CONFIRMAR":
+            print("Cancelado.")
+            sys.exit(1)
+    init_database(reset_other_users=reset, wipe_operational_data=wipe)
     print("Inicialización de la base de datos completada exitosamente.")

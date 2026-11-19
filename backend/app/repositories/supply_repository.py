@@ -385,9 +385,10 @@ class SupplyRepository:
         self,
         file_names: List[str],
         items: List[DemandRowOut],
-        plan_year: int = 2026,
+        plan_year: Optional[int] = None,
         pn_reemplazados: Optional[List[str]] = None,
     ) -> int:
+        plan_year = plan_year or get_argentina_today().year
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
