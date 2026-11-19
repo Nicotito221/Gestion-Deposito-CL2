@@ -7,6 +7,7 @@ from app.repositories.despacho_repository import DespachoRepository
 from app.repositories.explosion_consumo_repository import ExplosionConsumoRepository, FilaExplosionConsumo
 from app.repositories.supply_repository import SupplyRepository
 from app.schemas.supply import DemandRowOut, SupplyConsolidateResult, SupplySummaryOut
+from app.services.conversion_orden_service import ConversionOrdenService
 from consolidate_production import ProductionConsolidator
 
 
@@ -16,8 +17,10 @@ class SupplyService:
         repository: Optional[SupplyRepository] = None,
         despacho_repository: Optional[DespachoRepository] = None,
         explosion_repository: Optional[ExplosionConsumoRepository] = None,
+        conversion_service: Optional[ConversionOrdenService] = None,
     ) -> None:
         self.repository = repository or SupplyRepository()
+        self.conversion_service = conversion_service or ConversionOrdenService()
         self.despacho_repository = despacho_repository or DespachoRepository()
         self.explosion_repository = explosion_repository or ExplosionConsumoRepository()
 
@@ -108,14 +111,21 @@ class SupplyService:
                 )
             )
 
+        parsed_items, convertidos, sin_match = self.conversion_service.aplicar(parsed_items)
+
         all_names = [os.path.basename(p) for p in (f1_paths or []) + (f2_paths or [])]
         id_importacion = self.repository.save_planned_production(
             file_names=all_names,
             items=parsed_items,
             plan_year=consolidator.plan_year,
+            pn_reemplazados=[original for original, _ in convertidos],
         )
 
         mensaje = f"Consolidación completada y guardada en base de datos (Importación #{id_importacion}): {len(parsed_items)} ítems persistidos."
+        if convertidos:
+            mensaje += f" {len(convertidos)} PN convertidos con la tabla de conversiones."
+        if sin_match:
+            mensaje += f" {len(sin_match)} PN sin BOM ni conversión: {', '.join(sin_match[:20])}{'…' if len(sin_match) > 20 else ''}."
         if f1_paths:
             try:
                 filas = self.actualizar_explosion_consumo(id_importacion)

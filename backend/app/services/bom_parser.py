@@ -6,7 +6,14 @@ from typing import BinaryIO, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 import openpyxl
 
-from app.schemas.bom import BomComponenteDirecto, BomParseResult, BomRelationRecord, MaterialRecord
+from app.schemas.bom import (
+    BomComponenteDirecto,
+    BomParseResult,
+    BomRelationRecord,
+    MaterialRecord,
+    SdParseResult,
+    SdSetRecord,
+)
 
 
 def clean_quantity(raw: Union[str, float, int, None]) -> Decimal:
@@ -68,6 +75,26 @@ def extract_row_data(cols: List[str]) -> Optional[Tuple[int, str, str, Decimal, 
         unit = cols[8].strip()[:10]
 
     return level, part_number, desc, qty, unit
+
+
+def _columnas_por_encabezado(cols: List[str]) -> Optional[Tuple[int, int, int]]:
+    def buscar(*claves: str) -> int:
+        for idx in range(3, len(cols)):
+            nombre = cols[idx].strip().upper()
+            if nombre and any(nombre.startswith(c) for c in claves):
+                return idx
+        return -1
+
+    c_desc = buscar("DESCRIP", "TEXTO", "PART NAME", "DENOMIN")
+    c_cant = buscar("CANT", "CTD", "QTY", "USO")
+    c_un = buscar("UNIDAD", "UM", "UOM", "UN")
+    if c_cant == -1:
+        return None
+    return (
+        c_desc if c_desc != -1 else c_cant - 1,
+        c_cant,
+        c_un if c_un != -1 else c_cant + 1,
+    )
 
 
 class BomParser:
@@ -162,6 +189,91 @@ class BomParser:
             relaciones=relaciones,
             total_lineas_archivo=total_lineas,
             hijos_por_padre=hijos_por_padre,
+        )
+
+    @staticmethod
+    def parse_sd_sets(source: Union[str, BinaryIO, io.BytesIO]) -> SdParseResult:
+        materiales: Dict[str, MaterialRecord] = {}
+        sd_sets: Dict[Tuple[str, str], SdSetRecord] = {}
+        set_productos: Dict[str, List[BomComponenteDirecto]] = {}
+        bloque_actual: List[BomComponenteDirecto] = []
+        set_actual: Optional[str] = None
+        sd_actual: Optional[str] = None
+        sd_desc: str = ""
+        columnas: Optional[Tuple[int, int, int]] = None
+        total_lineas = 0
+
+        def cerrar_bloque() -> None:
+            if set_actual and bloque_actual and set_actual not in set_productos:
+                set_productos[set_actual] = list(bloque_actual)
+
+        def registrar_material(codigo: str, desc: str, unidad: str) -> None:
+            if codigo not in materiales:
+                materiales[codigo] = MaterialRecord(id_material=codigo, nombre=(desc or codigo)[:100], unidad=unidad)
+            elif desc and materiales[codigo].nombre == codigo:
+                materiales[codigo].nombre = desc[:100]
+
+        for raw_cols in BomParser._get_row_iterator(source):
+            total_lineas += 1
+            cols = [str(c).strip() if c is not None else "" for c in raw_cols] + [""] * 11
+
+            if is_header_row(cols) or any(c.upper() in ("SD", "SET") for c in cols[:3]):
+                detectadas = _columnas_por_encabezado(cols)
+                if detectadas:
+                    columnas = detectadas
+                continue
+
+            nivel = next((i for i in range(3) if cols[i]), -1)
+            if nivel == -1:
+                continue
+
+            if columnas:
+                c_desc, c_cant, c_un = columnas
+            elif any(cols[i] for i in (8, 9, 10)):
+                c_desc, c_cant, c_un = 8, 9, 10
+            else:
+                c_desc, c_cant, c_un = 3, 4, 5
+            desc = cols[c_desc][:100]
+            cantidad = clean_quantity(cols[c_cant])
+            unidad = (cols[c_un] or "UN")[:10]
+
+            if nivel == 0:
+                cerrar_bloque()
+                set_actual, bloque_actual = None, []
+                sd_actual = cols[0].upper()[:30]
+                sd_desc = desc
+                if not cols[1]:
+                    continue
+                nivel = 1
+                desc = ""
+
+            if nivel == 1:
+                cerrar_bloque()
+                bloque_actual = []
+                set_actual = cols[1].upper()[:30]
+                registrar_material(set_actual, desc, unidad)
+                if sd_actual and (sd_actual, set_actual) not in sd_sets:
+                    sd_sets[(sd_actual, set_actual)] = SdSetRecord(
+                        codigo_sd=sd_actual,
+                        id_set=set_actual,
+                        descripcion_sd=sd_desc,
+                        cantidad=cantidad if cantidad > 0 else Decimal("1.0000"),
+                        unidad=unidad,
+                    )
+                continue
+
+            producto = cols[2].upper()[:30]
+            if not set_actual or producto == set_actual or cantidad <= 0:
+                continue
+            registrar_material(producto, desc, unidad)
+            bloque_actual.append(BomComponenteDirecto(id_hijo=producto, cantidad=cantidad, unidad=unidad))
+
+        cerrar_bloque()
+        return SdParseResult(
+            materiales=materiales,
+            sd_sets=list(sd_sets.values()),
+            set_productos=set_productos,
+            total_lineas_archivo=total_lineas,
         )
 
     @staticmethod

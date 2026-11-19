@@ -3,17 +3,26 @@ import os
 import shutil
 import tempfile
 from datetime import date
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from app.schemas.supply import SupplyConsolidateResult, SupplyItemUpdate, SupplySummaryOut
+from app.core.auth_deps import require_editor_planificacion
+from app.schemas.supply import (
+    ConversionOrdenImportResult,
+    ConversionOrdenResumen,
+    SupplyConsolidateResult,
+    SupplyItemUpdate,
+    SupplySummaryOut,
+)
+from app.services.conversion_orden_service import ConversionOrdenError, ConversionOrdenService
 from app.services.supply_service import SupplyService
 
 router = APIRouter(prefix="/api/suministro", tags=["Orden de Suministro"])
 _service = SupplyService()
+_conversion_service = ConversionOrdenService()
 
 
 @router.get("/resumen", response_model=SupplySummaryOut)
@@ -25,6 +34,37 @@ def get_supply_summary() -> SupplySummaryOut:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error al obtener resumen de suministro: {err}",
         )
+
+
+@router.get("/conversiones/resumen", response_model=ConversionOrdenResumen)
+def resumen_conversiones() -> ConversionOrdenResumen:
+    return _conversion_service.resumen()
+
+
+@router.post("/conversiones/importar", response_model=ConversionOrdenImportResult)
+def importar_conversiones(
+    file: UploadFile = File(...),
+    _: Dict[str, Any] = Depends(require_editor_planificacion),
+) -> ConversionOrdenImportResult:
+    temp_dir = tempfile.mkdtemp()
+    nombre = os.path.basename(file.filename or "conversiones.xlsx")
+    temp_path = os.path.join(temp_dir, nombre)
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return _conversion_service.importar(temp_path, nombre)
+    except ConversionOrdenError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Fallo durante la importación de conversiones: {err}",
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        if os.path.exists(temp_dir):
+            os.rmdir(temp_dir)
 
 
 @router.put("/produccion-diaria")

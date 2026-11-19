@@ -14,6 +14,8 @@ from app.schemas.bom import (
     BomExtensionUpsert,
     BomImportResult,
     BomParseResult,
+    SdParseResult,
+    SdSetImportResult,
 )
 from app.services.bom_parser import BomParser
 
@@ -154,6 +156,12 @@ class BomService:
             id_version,
         )
         hijos: Dict[str, Dict[str, BomComponenteDirecto]] = {}
+        for padre, hijo, cant, unidad in cursor.fetchall():
+            hijos.setdefault(str(padre), {})[str(hijo)] = BomComponenteDirecto(
+                id_hijo=str(hijo), cantidad=Decimal(cant), unidad=str(unidad)
+            )
+
+        cursor.execute("SELECT id_set, id_producto, cantidad, unidad FROM dbo.bom_set_producto")
         for padre, hijo, cant, unidad in cursor.fetchall():
             hijos.setdefault(str(padre), {})[str(hijo)] = BomComponenteDirecto(
                 id_hijo=str(hijo), cantidad=Decimal(cant), unidad=str(unidad)
@@ -336,6 +344,93 @@ class BomService:
             filas = self._regenerar_explosion(cursor, id_version)
             conn.commit()
             return BomExtensionResult(ok=True, filas_explosion=filas)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+    def importar_sd_sets(self, source: Union[str, BinaryIO], nombre_archivo: str) -> SdSetImportResult:
+        parse_result: SdParseResult = BomParser.parse_sd_sets(source)
+        if not parse_result.sd_sets:
+            raise BomExtensionError("El archivo no tiene filas de SD y SET reconocibles (SD en columna A, SET en B).")
+
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        cursor.fast_executemany = True
+        try:
+            id_version = self._version_vigente_regenerable(cursor)
+
+            cursor.execute("SELECT id_material FROM dbo.material")
+            existentes = {str(r[0]) for r in cursor.fetchall()}
+            nuevos = [
+                (m.id_material, m.nombre, m.unidad, 1)
+                for m in parse_result.materiales.values()
+                if m.id_material not in existentes
+            ]
+            if nuevos:
+                cursor.executemany(
+                    "INSERT INTO dbo.material (id_material, nombre, unidad, controla_stock) VALUES (?, ?, ?, ?)",
+                    nuevos,
+                )
+
+            cursor.execute("DELETE FROM dbo.bom_set_producto")
+            cursor.execute("DELETE FROM dbo.bom_sd_set")
+
+            nombre = nombre_archivo[:255]
+            cursor.executemany(
+                """
+                INSERT INTO dbo.bom_sd_set (codigo_sd, id_set, descripcion_sd, cantidad, unidad, nombre_archivo)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (s.codigo_sd, s.id_set, s.descripcion_sd or None, s.cantidad, s.unidad, nombre)
+                    for s in parse_result.sd_sets
+                ],
+            )
+
+            lineas: Dict[Tuple[str, str], List[object]] = {}
+            for id_set, productos in parse_result.set_productos.items():
+                for comp in productos:
+                    clave = (id_set, comp.id_hijo)
+                    if clave in lineas:
+                        lineas[clave][1] += comp.cantidad
+                    else:
+                        lineas[clave] = [comp.unidad, comp.cantidad]
+            filas = [(s, p, cant, unidad) for (s, p), (unidad, cant) in lineas.items()]
+            for i in range(0, len(filas), BATCH_SIZE):
+                cursor.executemany(
+                    "INSERT INTO dbo.bom_set_producto (id_set, id_producto, cantidad, unidad) VALUES (?, ?, ?, ?)",
+                    filas[i : i + BATCH_SIZE],
+                )
+
+            cursor.execute(
+                "SELECT DISTINCT id_padre FROM dbo.bom_componente_directo WHERE id_version = ?",
+                id_version,
+            )
+            padres_bom = {str(r[0]) for r in cursor.fetchall()}
+            cursor.execute("SELECT DISTINCT id_padre FROM dbo.bom_extension")
+            padres_bom |= {str(r[0]) for r in cursor.fetchall()}
+
+            sets = {s.id_set for s in parse_result.sd_sets}
+            sets_sin_estructura = sorted(s for s in sets if s not in parse_result.set_productos and s not in padres_bom)
+            productos_sin_bom = sorted(
+                {p for _, p, _, _ in filas if p not in padres_bom and p not in parse_result.set_productos}
+            )
+
+            filas_explosion = self._regenerar_explosion(cursor, id_version)
+            conn.commit()
+            return SdSetImportResult(
+                nombre_archivo=nombre_archivo,
+                total_sd=len({s.codigo_sd for s in parse_result.sd_sets}),
+                total_sets=len(sets),
+                total_set_producto=len(filas),
+                nuevos_materiales_registrados=len(nuevos),
+                filas_explosion=filas_explosion,
+                sets_sin_estructura=sets_sin_estructura,
+                productos_sin_bom=productos_sin_bom,
+            )
         except Exception:
             conn.rollback()
             raise

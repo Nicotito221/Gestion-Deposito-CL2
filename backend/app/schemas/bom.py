@@ -37,6 +37,23 @@ class BomParseResult:
 
 
 @dataclass(slots=True)
+class SdSetRecord:
+    codigo_sd: str
+    id_set: str
+    descripcion_sd: str
+    cantidad: Decimal
+    unidad: str
+
+
+@dataclass(slots=True)
+class SdParseResult:
+    materiales: Dict[str, MaterialRecord]
+    sd_sets: List[SdSetRecord]
+    set_productos: Dict[str, List[BomComponenteDirecto]]
+    total_lineas_archivo: int
+
+
+@dataclass(slots=True)
 class BomImportResult:
     id_version: int
     nombre_archivo: str
@@ -95,6 +112,17 @@ class BomExtensionImportResult(BaseModel):
     lineas_importadas: int
     nuevos_materiales_registrados: int
     filas_explosion: int
+
+
+class SdSetImportResult(BaseModel):
+    nombre_archivo: str
+    total_sd: int
+    total_sets: int
+    total_set_producto: int
+    nuevos_materiales_registrados: int
+    filas_explosion: int
+    sets_sin_estructura: List[str]
+    productos_sin_bom: List[str]
 
 
 class BomVersionOut(BaseModel):

@@ -61,6 +61,11 @@ import {
   toggleSetComponente,
   importSetComponentesFile,
   uploadBomFile,
+  importarSdSets,
+  type SdSetImportResult,
+  getConversionesResumen,
+  importarConversiones,
+  type ConversionOrdenResumen,
   getSupplySummary,
   consolidateSupply,
   downloadExcelConsolidado,
@@ -165,6 +170,16 @@ export function SupplyOrderBom() {
 
   const [bomFile, setBomFile] = useState<File | null>(null);
   const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
+  const [sdFile, setSdFile] = useState<File | null>(null);
+  const [isUploadingSd, setIsUploadingSd] = useState<boolean>(false);
+  const [sdResult, setSdResult] = useState<SdSetImportResult | null>(null);
+  const conversionInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingConversion, setIsUploadingConversion] = useState<boolean>(false);
+  const [conversionResumen, setConversionResumen] = useState<ConversionOrdenResumen | null>(null);
+
+  useEffect(() => {
+    getConversionesResumen().then(setConversionResumen).catch(() => setConversionResumen(null));
+  }, []);
 
   const [relationDialogOpen, setRelationDialogOpen] = useState<boolean>(false);
   const [editingRelation, setEditingRelation] = useState<SetComponenteItem | null>(null);
@@ -515,6 +530,48 @@ export function SupplyOrderBom() {
     }
   };
 
+  const handleUploadSd = async () => {
+    if (!sdFile) {
+      toast.error("Seleccione el archivo de SD y SETs (.xls, .xlsx o .tsv)");
+      return;
+    }
+    setIsUploadingSd(true);
+    try {
+      const result = await importarSdSets(sdFile);
+      setSdResult(result);
+      toast.success(`${result.total_sd} SD y ${result.total_sets} SETs importados.`);
+      setSdFile(null);
+      await fetchData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al importar SD y SETs");
+    } finally {
+      setIsUploadingSd(false);
+    }
+  };
+
+  const handleUploadConversion = async (file: File) => {
+    setIsUploadingConversion(true);
+    try {
+      const result = await importarConversiones(file);
+      toast.success(
+        `${result.total_conversiones} conversiones cargadas (${result.con_codigo_sap} con Codigo SAP). Reconsolidá la orden para aplicarlas.`
+      );
+      if (result.sin_codigo_sap.length > 0) {
+        toast.warning(
+          `${result.sin_codigo_sap.length} Codigo TASA+TBAR sin Codigo SAP: ${result.sin_codigo_sap.slice(0, 15).join(", ")}${
+            result.sin_codigo_sap.length > 15 ? "…" : ""
+          }`,
+          { duration: 15000 }
+        );
+      }
+      setConversionResumen(await getConversionesResumen());
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al importar conversiones");
+    } finally {
+      setIsUploadingConversion(false);
+    }
+  };
+
   const openNewRelationDialog = () => {
     setEditingRelation(null);
     setRelationForm({
@@ -696,16 +753,44 @@ export function SupplyOrderBom() {
             Ingesta de demandas de producción, gestión de recetas activas y relaciones de componentes
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={fetchData}
-          disabled={loading}
-          className="flex items-center gap-2"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          Recargar datos
-        </Button>
+        <div className="flex items-center gap-2">
+          <input
+            ref={conversionInputRef}
+            type="file"
+            accept=".xlsx,.xlsm"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void handleUploadConversion(f);
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => conversionInputRef.current?.click()}
+            disabled={isUploadingConversion}
+            title={
+              conversionResumen && conversionResumen.total_conversiones > 0
+                ? `Vigente: ${conversionResumen.total_conversiones} conversiones · ${conversionResumen.nombre_archivo ?? ""} · ${conversionResumen.fecha_carga ?? ""}`
+                : "Excel con hojas OSum y Conversion tasa sap"
+            }
+            className="flex items-center gap-2"
+          >
+            <Upload className={`w-4 h-4 ${isUploadingConversion ? "animate-pulse" : ""}`} />
+            Importar conversiones
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            Recargar datos
+          </Button>
+        </div>
       </div>
 
       {errorMsg && (
@@ -1348,6 +1433,50 @@ export function SupplyOrderBom() {
                   </Button>
                 </div>
               </div>
+
+              <div className="p-4 border border-slate-200 rounded-lg bg-slate-50 mb-4">
+                <p className="text-sm text-slate-700 font-medium">SD y SETs</p>
+                <p className="text-xs text-slate-500 mt-0.5 mb-3">
+                  SD en columna A, SET en B y productos en C. Los productos se expanden con la BOM vigente. Cada carga reemplaza la anterior.
+                </p>
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <Input
+                    type="file"
+                    accept=".xls,.xlsx,.xlsm,.tsv,.csv,.txt"
+                    className="bg-white text-xs max-w-md"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setSdFile(f);
+                    }}
+                  />
+                  <Button
+                    onClick={handleUploadSd}
+                    disabled={isUploadingSd}
+                    className="flex items-center gap-2 w-full sm:w-auto"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isUploadingSd ? "animate-spin" : ""}`} />
+                    Importar SD y SETs
+                  </Button>
+                </div>
+                {sdResult && (
+                  <div className="mt-3 text-xs text-slate-600 space-y-1">
+                    <p>
+                      {sdResult.total_sd} SD · {sdResult.total_sets} SETs · {sdResult.total_set_producto} relaciones SET → producto
+                    </p>
+                    {sdResult.sets_sin_estructura.length > 0 && (
+                      <p className="text-amber-700">
+                        SETs sin productos ni BOM ({sdResult.sets_sin_estructura.length}): {sdResult.sets_sin_estructura.join(", ")}
+                      </p>
+                    )}
+                    {sdResult.productos_sin_bom.length > 0 && (
+                      <p className="text-amber-700">
+                        Productos sin BOM ({sdResult.productos_sin_bom.length}): {sdResult.productos_sin_bom.join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
 
               <div className="border rounded-lg overflow-hidden">
                 <Table>

@@ -239,45 +239,12 @@ class SupplyRepository:
                     items=items,
                 )
 
-            cursor.execute(
-                """
-                SELECT 
-                    s.codigo_tasa,
-                    s.codigo_sap_padre,
-                    COALESCE(m.nombre, s.codigo_sap_padre) AS descripcion
-                FROM dbo.set_componente s
-                LEFT JOIN dbo.material m ON s.codigo_sap_padre = m.id_material
-                WHERE s.activo = 1
-                GROUP BY s.codigo_tasa, s.codigo_sap_padre, m.nombre
-                ORDER BY s.codigo_tasa ASC
-                """
-            )
-            rows = cursor.fetchall()
-
-            items = []
-            for idx, r in enumerate(rows):
-                items.append(
-                    DemandRowOut(
-                        id=str(idx + 1),
-                        part_number=str(r[1]),
-                        tasa_code=str(r[0]),
-                        description=str(r[2]),
-                        dock="DK-01",
-                        box_type="RACK-A",
-                        qty_per_box=1,
-                        daily_values={},
-                        tentative_total=0.0,
-                        total=0.0,
-                        status="validado",
-                    )
-                )
-
             return SupplySummaryOut(
                 periodo="Sin importación previa",
                 total_demanda=0.0,
-                piezas_validadas=len(items),
-                total_piezas=len(items),
-                items=items,
+                piezas_validadas=0,
+                total_piezas=0,
+                items=[],
             )
         finally:
             cursor.close()
@@ -419,6 +386,7 @@ class SupplyRepository:
         file_names: List[str],
         items: List[DemandRowOut],
         plan_year: int = 2026,
+        pn_reemplazados: Optional[List[str]] = None,
     ) -> int:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -651,6 +619,19 @@ class SupplyRepository:
                     """
                 )
                 cursor.execute("DROP TABLE #staging_plan")
+
+            if pn_reemplazados and planned_dict:
+                desde = min(fecha for _, fecha in planned_dict.keys()).replace(day=1)
+                reemplazados = sorted(set(pn_reemplazados) - {pn for pn, _ in planned_dict.keys()})
+                for i in range(0, len(reemplazados), 1000):
+                    lote = reemplazados[i : i + 1000]
+                    cursor.execute(
+                        f"""
+                        DELETE FROM dbo.produccion_planificada
+                        WHERE fecha >= ? AND id_producto IN ({','.join('?' for _ in lote)})
+                        """,
+                        (desde, *lote),
+                    )
 
             conn.commit()
             return id_importacion

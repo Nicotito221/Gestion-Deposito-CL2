@@ -43,6 +43,19 @@ class SupplyConsolidateResult(BaseModel):
     mensaje: str
 
 
+class ConversionOrdenImportResult(BaseModel):
+    nombre_archivo: str
+    total_conversiones: int
+    con_codigo_sap: int
+    sin_codigo_sap: List[str] = Field(default_factory=list)
+
+
+class ConversionOrdenResumen(BaseModel):
+    total_conversiones: int
+    nombre_archivo: Optional[str] = None
+    fecha_carga: Optional[str] = None
+
+
 class SupplyItemUpdate(BaseModel):
     id_producto: str
     fecha: date

@@ -16,6 +16,7 @@ from app.schemas.bom import (
     BomExtensionUpsert,
     BomImportResult,
     BomVersionOut,
+    SdSetImportResult,
     SetComponenteCreate,
     SetComponenteOut,
     SetComponenteUpdate,
@@ -240,6 +241,32 @@ def eliminar_extension(
         return _bom_service.eliminar_extension(id_extension)
     except BomExtensionError as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+
+
+@router.post("/sd-sets/importar", response_model=SdSetImportResult)
+def importar_sd_sets(
+    file: UploadFile = File(...),
+    _: Dict[str, Any] = Depends(require_editor_planificacion),
+) -> SdSetImportResult:
+    temp_dir = tempfile.mkdtemp()
+    nombre = os.path.basename(file.filename or "sd_sets.xlsx")
+    temp_path = os.path.join(temp_dir, nombre)
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return _bom_service.importar_sd_sets(temp_path, nombre)
+    except BomExtensionError as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+    except Exception as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Fallo durante la importación de SD y SETs: {err}",
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        if os.path.exists(temp_dir):
+            os.rmdir(temp_dir)
 
 
 @router.post("/extension/importar", response_model=BomExtensionImportResult)

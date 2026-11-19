@@ -232,6 +232,70 @@ export async function uploadBomFile(file: File): Promise<{
   return res.json();
 }
 
+export interface SdSetImportResult {
+  nombre_archivo: string;
+  total_sd: number;
+  total_sets: number;
+  total_set_producto: number;
+  nuevos_materiales_registrados: number;
+  filas_explosion: number;
+  sets_sin_estructura: string[];
+  productos_sin_bom: string[];
+}
+
+export async function importarSdSets(file: File): Promise<SdSetImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const token = localStorage.getItem("auth_token");
+  const res = await fetch(`${API_BASE_URL}/api/bom/sd-sets/importar`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al importar SD y SETs");
+  }
+  return res.json();
+}
+
+export interface ConversionOrdenImportResult {
+  nombre_archivo: string;
+  total_conversiones: number;
+  con_codigo_sap: number;
+  sin_codigo_sap: string[];
+}
+
+export interface ConversionOrdenResumen {
+  total_conversiones: number;
+  nombre_archivo: string | null;
+  fecha_carga: string | null;
+}
+
+export async function getConversionesResumen(): Promise<ConversionOrdenResumen> {
+  const res = await fetch(`${API_BASE_URL}/api/suministro/conversiones/resumen`);
+  if (!res.ok) {
+    throw new Error(`Error al obtener conversiones (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function importarConversiones(file: File): Promise<ConversionOrdenImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const token = localStorage.getItem("auth_token");
+  const res = await fetch(`${API_BASE_URL}/api/suministro/conversiones/importar`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al importar conversiones");
+  }
+  return res.json();
+}
+
 export async function getSupplySummary(): Promise<SupplySummaryApi> {
   const res = await fetch(`${API_BASE_URL}/api/suministro/resumen`);
   if (!res.ok) {
