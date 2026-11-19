@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Eye, EyeOff, AlertCircle, LogIn } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import tbarLogo from "../../assets/tbar-logo.png";
 
 export function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [usuario, setUsuario] = useState("");
   const [password, setPassword] = useState("");
@@ -20,7 +21,9 @@ export function Login() {
 
     try {
       await login(usuario.trim(), password);
-      navigate("/inicio");
+      const estado = location.state as { from?: { pathname?: string; search?: string } } | null;
+      const destino = estado?.from?.pathname && estado.from.pathname !== "/login" ? `${estado.from.pathname}${estado.from.search ?? ""}` : "/inicio";
+      navigate(destino, { replace: true });
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);

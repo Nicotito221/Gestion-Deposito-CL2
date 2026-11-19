@@ -1714,6 +1714,8 @@ export async function getPedidos(params?: {
     query.append("order", "id_pedido.desc");
     if (params?.estado) query.append("estado", `eq.${params.estado}`);
     if (params?.turno) query.append("turno", `eq.${params.turno}`);
+    if (params?.sector) query.append("sector", `eq.${params.sector}`);
+    if (params?.fecha_requerida) query.append("fecha_requerida", `eq.${params.fecha_requerida}`);
     if (params?.limit) query.append("limit", String(params.limit));
 
     const [res, remRes] = await Promise.all([
@@ -1774,9 +1776,12 @@ export async function getPedidos(params?: {
     }
 
     const rows = (await res.json()) as SupabasePedidoRow[];
+    const hoyISO = new Date().toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" });
     const items: PedidoOut[] = rows.map((p) => {
       const detalle = p.pedidos_cl2_detalle || [];
+      const fechaRef = p.fecha_requerida || (p.fecha_creacion ? String(p.fecha_creacion).slice(0, 10) : null);
       return {
+        es_demorado: Boolean(fechaRef && fechaRef < hoyISO && p.estado !== "completo" && p.estado !== "cancelado"),
         id_pedido: p.id_pedido,
         sector: p.sector,
         prioridad: p.prioridad,

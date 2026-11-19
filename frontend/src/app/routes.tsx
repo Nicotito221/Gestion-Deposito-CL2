@@ -13,7 +13,6 @@ import { StockCount } from "./pages/StockCount";
 import { Stock } from "./pages/Stock";
 import { RundownVivo } from "./pages/RundownVivo";
 import { Audit } from "./pages/Audit";
-import { DeliveryConfirm } from "./pages/DeliveryConfirm";
 import { Remitos } from "./pages/Remitos";
 import { OrderDetail } from "./pages/OrderDetail";
 import { CyclicCount } from "./pages/CyclicCount";
@@ -21,6 +20,7 @@ import { SupplyOrderBom } from "./pages/SupplyOrderBom";
 import { DespachosTerceros } from "./pages/DespachosTerceros";
 import { MaterialConfig } from "./pages/MaterialConfig";
 import { UserManagement } from "./pages/UserManagement";
+import { PERMISOS_RUTA } from "./permisos";
 
 export const router = createBrowserRouter([
   {
@@ -48,7 +48,7 @@ export const router = createBrowserRouter([
         path: "nuevo-pedido",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "contador_ciclico", "solicitante", "operario_planta"]}
+            roles={PERMISOS_RUTA["/nuevo-pedido"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -75,7 +75,7 @@ export const router = createBrowserRouter([
       {
         path: "deposito",
         element: (
-          <ProtectedRoute roles={["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"]}>
+          <ProtectedRoute roles={PERMISOS_RUTA["/deposito"]}>
             <WarehouseOrders />
           </ProtectedRoute>
         ),
@@ -83,7 +83,7 @@ export const router = createBrowserRouter([
       {
         path: "deposito/preparacion/:id",
         element: (
-          <ProtectedRoute roles={["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"]}>
+          <ProtectedRoute roles={PERMISOS_RUTA["/deposito"]}>
             <OrderPreparation />
           </ProtectedRoute>
         ),
@@ -92,7 +92,7 @@ export const router = createBrowserRouter([
         path: "remitos",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"]}
+            roles={PERMISOS_RUTA["/remitos"]}
           >
             <Remitos />
           </ProtectedRoute>
@@ -107,18 +107,10 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        path: "confirmar-entrega/:id",
-        element: (
-          <ProtectedRoute>
-            <DeliveryConfirm />
-          </ProtectedRoute>
-        ),
-      },
-      {
         path: "materiales",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista"]}
+            roles={PERMISOS_RUTA["/materiales"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -130,7 +122,7 @@ export const router = createBrowserRouter([
         path: "conteo",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "contador_ciclico", "operario_planta"]}
+            roles={PERMISOS_RUTA["/conteo"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -142,7 +134,7 @@ export const router = createBrowserRouter([
         path: "rundown",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "operario_planta", "supervisor"]}
+            roles={PERMISOS_RUTA["/rundown"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -154,7 +146,7 @@ export const router = createBrowserRouter([
         path: "suministro-bom",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "operario_planta", "supervisor"]}
+            roles={PERMISOS_RUTA["/suministro-bom"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -166,7 +158,7 @@ export const router = createBrowserRouter([
         path: "despachos-terceros",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "operario_planta", "supervisor"]}
+            roles={PERMISOS_RUTA["/despachos-terceros"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -177,7 +169,7 @@ export const router = createBrowserRouter([
       {
         path: "configuracion-materiales",
         element: (
-          <ProtectedRoute roles={["administrador", "gerente", "jefe", "analista", "supervisor"]}>
+          <ProtectedRoute roles={PERMISOS_RUTA["/configuracion-materiales"]}>
             <MaterialConfig />
           </ProtectedRoute>
         ),
@@ -185,7 +177,7 @@ export const router = createBrowserRouter([
       {
         path: "usuarios",
         element: (
-          <ProtectedRoute roles={["administrador"]}>
+          <ProtectedRoute roles={PERMISOS_RUTA["/usuarios"]}>
             <UserManagement />
           </ProtectedRoute>
         ),
@@ -194,7 +186,7 @@ export const router = createBrowserRouter([
         path: "stock",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "operario_planta", "supervisor"]}
+            roles={PERMISOS_RUTA["/stock"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >
@@ -205,7 +197,7 @@ export const router = createBrowserRouter([
       {
         path: "trazabilidad",
         element: (
-          <ProtectedRoute roles={["administrador", "gerente", "jefe", "analista", "supervisor"]}>
+          <ProtectedRoute roles={PERMISOS_RUTA["/trazabilidad"]}>
             <Audit />
           </ProtectedRoute>
         ),
@@ -214,7 +206,7 @@ export const router = createBrowserRouter([
         path: "conteo-ciclico",
         element: (
           <ProtectedRoute
-            roles={["administrador", "gerente", "jefe", "analista", "contador_ciclico"]}
+            roles={PERMISOS_RUTA["/conteo-ciclico"]}
             blockedRoles={["deposito", "operario_deposito"]}
             blockedSectors={["CL2"]}
           >

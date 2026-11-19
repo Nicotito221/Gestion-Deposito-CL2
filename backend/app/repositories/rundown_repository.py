@@ -570,7 +570,7 @@ class RundownRepository:
                             )
                 else:
                     cursor.execute(
-                        "SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?",
+                        "SELECT stock_actual FROM dbo.stock_deposito WITH (UPDLOCK, HOLDLOCK) WHERE id_material = ?",
                         (data.id_material,),
                     )
                     stk_row = cursor.fetchone()
@@ -643,7 +643,7 @@ class RundownRepository:
                 default_uid = int(u_row[0]) if u_row else 1
 
                 if not dep_planta:
-                    cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
+                    cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WITH (UPDLOCK, HOLDLOCK) WHERE id_material = ?", (id_mat,))
                     s_row = cursor.fetchone()
                     stk_ant = float(s_row[0] or 0.0) if s_row else 0.0
                     stk_post = round(max(0.0, stk_ant - cant), 2)
@@ -2282,6 +2282,15 @@ class RundownRepository:
                     (id_seccion, item.sd, item.id_producto, item.fecha, float(item.cantidad)),
                 )
                 registros_linea += 1
+
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (SELECT 1 FROM dbo.producto WHERE id_producto = ?)
+                        INSERT INTO dbo.producto (id_producto, nombre, descripcion, sector, activo)
+                        VALUES (?, ?, ?, ?, 1)
+                    """,
+                    (item.id_producto, item.id_producto, item.id_producto[:50], item.id_producto[:100], sec_nombre[:50]),
+                )
 
                 cursor.execute(
                     """

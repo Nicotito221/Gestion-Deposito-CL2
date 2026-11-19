@@ -201,6 +201,12 @@ export function StockCount() {
   const [palletChunkInput, setPalletChunkInput] = useState<{ [matId: string]: string }>({});
   const [unidadChunkInput, setUnidadChunkInput] = useState<{ [matId: string]: string }>({});
 
+  const [ahora, setAhora] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const intervalo = window.setInterval(() => setAhora(new Date()), 30000);
+    return () => window.clearInterval(intervalo);
+  }, []);
+
   const currentTimeStr = useMemo(() => {
     return new Intl.DateTimeFormat("es-AR", {
       timeZone: "America/Argentina/Buenos_Aires",
@@ -208,8 +214,8 @@ export function StockCount() {
       month: "2-digit",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(new Date());
-  }, []);
+    }).format(ahora);
+  }, [ahora]);
 
   const proveedoresList = useMemo(() => {
     const list: { id_proveedor: number; nombre: string }[] = [];
@@ -259,6 +265,7 @@ export function StockCount() {
       setSearchResults([]);
       return;
     }
+    let vigente = true;
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
@@ -269,6 +276,7 @@ export function StockCount() {
           target_date: fechaImpacto,
           limit: 10,
         });
+        if (!vigente) return;
         setSearchResults(res);
       } catch {
         // Silently catch search errors
@@ -277,7 +285,10 @@ export function StockCount() {
       }
     }, 200);
 
-    return () => clearTimeout(timer);
+    return () => {
+      vigente = false;
+      clearTimeout(timer);
+    };
   }, [search, selectedProvId, fechaImpacto]);
 
   const alreadyAddedCodes = useMemo(() => new Set(rows.map((r) => r.id_material)), [rows]);
@@ -623,7 +634,7 @@ export function StockCount() {
         setSugerenciaLoading(false);
       }
     },
-    [rows]
+    [rows, fechaImpacto]
   );
 
   const handleOpenSugerencia = (id_conteo?: number) => {

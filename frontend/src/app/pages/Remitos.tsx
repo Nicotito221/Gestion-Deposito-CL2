@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { DateInputAR } from "../components/DateInputAR";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -190,9 +190,9 @@ export function Remitos() {
       });
     });
     ingresos.forEach((ing) => {
-      if (ing.nombre_proveedor && !list.some((it) => it.nombre === ing.nombre_proveedor)) {
+      if (ing.id_proveedor && ing.nombre_proveedor && !list.some((it) => it.id_proveedor === ing.id_proveedor)) {
         list.push({
-          id_proveedor: ing.id_proveedor || list.length + 1,
+          id_proveedor: ing.id_proveedor,
           nombre: ing.nombre_proveedor,
           deposito_en_planta: false,
         });
@@ -201,21 +201,30 @@ export function Remitos() {
     return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
   }, [secciones, ingresos]);
 
+  const [searchDebounced, setSearchDebounced] = useState<string>(search);
+  useEffect(() => {
+    const timer = setTimeout(() => setSearchDebounced(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const ingresosRequestRef = useRef(0);
+
   const fetchIngresosList = useCallback(async () => {
+    const requestId = ++ingresosRequestRef.current;
     setLoading(true);
     try {
       const data = await getIngresos({
         estado: filterEstado !== "all" ? filterEstado : undefined,
         id_proveedor: filterProveedor !== "all" ? parseInt(filterProveedor, 10) : undefined,
-        search: search.trim() || undefined,
+        search: searchDebounced.trim() || undefined,
       });
+      if (requestId !== ingresosRequestRef.current) return;
       setIngresos(data);
     } catch {
       toast.error("Error al cargar comprobantes de ingreso");
     } finally {
-      setLoading(false);
+      if (requestId === ingresosRequestRef.current) setLoading(false);
     }
-  }, [filterEstado, filterProveedor, search]);
+  }, [filterEstado, filterProveedor, searchDebounced]);
 
   const fetchProveedores = useCallback(async () => {
     try {
@@ -239,10 +248,12 @@ export function Remitos() {
       setMatSearchResults([]);
       return;
     }
+    let vigente = true;
     const timer = setTimeout(async () => {
       setIsSearchingMat(true);
       try {
         const results = await searchMaterialesCatalogo(matSearch.trim());
+        if (!vigente) return;
         setMatSearchResults(results.slice(0, 8));
       } catch {
         setMatSearchResults([]);
@@ -250,7 +261,10 @@ export function Remitos() {
         setIsSearchingMat(false);
       }
     }, 250);
-    return () => clearTimeout(timer);
+    return () => {
+      vigente = false;
+      clearTimeout(timer);
+    };
   }, [matSearch]);
 
   const handleAddMaterialToNew = (mat: MaterialCatalogoItem) => {

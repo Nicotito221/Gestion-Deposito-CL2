@@ -325,10 +325,10 @@ class BomParser:
     ) -> Dict[str, Dict[str, Tuple[Decimal, str]]]:
         memo: Dict[str, Dict[str, Tuple[Decimal, str]]] = {}
 
-        def explotar_pieza(pieza: str, en_curso: Set[str]) -> Dict[str, Tuple[Decimal, str]]:
+        def explotar_pieza(pieza: str, camino: List[str]) -> Dict[str, Tuple[Decimal, str]]:
             if pieza in memo:
                 return memo[pieza]
-            en_curso.add(pieza)
+            camino.append(pieza)
             resultado: Dict[str, Tuple[Decimal, str]] = {}
 
             def acumular(insumo: str, factor: Decimal, unidad: str) -> None:
@@ -336,66 +336,46 @@ class BomParser:
                 resultado[insumo] = (previo[0] + factor, previo[1]) if previo else (factor, unidad)
 
             for comp in hijos_por_padre.get(pieza, []):
+                if comp.id_hijo in camino:
+                    ciclo = camino[camino.index(comp.id_hijo):] + [comp.id_hijo]
+                    raise ValueError(f"La BOM tiene un ciclo: {' -> '.join(ciclo)}")
                 acumular(comp.id_hijo, comp.cantidad, comp.unidad)
-                if comp.id_hijo in hijos_por_padre and comp.id_hijo not in en_curso:
-                    for insumo, (factor, unidad) in explotar_pieza(comp.id_hijo, en_curso).items():
+                if comp.id_hijo in hijos_por_padre:
+                    for insumo, (factor, unidad) in explotar_pieza(comp.id_hijo, camino).items():
                         acumular(insumo, factor * comp.cantidad, unidad)
 
-            en_curso.discard(pieza)
+            camino.pop()
             memo[pieza] = resultado
             return resultado
 
-        return {pieza: explotar_pieza(pieza, set()) for pieza in hijos_por_padre}
+        return {pieza: explotar_pieza(pieza, []) for pieza in hijos_por_padre}
 
     @staticmethod
     def _get_row_iterator(source: Union[str, BinaryIO, io.BytesIO]) -> Iterator[List[str]]:
         if isinstance(source, str):
             with open(source, "rb") as f:
-                header_bytes = f.read(4)
-                f.seek(0)
-                if header_bytes.startswith(b"PK\x03\x04"):
-                    wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
-                    ws = wb.active
-                    for row in ws.iter_rows(values_only=True):
-                        yield [str(c) if c is not None else "" for c in row]
-                    wb.close()
-                    return
-
-            encodings = ["utf-8", "latin-1", "cp1252"]
-            for enc in encodings:
-                try:
-                    with open(source, mode="r", encoding=enc) as f:
-                        reader = csv.reader(f, delimiter="\t")
-                        for row in reader:
-                            yield row
-                    return
-                except UnicodeDecodeError:
-                    continue
-            raise ValueError(f"No se pudo decodificar el archivo {source} con codificaciones estándar.")
-
+                contenido = f.read()
         else:
-            header_bytes = source.read(4)
-            source.seek(0)
-            if header_bytes.startswith(b"PK\x03\x04"):
-                wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
-                ws = wb.active
-                for row in ws.iter_rows(values_only=True):
+            contenido = source.read()
+
+        if contenido.startswith(b"PK\x03\x04"):
+            wb = openpyxl.load_workbook(io.BytesIO(contenido), read_only=True, data_only=True)
+            try:
+                for row in wb.active.iter_rows(values_only=True):
                     yield [str(c) if c is not None else "" for c in row]
+            finally:
                 wb.close()
-                return
+            return
 
-            content = source.read()
-            text_data = None
-            for enc in ["utf-8", "latin-1", "cp1252"]:
-                try:
-                    text_data = content.decode(enc)
-                    break
-                except UnicodeDecodeError:
-                    continue
+        texto: Optional[str] = None
+        for enc in ("utf-8-sig", "cp1252", "latin-1"):
+            try:
+                texto = contenido.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if texto is None:
+            raise ValueError("No se pudo decodificar el archivo con codificaciones estándar.")
 
-            if text_data is None:
-                raise ValueError("No se pudo decodificar el stream binario.")
-
-            reader = csv.reader(io.StringIO(text_data), delimiter="\t")
-            for row in reader:
-                yield row
+        for row in csv.reader(io.StringIO(texto), delimiter="\t"):
+            yield row

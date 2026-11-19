@@ -95,7 +95,7 @@ class PedidoCreate(BaseModel):
     fecha_requerida: Optional[date] = None
     turno: Optional[str] = None
     id_conteo: Optional[int] = None
-    comentario: Optional[str] = None
+    comentario: Optional[str] = Field(default=None, max_length=1000)
     id_usuario_solicitante: Optional[int] = None
     items: List[PedidoItemInput] = Field(min_length=1)
 

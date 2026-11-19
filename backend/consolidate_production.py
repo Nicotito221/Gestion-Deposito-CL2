@@ -3,11 +3,9 @@ import csv
 import datetime
 import os
 import re
-import tkinter as tk
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass, field
-from tkinter import filedialog, messagebox
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import openpyxl
@@ -373,11 +371,8 @@ class ProductionConsolidator:
             self.register_demand_item(item)
 
     def load_bom_from_db(self) -> None:
-        try:
-            from app.core.config import get_db_connection
-            conn = get_db_connection()
-        except Exception:
-            return
+        from app.core.config import get_db_connection
+        conn = get_db_connection()
 
         cursor = None
         try:
@@ -1122,6 +1117,9 @@ def find_default_file(candidates: List[str]) -> Optional[str]:
 
 
 def prompt_user_for_files() -> Tuple[List[str], List[str], List[str], List[str], str]:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+
     root = tk.Tk()
     root.withdraw()
     root.attributes('-topmost', True)
@@ -1194,6 +1192,9 @@ def prompt_user_for_files() -> Tuple[List[str], List[str], List[str], List[str],
 
 
 def prompt_tentative_dates_dialog(tentative_info: List[Tuple[int, int, str, str]]) -> Dict[int, str]:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+
     if not tentative_info:
         return {}
 
@@ -1278,6 +1279,9 @@ def parse_tentative_dates_arg(raw_args: List[str], tentative_months_info: List[T
 
 
 def main() -> None:
+    import tkinter as tk
+    from tkinter import messagebox
+
     parser = argparse.ArgumentParser(description='Consolidador de Demanda, BOM y Consumo de Materiales')
     parser.add_argument('--bom', nargs='*', default=[], help='Ruta archivo de BOM (.xlsm / .xlsx)')
     parser.add_argument('--mapping', nargs='*', default=[], help='Ruta archivo de mapeo')

@@ -3,7 +3,7 @@ from typing import Any, Dict, List
 import pyodbc
 
 from app.core.config import get_db_connection
-from app.core.time import get_argentina_now, get_turno_sugerido_actual
+from app.core.time import get_argentina_now, get_argentina_now_naive, get_argentina_today, get_turno_sugerido_actual
 from app.schemas.dashboard import (
     DashboardKpis,
     DashboardMaterialCritico,
@@ -21,6 +21,38 @@ class DashboardService:
     def _get_turno_actual(self, now: datetime) -> str:
         return get_turno_sugerido_actual(now)
 
+    def liberar_preparaciones_vencidas(self) -> int:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                UPDATE dbo.pedido
+                SET estado = 'pendiente'
+                OUTPUT inserted.id_pedido
+                WHERE estado = 'en_preparacion'
+                  AND COALESCE(fecha_requerida, CAST(fecha_creacion AS DATE)) < ?
+                """,
+                (get_argentina_today(),),
+            )
+            ids = [int(r[0]) for r in cursor.fetchall()]
+            if ids:
+                cursor.executemany(
+                    """
+                    INSERT INTO dbo.auditoria (entidad, id_entidad, tipo_evento, id_usuario, fecha, detalle)
+                    VALUES ('pedido', ?, 'modificacion', NULL, ?, 'Preparación vencida: el pedido vuelve a pendiente')
+                    """,
+                    [(str(i), get_argentina_now_naive()) for i in ids],
+                )
+            conn.commit()
+            return len(ids)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
     def get_resumen(self) -> DashboardResumenResponse:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -28,19 +60,6 @@ class DashboardService:
         turno_actual = self._get_turno_actual(now)
 
         try:
-            today = now.date()
-            cursor.execute(
-                """
-                UPDATE dbo.pedido
-                SET estado = 'pendiente'
-                WHERE estado = 'en_preparacion'
-                  AND COALESCE(fecha_requerida, CAST(fecha_creacion AS DATE)) < ?
-                """,
-                (today,),
-            )
-            conn.commit()
-
-            # 1. KPIs de Pedidos
             cursor.execute(
                 """
                 SELECT 

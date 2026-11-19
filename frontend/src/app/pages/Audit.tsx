@@ -51,6 +51,8 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   cancelado: { label: "Cancelado", color: "bg-red-100 text-red-700" },
 };
 
+const LIMITE_AUDITORIA = 500;
+
 export function Audit() {
   const [orders, setOrders] = useState<TraceOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +71,7 @@ export function Audit() {
     try {
       setLoading(true);
       setError(null);
-      const res = await getAuditoriaPedidos();
+      const res = await getAuditoriaPedidos({ limit: LIMITE_AUDITORIA });
       setOrders(res.orders);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Error al cargar historial de auditoría");
@@ -229,6 +231,12 @@ export function Audit() {
                   </div>
                 </CardContent>
               </Card>
+
+              {orders.length >= LIMITE_AUDITORIA && (
+                <p className="text-xs text-amber-700">
+                  Se muestran los últimos {LIMITE_AUDITORIA} pedidos. Los más antiguos no aparecen en la búsqueda.
+                </p>
+              )}
 
               {filteredOrders.length === 0 ? (
                 <Card className="p-8 text-center text-slate-500">

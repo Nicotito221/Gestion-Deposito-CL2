@@ -114,7 +114,7 @@ export function OrderPreparation() {
             quantityRequested: cantPed,
             quantityDelivered: cantEnt,
             quantityPending: cantPend,
-            quantityPrepared: 0,
+            quantityPrepared: Math.min(cantPend, Math.max(0, (it.cantidad_preparada ?? 0) - cantEnt)),
             unit: it.unidad || "UN",
             status: isDone ? "preparado" : (cantEnt > 0 ? "parcial" : "pendiente"),
             isPrepared: isDone,
@@ -236,7 +236,7 @@ export function OrderPreparation() {
           id_material: m.id,
           cantidad_preparada: m.quantityPrepared,
           cantidad_pallets_preparada: m.cantidad_pallets_preparada,
-          estado: m.status,
+          estado: m.status === "preparado" ? "completo" : m.status,
         })),
       };
       const res = await updatePreparacionPedido(order.id_pedido, payload);

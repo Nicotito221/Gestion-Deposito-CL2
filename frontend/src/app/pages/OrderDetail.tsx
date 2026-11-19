@@ -55,6 +55,8 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   cancelado: { label: "Cancelado", color: "bg-slate-100 text-slate-600 border-slate-200" },
 };
 
+const ROLES_CANCELACION = ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"];
+
 export function OrderDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -131,7 +133,10 @@ export function OrderDetail() {
 
   const hasRemito = Boolean(order?.id_remito || order?.estado === "completo" || order?.estado === "parcial");
   const canPrepare = user?.rol === "administrador" || user?.rol === "deposito" || user?.rol === "operario_deposito";
-  const canCancel = Boolean(order && order.estado !== "completo" && order.estado !== "cancelado");
+  const puedeCancelarPorRol = Boolean(
+    user && (ROLES_CANCELACION.includes(user.rol) || (order?.id_usuario_solicitante != null && String(order.id_usuario_solicitante) === String(user.id_usuario)))
+  );
+  const canCancel = Boolean(order && order.estado !== "completo" && order.estado !== "cancelado" && puedeCancelarPorRol);
 
   if (loading) {
     return (

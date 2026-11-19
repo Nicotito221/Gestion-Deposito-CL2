@@ -132,7 +132,11 @@ export function SupplyOrderBom() {
   const [dateMap, setDateMap] = useState<Record<string, string>>({});
   const [editingCell, setEditingCell] = useState<{ partNumber: string; col: string; value: string } | null>(null);
   const [savingCell, setSavingCell] = useState<boolean>(false);
-  const [periodo, setPeriodo] = useState<string>("Octubre 2026");
+  const [periodo, setPeriodo] = useState<string>(() => {
+    const hoy = new Date();
+    const nombre = hoy.toLocaleDateString("es-AR", { month: "long" });
+    return `${nombre.charAt(0).toUpperCase()}${nombre.slice(1)} ${hoy.getFullYear()}`;
+  });
   const [relations, setRelations] = useState<SetComponenteItem[]>([]);
   const [versions, setVersions] = useState<BomVersionItem[]>([]);
   const [bomEstructura, setBomEstructura] = useState<BomEstructuraItem[]>([]);
@@ -212,6 +216,9 @@ export function SupplyOrderBom() {
     }
   }, [pageSizeEstructura]);
 
+  const estructuraParamsRef = useRef({ page: pageEstructura, search: searchEstructura });
+  estructuraParamsRef.current = { page: pageEstructura, search: searchEstructura };
+
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchEstructura(pageEstructura, searchEstructura);
@@ -224,17 +231,9 @@ export function SupplyOrderBom() {
     setErrorMsg(null);
     try {
       const [versionsData, relationsData, supplyData] = await Promise.all([
-        getBomVersions().catch(() => []),
-        getSetComponentes({ limit: 500 }).catch(() => ({ items: [], total: 0 })),
-        getSupplySummary().catch(() => ({
-          periodo: "Septiembre 2026",
-          total_demanda: 0,
-          piezas_validadas: 0,
-          total_piezas: 0,
-          columnas_diarias: [],
-          columnas_tentativas: [],
-          items: [],
-        })),
+        getBomVersions(),
+        getSetComponentes({ limit: 500 }),
+        getSupplySummary(),
       ]);
 
       setVersions(versionsData);
@@ -244,7 +243,7 @@ export function SupplyOrderBom() {
       setDailyColumns(supplyData.columnas_diarias || []);
       setTentativeColumns(supplyData.columnas_tentativas || []);
       setDateMap(supplyData.columnas_fechas_map || {});
-      await fetchEstructura(pageEstructura, searchEstructura);
+      await fetchEstructura(estructuraParamsRef.current.page, estructuraParamsRef.current.search);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Error al conectar con el servidor";
       setErrorMsg(msg);
@@ -252,7 +251,7 @@ export function SupplyOrderBom() {
     } finally {
       setLoading(false);
     }
-  }, [fetchEstructura, pageEstructura, searchEstructura]);
+  }, [fetchEstructura]);
 
   const parsePeriodoToAnioMes = useCallback((pStr: string): { anio: number; mes: number } => {
     const MESES: Record<string, number> = {
@@ -397,6 +396,11 @@ export function SupplyOrderBom() {
     const parsed = parseFloat(newValStr);
     const newQty = isNaN(parsed) || parsed < 0 ? 0 : Math.round(parsed);
     const isoDate = dateMap[col];
+    const valorActual = demandItems.find((d) => d.part_number === partNumber)?.daily_values?.[col] ?? 0;
+    if (Math.round(valorActual) === newQty) {
+      setEditingCell(null);
+      return;
+    }
 
     if (!isoDate) {
       toast.error(`No se encontró fecha mapeada para la columna ${col}`);
@@ -798,7 +802,7 @@ export function SupplyOrderBom() {
           <CardContent className="pt-4 pb-4 flex items-center gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
             <div className="flex-1 text-sm text-red-800">
-              <span className="font-semibold">Aviso de conexión:</span> {errorMsg}. Asegúrese de que el servidor FastAPI esté en ejecución en <code>http://127.0.0.1:8000</code>.
+              <span className="font-semibold">Aviso de conexión:</span> {errorMsg}. Verifique que el servidor de la planta esté en ejecución.
             </div>
             <Button size="sm" variant="outline" onClick={fetchData}>
               Reintentar

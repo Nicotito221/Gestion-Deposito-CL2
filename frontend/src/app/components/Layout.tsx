@@ -23,6 +23,7 @@ import {
 import { cn } from "./ui/utils";
 import { useAuth } from "../context/AuthContext";
 import tbarLogo from "../../assets/tbar-logo.png";
+import { PERMISOS_RUTA } from "../permisos";
 
 interface NavItem {
   path: string;
@@ -42,35 +43,35 @@ const navGroups: NavGroup[] = [
     label: "Pedidos & Solicitudes",
     items: [
       { path: "/inicio", label: "Inicio", icon: Home, exact: true },
-      { path: "/nuevo-pedido", label: "Nuevo pedido", icon: FilePlus, roles: ["administrador", "gerente", "jefe", "analista", "contador_ciclico", "solicitante"] },
+      { path: "/nuevo-pedido", label: "Nuevo pedido", icon: FilePlus, roles: PERMISOS_RUTA["/nuevo-pedido"] },
       { path: "/pedidos", label: "Mis pedidos", icon: FileText },
     ],
   },
   {
     label: "Planta & Producción",
     items: [
-      { path: "/conteo", label: "Conteo de planta", icon: ClipboardList, roles: ["administrador", "gerente", "jefe", "analista", "contador_ciclico", "operario_planta"] },
-      { path: "/rundown", label: "Rundown vivo", icon: BarChart2, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
-      { path: "/suministro-bom", label: "Suministro y BOM", icon: FileSpreadsheet, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
-      { path: "/despachos-terceros", label: "Despachos a terceros", icon: Truck, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
-      { path: "/stock", label: "Control Stock TBAR", icon: Layers, roles: ["administrador", "gerente", "jefe", "analista", "operario_planta"] },
+      { path: "/conteo", label: "Conteo de planta", icon: ClipboardList, roles: PERMISOS_RUTA["/conteo"] },
+      { path: "/rundown", label: "Rundown vivo", icon: BarChart2, roles: PERMISOS_RUTA["/rundown"] },
+      { path: "/suministro-bom", label: "Suministro y BOM", icon: FileSpreadsheet, roles: PERMISOS_RUTA["/suministro-bom"] },
+      { path: "/despachos-terceros", label: "Despachos a terceros", icon: Truck, roles: PERMISOS_RUTA["/despachos-terceros"] },
+      { path: "/stock", label: "Control Stock TBAR", icon: Layers, roles: PERMISOS_RUTA["/stock"] },
     ],
   },
   {
     label: "Depósito & Despacho",
     items: [
-      { path: "/deposito", label: "Preparación pedidos", icon: Warehouse, roles: ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"] },
-      { path: "/materiales", label: "Control Stock CL2", icon: Package, roles: ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"] },
-      { path: "/remitos", label: "Remitos", icon: Receipt, roles: ["administrador", "gerente", "jefe", "analista", "deposito", "operario_deposito"] },
-      { path: "/conteo-ciclico", label: "Conteo cíclico", icon: RefreshCw, roles: ["administrador", "gerente", "jefe", "analista", "contador_ciclico"] },
+      { path: "/deposito", label: "Preparación pedidos", icon: Warehouse, roles: PERMISOS_RUTA["/deposito"] },
+      { path: "/materiales", label: "Control Stock CL2", icon: Package, roles: PERMISOS_RUTA["/materiales"] },
+      { path: "/remitos", label: "Remitos", icon: Receipt, roles: PERMISOS_RUTA["/remitos"] },
+      { path: "/conteo-ciclico", label: "Conteo cíclico", icon: RefreshCw, roles: PERMISOS_RUTA["/conteo-ciclico"] },
     ],
   },
   {
     label: "Configuración & Control",
     items: [
-      { path: "/configuracion-materiales", label: "Config. Materiales", icon: SlidersHorizontal, roles: ["administrador", "gerente", "jefe", "analista", "supervisor"] },
-      { path: "/usuarios", label: "Usuarios", icon: Users, roles: ["administrador"] },
-      { path: "/trazabilidad", label: "Auditoría", icon: Shield, roles: ["administrador", "gerente", "jefe", "analista", "supervisor"] },
+      { path: "/configuracion-materiales", label: "Config. Materiales", icon: SlidersHorizontal, roles: PERMISOS_RUTA["/configuracion-materiales"] },
+      { path: "/usuarios", label: "Usuarios", icon: Users, roles: PERMISOS_RUTA["/usuarios"] },
+      { path: "/trazabilidad", label: "Auditoría", icon: Shield, roles: PERMISOS_RUTA["/trazabilidad"] },
     ],
   },
 ];

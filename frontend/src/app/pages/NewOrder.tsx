@@ -168,10 +168,12 @@ export function NewOrder() {
       setCatalogResults([]);
       return;
     }
+    let vigente = true;
     const timer = setTimeout(async () => {
       setIsSearchingCatalog(true);
       try {
         const res = await searchMaterialesCatalogo(searchValue.trim());
+        if (!vigente) return;
         setCatalogResults(res);
       } catch {
         setCatalogResults([]);
@@ -179,7 +181,10 @@ export function NewOrder() {
         setIsSearchingCatalog(false);
       }
     }, 200);
-    return () => clearTimeout(timer);
+    return () => {
+      vigente = false;
+      clearTimeout(timer);
+    };
   }, [searchValue]);
 
   const alreadyAdded = useMemo(() => new Set(materials.map((m) => m.code)), [materials]);

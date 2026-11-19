@@ -745,9 +745,10 @@ class PedidoRepository:
                         c_ped = float(ped_row[0] or 0.0)
                         c_entregada = float(ped_row[1] or 0.0)
                         est_item = "completo" if c_entregada >= c_ped and c_ped > 0 else ("parcial" if c_entregada > 0 else "pendiente")
+                        c_prep_acumulada = round(c_entregada + min(max(0.0, c_prep), max(0.0, c_ped - c_entregada)), 2)
                         cursor.execute(
-                            "UPDATE dbo.material_pedido SET cantidad_preparada = ?, estado = ?, comentario = ? WHERE id_pedido = ? AND id_material = ?",
-                            (c_prep, est_item, it.get("comentario"), id_pedido, it["id_material"]),
+                            "UPDATE dbo.material_pedido SET cantidad_preparada = ?, estado = ?, comentario = COALESCE(?, comentario) WHERE id_pedido = ? AND id_material = ?",
+                            (c_prep_acumulada, est_item, it.get("comentario"), id_pedido, it["id_material"]),
                         )
                 if estado_actual == "pendiente":
                     cursor.execute(
@@ -766,7 +767,7 @@ class PedidoRepository:
                 cursor.execute(
                     """
                     SELECT id_material, cantidad_pedida, ISNULL(cantidad_entregada, 0.0)
-                    FROM dbo.material_pedido
+                    FROM dbo.material_pedido WITH (UPDLOCK, HOLDLOCK)
                     WHERE id_pedido = ?
                     """,
                     (id_pedido,),
@@ -812,7 +813,7 @@ class PedidoRepository:
                 if total_delta <= 0:
                     raise ValueError("No se especificaron cantidades pendientes a despachar mayores a 0")
 
-                cursor.execute("SELECT COUNT(*) FROM dbo.remito WHERE id_pedido = ?", (id_pedido,))
+                cursor.execute("SELECT COUNT(*) FROM dbo.remito WITH (UPDLOCK, HOLDLOCK) WHERE id_pedido = ?", (id_pedido,))
                 n_rem = cursor.fetchone()[0]
                 seq = n_rem + 1
                 id_remito_generado = f"RI-{id_pedido:06d}-{seq:02d}"
@@ -953,7 +954,7 @@ class PedidoRepository:
                 INSERT INTO dbo.auditoria (entidad, id_entidad, tipo_evento, id_usuario, fecha, detalle)
                 VALUES ('pedido', ?, 'ajuste', ?, GETDATE(), ?)
                 """,
-                (str(id_pedido), id_usuario, f"Pedido cancelado — Motivo: {motivo.strip()}"),
+                (str(id_pedido), id_usuario, f"Pedido cancelado — Motivo: {motivo.strip()}"[:500]),
             )
 
             conn.commit()
@@ -1064,15 +1065,22 @@ class PedidoRepository:
             dep_en_planta = bool(p_row[0]) if p_row and p_row[0] is not None else False
 
             if not dep_en_planta:
-                cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (target_mat,))
+                cursor.execute(
+                    """
+                    UPDATE dbo.stock_deposito
+                    SET stock_actual = CASE WHEN ISNULL(stock_actual, 0) - ? < 0 THEN 0 ELSE ROUND(ISNULL(stock_actual, 0) - ?, 2) END,
+                        fecha_actualizacion = GETDATE()
+                    OUTPUT ISNULL(deleted.stock_actual, 0), inserted.stock_actual
+                    WHERE id_material = ?
+                    """,
+                    (target_delta, target_delta, target_mat),
+                )
                 stk_row = cursor.fetchone()
                 if stk_row is not None:
                     stk_ant = float(stk_row[0] or 0.0)
-                    stk_post = round(max(0.0, stk_ant - target_delta), 2)
-                    cursor.execute(
-                        "UPDATE dbo.stock_deposito SET stock_actual = ?, fecha_actualizacion = GETDATE() WHERE id_material = ?",
-                        (stk_post, target_mat),
-                    )
+                    stk_post = float(stk_row[1] or 0.0)
+                    if stk_ant < target_delta:
+                        extra_obs += f" [Stock insuficiente: faltaron {round(target_delta - stk_ant, 2):g}]"
                 else:
                     stk_ant = 0.0
                     stk_post = 0.0

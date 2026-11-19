@@ -40,7 +40,7 @@ class IngresoRepository:
             where_str = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
             sql = f"""
-                SELECT TOP ({limit})
+                SELECT TOP (?)
                     im.id_ingreso, im.id_proveedor, p.nombre AS nombre_proveedor,
                     p.codigo_proveedor, ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta,
                     im.numero_factura, im.orden_compra, im.estado,
@@ -57,7 +57,7 @@ class IngresoRepository:
                 {where_str}
                 ORDER BY im.id_ingreso DESC
             """
-            cursor.execute(sql, params)
+            cursor.execute(sql, [max(1, min(int(limit), 500)), *params])
             rows = cursor.fetchall()
             if not rows:
                 return []
@@ -429,7 +429,7 @@ class IngresoRepository:
                             (id_mat, cant_delta, cur_p, new_p, user_id, f"Recepción factura {nro_factura} (#{id_ingreso}) en Planta"),
                         )
                     else:
-                        cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
+                        cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WITH (UPDLOCK, HOLDLOCK) WHERE id_material = ?", (id_mat,))
                         stk_row = cursor.fetchone()
                         if stk_row is not None:
                             stk_ant = float(stk_row[0] or 0.0)
@@ -611,7 +611,7 @@ class IngresoRepository:
                                     (id_mat, -cant_rec, stk_ant, stk_post, id_usuario or 1, f"Reversión stock por eliminación remito #{nro_factura}"),
                                 )
                     else:
-                        cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WHERE id_material = ?", (id_mat,))
+                        cursor.execute("SELECT stock_actual FROM dbo.stock_deposito WITH (UPDLOCK, HOLDLOCK) WHERE id_material = ?", (id_mat,))
                         stk_row = cursor.fetchone()
                         if stk_row is not None:
                             stk_ant = float(stk_row[0] or 0.0)

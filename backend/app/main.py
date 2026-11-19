@@ -11,6 +11,7 @@ from app.core.config import get_db_connection, CORS_ORIGINS, CL2_SYNC_ENABLED, C
 from app.routers import auth, bom, supply, rundown, stock, conteo, pedidos, usuarios, dashboard, ingreso, auditoria, despacho
 
 logger = logging.getLogger(__name__)
+MANTENIMIENTO_PEDIDOS_SEGUNDOS = 15 * 60
 
 
 async def _cl2_sync_polling_loop():
@@ -25,14 +26,27 @@ async def _cl2_sync_polling_loop():
         await asyncio.sleep(CL2_SYNC_INTERVAL_SECONDS)
 
 
+async def _mantenimiento_pedidos_loop():
+    from app.services.dashboard_service import DashboardService
+    servicio = DashboardService()
+    while True:
+        try:
+            liberados = await asyncio.to_thread(servicio.liberar_preparaciones_vencidas)
+            if liberados:
+                logger.info("Pedidos en preparación vencidos devueltos a pendiente: %s", liberados)
+        except Exception as e:
+            logger.error("Error en mantenimiento de pedidos: %s", e)
+        await asyncio.sleep(MANTENIMIENTO_PEDIDOS_SEGUNDOS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    polling_task = None
+    tareas = [asyncio.create_task(_mantenimiento_pedidos_loop())]
     if CL2_SYNC_ENABLED:
-        polling_task = asyncio.create_task(_cl2_sync_polling_loop())
+        tareas.append(asyncio.create_task(_cl2_sync_polling_loop()))
     yield
-    if polling_task:
-        polling_task.cancel()
+    for tarea in tareas:
+        tarea.cancel()
 
 _docs_habilitados = os.getenv("ENABLE_API_DOCS", "false").lower() in ("true", "1", "yes")
 

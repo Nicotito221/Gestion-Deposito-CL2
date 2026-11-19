@@ -107,6 +107,28 @@ import {
   type PlanSemanalItemConfirm,
 } from "../services/api";
 
+const NOMBRES_MES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+
+function fechaLocalISO(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function mesActualISO(): string {
+  return fechaLocalISO().slice(0, 7);
+}
+
+function mesSiguiente(d: Date = new Date()): { anio: number; mes: number } {
+  return d.getMonth() === 11 ? { anio: d.getFullYear() + 1, mes: 1 } : { anio: d.getFullYear(), mes: d.getMonth() + 2 };
+}
+
+function mesesFuturos(cantidad: number): { anio: number; mes: number; label: string }[] {
+  const hoy = new Date();
+  return Array.from({ length: cantidad }, (_, i) => {
+    const d = new Date(hoy.getFullYear(), hoy.getMonth() + 1 + i, 1);
+    return { anio: d.getFullYear(), mes: d.getMonth() + 1, label: `${NOMBRES_MES[d.getMonth()]} ${d.getFullYear()}` };
+  });
+}
+
 export function RundownVivo() {
   const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
   const [selectedSeccionId, setSelectedSeccionId] = useState<number>(0);
@@ -241,7 +263,7 @@ export function RundownVivo() {
   const [transitoForm, setTransitoForm] = useState<RundownTransitoInput>({
     id_proveedor: 1,
     id_material: "PU188-D1800",
-    fecha_eta: "2026-09-04",
+    fecha_eta: fechaLocalISO(),
     tipo_via: "Maritimo",
     po_numero: "",
     factura_numero: "",
@@ -337,7 +359,7 @@ export function RundownVivo() {
   const [savingScrap, setSavingScrap] = useState<boolean>(false);
 
   const [calModalOpen, setCalModalOpen] = useState<boolean>(false);
-  const [calSelectedAnio, setCalSelectedAnio] = useState<number>(2026);
+  const [calSelectedAnio, setCalSelectedAnio] = useState<number>(new Date().getFullYear());
   const [calSelectedMes, setCalSelectedMes] = useState<number>(10);
 
   const [horizonteModalOpen, setHorizonteModalOpen] = useState<boolean>(false);
@@ -350,9 +372,9 @@ export function RundownVivo() {
     periodo_copia: string;
     observacion: string;
   }>({
-    anio: 2027,
-    mes: 3,
-    periodo_copia: "2027-02",
+    anio: mesSiguiente().anio,
+    mes: mesSiguiente().mes,
+    periodo_copia: mesActualISO(),
     observacion: "",
   });
 
@@ -374,11 +396,14 @@ export function RundownVivo() {
     }
   }, []);
 
+  const seccionInicialRef = useRef(selectedSeccionId);
+  seccionInicialRef.current = selectedSeccionId;
+
   const fetchSecciones = useCallback(async () => {
     try {
       const data = await getRundownSecciones();
       setSecciones(data);
-      if (data.length > 0 && selectedSeccionId === 0) {
+      if (data.length > 0 && seccionInicialRef.current === 0) {
         setSelectedSeccionId(data[0].id_seccion);
         if (data[0].proveedores.length > 0) {
           const howaProv = data[0].proveedores.find((p) => p.codigo_proveedor === "HOWA");
@@ -388,7 +413,7 @@ export function RundownVivo() {
     } catch {
       toast.error("Error al cargar líneas de rundown");
     }
-  }, [selectedSeccionId]);
+  }, []);
 
   useEffect(() => {
     fetchSecciones();
@@ -411,8 +436,18 @@ export function RundownVivo() {
     return activeSeccion.proveedores.find((p) => p.codigo_proveedor === selectedSupplierCode) || null;
   }, [activeSeccion, selectedSupplierCode]);
 
+  const transitoCantidadRef = useRef(transitoForm.cantidad);
+  transitoCantidadRef.current = transitoForm.cantidad;
+  const periodoAutoRef = useRef<string | null>(null);
+  const rundownRequestRef = useRef(0);
+
   const fetchRundown = useCallback(async (isSilent: boolean = false) => {
     if (!selectedSupplierCode) return;
+    if (periodoAutoRef.current !== null && periodoAutoRef.current === selectedPeriodo) {
+      periodoAutoRef.current = null;
+      return;
+    }
+    const requestId = ++rundownRequestRef.current;
     if (!isSilent) {
       setLoading(true);
     }
@@ -426,6 +461,7 @@ export function RundownVivo() {
         selectedPeriodo || undefined,
         selectedSeccionId || undefined
       );
+      if (requestId !== rundownRequestRef.current) return;
 
       const currentScrollX = tableContainerRef.current?.scrollLeft || 0;
       const currentScrollY = window.scrollY;
@@ -446,14 +482,17 @@ export function RundownVivo() {
       }
 
       if (!selectedPeriodo || (data.meses_disponibles.length > 0 && !data.meses_disponibles.some((m) => m.periodo === selectedPeriodo))) {
+        if (data.periodo_actual !== selectedPeriodo) {
+          periodoAutoRef.current = data.periodo_actual;
+        }
         setSelectedPeriodo(data.periodo_actual);
       }
-      if (data.materiales.length > 0 && transitoForm.cantidad === 0) {
+      if (data.materiales.length > 0 && transitoCantidadRef.current === 0) {
         setTransitoForm((prev) => ({
           ...prev,
           id_proveedor: data.id_proveedor,
           id_material: data.materiales[0].id_material,
-          fecha_eta: data.columnas_fechas[0] || "2026-09-01",
+          fecha_eta: data.columnas_fechas[0] || fechaLocalISO(),
         }));
       }
 
@@ -469,13 +508,14 @@ export function RundownVivo() {
         }
       });
     } catch (err) {
+      if (requestId !== rundownRequestRef.current) return;
       const msg = err instanceof Error ? err.message : "Error al consultar rundown";
       setErrorMsg(msg);
       if (!isSilent) setReport(null);
     } finally {
-      if (!isSilent) setLoading(false);
+      if (!isSilent && requestId === rundownRequestRef.current) setLoading(false);
     }
-  }, [selectedSupplierCode, alcance, selectedPeriodo, selectedSeccionId, transitoForm.cantidad]);
+  }, [selectedSupplierCode, alcance, selectedPeriodo, selectedSeccionId]);
 
   useEffect(() => {
     if (activeSupplier?.tiene_parametros || selectedSupplierCode === "HOWA") {
@@ -656,7 +696,7 @@ export function RundownVivo() {
     setTransitoForm({
       id_proveedor: provId,
       id_material: materialId || (report.materiales[0]?.id_material ?? ""),
-      fecha_eta: report.columnas_fechas[0] || "2026-09-01",
+      fecha_eta: report.columnas_fechas[0] || fechaLocalISO(),
       tipo_via: "Maritimo",
       po_numero: "",
       factura_numero: "",
@@ -1443,9 +1483,9 @@ export function RundownVivo() {
   }, []);
 
   const handleOpenHorizonteModal = () => {
-    let nextAnio = 2027;
-    let nextMes = 3;
-    let baseCopia = "2027-02";
+    let nextAnio = mesSiguiente().anio;
+    let nextMes = mesSiguiente().mes;
+    let baseCopia = mesActualISO();
 
     if (report && report.meses_disponibles.length > 0) {
       const last = report.meses_disponibles[report.meses_disponibles.length - 1];
@@ -1507,8 +1547,8 @@ export function RundownVivo() {
         targetAnio = parts[0];
         targetMes = parts[1];
       } else {
-        targetAnio = 2026;
-        targetMes = 10;
+        targetAnio = new Date().getFullYear();
+        targetMes = new Date().getMonth() + 1;
       }
     }
     setCalSelectedAnio(targetAnio);
@@ -1678,7 +1718,7 @@ export function RundownVivo() {
             variant="outline"
             size="sm"
             onClick={() => {
-              const [a, m] = (selectedPeriodo || "2026-10").split("-").map(Number);
+              const [a, m] = (selectedPeriodo || mesActualISO()).split("-").map(Number);
               handleOpenCalendarioModal(a, m);
             }}
             className="flex items-center gap-1.5 text-slate-700 hover:text-slate-900 border-slate-300 shadow-xs"
@@ -1863,7 +1903,7 @@ export function RundownVivo() {
               size="sm"
               variant="ghost"
               onClick={() => {
-                const [a, m] = (selectedPeriodo || "2026-10").split("-").map(Number);
+                const [a, m] = (selectedPeriodo || mesActualISO()).split("-").map(Number);
                 handleOpenCalendarioModal(a, m);
               }}
               className="h-7 text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 font-medium"
@@ -4073,18 +4113,7 @@ export function RundownVivo() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {[
-                        { anio: 2027, mes: 3, label: "Marzo 2027" },
-                        { anio: 2027, mes: 4, label: "Abril 2027" },
-                        { anio: 2027, mes: 5, label: "Mayo 2027" },
-                        { anio: 2027, mes: 6, label: "Junio 2027" },
-                        { anio: 2027, mes: 7, label: "Julio 2027" },
-                        { anio: 2027, mes: 8, label: "Agosto 2027" },
-                        { anio: 2027, mes: 9, label: "Septiembre 2027" },
-                        { anio: 2027, mes: 10, label: "Octubre 2027" },
-                        { anio: 2027, mes: 11, label: "Noviembre 2027" },
-                        { anio: 2027, mes: 12, label: "Diciembre 2027" },
-                      ].map((item) => (
+                      {mesesFuturos(18).map((item) => (
                         <SelectItem key={`${item.anio}-${item.mes}`} value={`${item.anio}-${item.mes.toString().padStart(2, "0")}`} className="text-xs">
                           {item.label}
                         </SelectItem>

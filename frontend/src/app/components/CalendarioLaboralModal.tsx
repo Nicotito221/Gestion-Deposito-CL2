@@ -45,7 +45,7 @@ export function CalendarioLaboralModal({
   mesesDisponibles,
   onSaved,
 }: CalendarioLaboralModalProps) {
-  const [selectedAnio, setSelectedAnio] = useState<number>(initialAnio || 2026);
+  const [selectedAnio, setSelectedAnio] = useState<number>(initialAnio || new Date().getFullYear());
   const [selectedMes, setSelectedMes] = useState<number>(initialMes || 10);
   const [calData, setCalData] = useState<RundownCalendarioMesOut | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -80,7 +80,7 @@ export function CalendarioLaboralModal({
 
   useEffect(() => {
     if (open) {
-      const a = initialAnio || 2026;
+      const a = initialAnio || new Date().getFullYear();
       const m = initialMes || 10;
       setSelectedAnio(a);
       setSelectedMes(m);

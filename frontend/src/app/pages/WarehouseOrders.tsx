@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -70,7 +70,10 @@ export function WarehouseOrders() {
   const [isRemitoModalOpen, setIsRemitoModalOpen] = useState<boolean>(false);
   const [selectedRemitoId, setSelectedRemitoId] = useState<string | null>(null);
 
+  const ordersRequestRef = useRef(0);
+
   const fetchOrders = useCallback(async () => {
+    const requestId = ++ordersRequestRef.current;
     setLoading(true);
     try {
       const res = await getPedidos({
@@ -78,11 +81,13 @@ export function WarehouseOrders() {
         estado: (statusFilter === "all" || statusFilter === "tarde") ? undefined : statusFilter,
         sector: sectorFilter === "TODOS" ? undefined : sectorFilter,
       });
+      if (requestId !== ordersRequestRef.current) return;
       setOrders(res.items);
     } catch {
+      if (requestId !== ordersRequestRef.current) return;
       toast.error("Error al cargar los pedidos del depósito");
     } finally {
-      setLoading(false);
+      if (requestId === ordersRequestRef.current) setLoading(false);
     }
   }, [statusFilter, sectorFilter]);
 

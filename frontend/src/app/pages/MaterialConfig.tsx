@@ -199,10 +199,12 @@ export function MaterialConfig() {
       setPnSearchResults([]);
       return;
     }
+    let vigente = true;
     const timer = setTimeout(async () => {
       setSearchingPn(true);
       try {
         const res = await searchMaterialesCatalogo(pnSearchQuery.trim());
+        if (!vigente) return;
         setPnSearchResults(res.filter((m) => m.categoria !== "CAJA_PEDIDO" && m.tipo_empaque !== "caja"));
       } catch {
         setPnSearchResults([]);
@@ -210,7 +212,10 @@ export function MaterialConfig() {
         setSearchingPn(false);
       }
     }, 200);
-    return () => clearTimeout(timer);
+    return () => {
+      vigente = false;
+      clearTimeout(timer);
+    };
   }, [pnSearchQuery]);
 
   const handleOpenNewCaja = () => {

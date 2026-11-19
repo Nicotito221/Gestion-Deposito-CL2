@@ -173,7 +173,10 @@ class BomService:
                 id_hijo=str(hijo), cantidad=Decimal(cant), unidad=str(unidad)
             )
 
-        explosion = BomParser.explotar({p: list(c.values()) for p, c in hijos.items()})
+        try:
+            explosion = BomParser.explotar({p: list(c.values()) for p, c in hijos.items()})
+        except ValueError as err:
+            raise BomExtensionError(str(err)) from err
         filas_explosion = [
             (id_version, pieza, insumo, factor.quantize(FACTOR_QUANTUM), unidad)
             for pieza, insumos in explosion.items()
