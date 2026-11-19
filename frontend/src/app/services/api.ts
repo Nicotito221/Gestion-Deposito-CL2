@@ -2046,6 +2046,15 @@ export interface PreparacionPedidoUpdate {
   items: PreparacionItemUpdate[];
 }
 
+async function exigirOk(peticion: Promise<Response>, contexto: string): Promise<Response> {
+  const res = await peticion;
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(`${contexto}: ${err.message || res.status}`);
+  }
+  return res;
+}
+
 export async function updatePreparacionPedido(
   idPedido: number,
   data: PreparacionPedidoUpdate
@@ -2073,31 +2082,63 @@ export async function updatePreparacionPedido(
         if (it.cantidad_pallets_preparada !== undefined && it.cantidad_pallets_preparada !== null) {
           patchData.cantidad_pallets_preparada = it.cantidad_pallets_preparada;
         }
-        await fetch(
+        await exigirOk(fetch(
           `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(it.id_material)}`,
           {
             method: "PATCH",
             headers: getAuthHeaders(),
             body: JSON.stringify(patchData),
           }
-        );
+        ), "No se pudo registrar la preparación en CL2");
       }
 
       if (currentOrder.estado === "pendiente") {
-        await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
+        await exigirOk(fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
           method: "PATCH",
           headers: getAuthHeaders(),
           body: JSON.stringify({
             estado: "en_preparacion",
             preparado_por_nombre: preparador,
           }),
-        });
+        }), "No se pudo registrar la preparación en CL2");
       }
 
       const pedidoActualizado = await getPedidoDetalle(idPedido);
       return {
         pedido: pedidoActualizado,
         mensaje: "Avance de preparación guardado exitosamente.",
+      };
+    }
+
+    const rpcRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/confirmar_preparacion_cl2`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        p_id_pedido: idPedido,
+        p_accion: data.accion,
+        p_items: data.items.map((it) => ({
+          id_material: it.id_material,
+          cantidad_preparada: it.cantidad_preparada,
+          comentario: it.comentario ?? null,
+        })),
+        p_comentario: data.comentario || null,
+        p_preparador: preparador,
+      }),
+    });
+    if (rpcRes.status !== 404) {
+      if (!rpcRes.ok) {
+        const err = (await rpcRes.json().catch(() => ({}))) as { message?: string };
+        throw new Error(err.message || "Error al confirmar la preparación del pedido");
+      }
+      const resultado = (await rpcRes.json()) as { id_remito: string; estado: string };
+      const pedidoConfirmado = await getPedidoDetalle(idPedido);
+      return {
+        pedido: pedidoConfirmado,
+        id_remito: resultado.id_remito,
+        mensaje:
+          resultado.estado === "completo"
+            ? `Pedido #${idPedido} completado exitosamente. Remito ${resultado.id_remito} emitido.`
+            : `Pedido #${idPedido} confirmado como parcial. Remito ${resultado.id_remito} emitido.`,
       };
     }
 
@@ -2147,7 +2188,7 @@ export async function updatePreparacionPedido(
       const palPend =
         mat.cantidad_pallets != null ? Math.max(0, mat.cantidad_pallets - palEnt) : null;
 
-      await fetch(
+      await exigirOk(fetch(
         `${SUPABASE_URL}/rest/v1/pedidos_cl2_detalle?id_pedido=eq.${idPedido}&id_material=eq.${encodeURIComponent(mat.id_material)}`,
         {
           method: "PATCH",
@@ -2162,7 +2203,7 @@ export async function updatePreparacionPedido(
             comentario: inp?.comentario || mat.comentario || null,
           }),
         }
-      );
+      ), "No se pudo registrar la preparación en CL2");
 
       if (delta > 0) {
         deltaItems.push({
@@ -2177,7 +2218,7 @@ export async function updatePreparacionPedido(
     const nuevoEstado = allCompleted ? "completo" : "parcial";
     const nowIso = new Date().toISOString();
 
-    await fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
+    await exigirOk(fetch(`${SUPABASE_URL}/rest/v1/pedidos_cl2?id_pedido=eq.${idPedido}`, {
       method: "PATCH",
       headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -2187,14 +2228,14 @@ export async function updatePreparacionPedido(
         ...(nuevoEstado === "completo" ? { fecha_entrega: nowIso } : {}),
         ...(data.comentario ? { comentario: data.comentario } : {}),
       }),
-    });
+    }), "No se pudo registrar la preparación en CL2");
 
     const seq = (currentOrder.remitos?.length || 0) + 1;
     const idRemitoGenerado = `RI-${String(idPedido).padStart(6, "0")}-${String(seq).padStart(2, "0")}`;
     const obsRemito =
       data.comentario || `Remito de entrega #${seq} por pedido #${idPedido} para sector ${currentOrder.sector}`;
 
-    await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
+    await exigirOk(fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
       method: "POST",
       headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
       body: JSON.stringify({
@@ -2206,7 +2247,7 @@ export async function updatePreparacionPedido(
         operador_nombre: preparador,
         observacion: obsRemito,
       }),
-    });
+    }), "No se pudo registrar la preparación en CL2");
 
     if (deltaItems.length > 0) {
       const remitoItems = deltaItems.map((d) => ({
@@ -2220,11 +2261,11 @@ export async function updatePreparacionPedido(
         conforme: true,
       }));
 
-      await fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
+      await exigirOk(fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
         method: "POST",
         headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
         body: JSON.stringify(remitoItems),
-      });
+      }), "No se pudo registrar la preparación en CL2");
     }
 
     const pedidoActualizado = await getPedidoDetalle(idPedido);
