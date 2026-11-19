@@ -22,8 +22,9 @@ from app.schemas.bom import (
     SetComponenteUpdate,
 )
 from app.services.bom_service import BomExtensionError, BomService
+from app.core.errors import error_interno
 
-router = APIRouter(prefix="/api/bom", tags=["BOM"])
+router = APIRouter(prefix="/api/bom", tags=["BOM"], dependencies=[Depends(require_user)])
 _repository = BomRepository()
 _bom_service = BomService()
 
@@ -39,22 +40,20 @@ def get_bom_estructura_activa(
         return _repository.get_bom_estructura(
             id_version=id_version, search=search, limit=limit, offset=offset
         )
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al consultar estructura de BOM: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al consultar estructura de BOM: {err}",
-        )
+        raise error_interno("Error al consultar estructura de BOM", err)
 
 
 @router.get("/versiones", response_model=List[BomVersionOut])
 def list_versions() -> List[BomVersionOut]:
     try:
         return _repository.get_versions()
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al consultar versiones de BOM: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al consultar versiones de BOM: {err}",
-        )
+        raise error_interno("Error al consultar versiones de BOM", err)
 
 
 @router.get("/relaciones")
@@ -69,25 +68,23 @@ def list_relations(
             sector=sector, search=search, limit=limit, offset=offset
         )
         return {"items": items, "total": total}
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al consultar relaciones de componentes: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al consultar relaciones de componentes: {err}",
-        )
+        raise error_interno("Error al consultar relaciones de componentes", err)
 
 
-@router.post("/relaciones", response_model=SetComponenteOut, status_code=status.HTTP_201_CREATED)
+@router.post("/relaciones", response_model=SetComponenteOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_editor_planificacion)])
 def create_relation(payload: SetComponenteCreate) -> SetComponenteOut:
     try:
         return _repository.create_set_componente(payload)
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al crear relación: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error al crear relación: {err}",
-        )
+        raise error_interno("Error al crear relación", err)
 
 
-@router.put("/relaciones/{id_set_componente}", response_model=SetComponenteOut)
+@router.put("/relaciones/{id_set_componente}", response_model=SetComponenteOut, dependencies=[Depends(require_editor_planificacion)])
 def update_relation(
     id_set_componente: int, payload: SetComponenteUpdate
 ) -> SetComponenteOut:
@@ -101,14 +98,13 @@ def update_relation(
         return updated
     except HTTPException:
         raise
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al actualizar relación: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error al actualizar relación: {err}",
-        )
+        raise error_interno("Error al actualizar relación", err)
 
 
-@router.patch("/relaciones/{id_set_componente}/toggle")
+@router.patch("/relaciones/{id_set_componente}/toggle", dependencies=[Depends(require_editor_planificacion)])
 def toggle_relation(id_set_componente: int):
     try:
         new_status = _repository.toggle_set_componente(id_set_componente)
@@ -120,14 +116,13 @@ def toggle_relation(id_set_componente: int):
         return {"id_set_componente": id_set_componente, "activo": new_status}
     except HTTPException:
         raise
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al alternar estado de relación: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error al alternar estado de relación: {err}",
-        )
+        raise error_interno("Error al alternar estado de relación", err)
 
 
-@router.post("/relaciones/importar")
+@router.post("/relaciones/importar", dependencies=[Depends(require_editor_planificacion)])
 def import_relations_file(
     file: UploadFile = File(...),
     reemplazar: bool = Query(default=False),
@@ -184,33 +179,28 @@ def import_relations_file(
         }
     except HTTPException:
         raise
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al importar archivo de relaciones: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Error al importar archivo de relaciones: {err}",
-        )
+        raise error_interno("Error al importar archivo de relaciones", err)
 
 
-@router.post("/upload", response_model=BomImportResult)
+@router.post("/upload", response_model=BomImportResult, dependencies=[Depends(require_editor_planificacion)])
 def upload_bom(file: UploadFile = File(...)) -> BomImportResult:
     temp_dir = tempfile.mkdtemp()
-    temp_path = os.path.join(temp_dir, file.filename or "uploaded_bom.xlsx")
+    temp_path = os.path.join(temp_dir, os.path.basename(file.filename or "uploaded_bom.xlsx"))
     try:
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         result = _bom_service.importar_bom(temp_path, nombre_archivo=file.filename)
         return result
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Fallo durante la importación de la receta BOM: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Fallo durante la importación de la receta BOM: {err}",
-        )
+        raise error_interno("Fallo durante la importación de la receta BOM", err)
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.get("/extension", response_model=List[BomExtensionItem])
@@ -257,16 +247,12 @@ def importar_sd_sets(
         return _bom_service.importar_sd_sets(temp_path, nombre)
     except BomExtensionError as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Fallo durante la importación de SD y SETs: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Fallo durante la importación de SD y SETs: {err}",
-        )
+        raise error_interno("Fallo durante la importación de SD y SETs", err)
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.post("/extension/importar", response_model=BomExtensionImportResult)
@@ -286,13 +272,9 @@ def importar_extension(
         )
     except BomExtensionError as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Fallo durante la importación de la BOM complementaria: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Fallo durante la importación de la BOM complementaria: {err}",
-        )
+        raise error_interno("Fallo durante la importación de la BOM complementaria", err)
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)

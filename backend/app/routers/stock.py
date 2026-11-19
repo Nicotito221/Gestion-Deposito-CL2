@@ -1,6 +1,14 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.core.auth_deps import (
+    ROLES_CONFIG_MATERIALES,
+    ROLES_EDICION_PLANIFICACION,
+    id_usuario_de,
+    require_roles,
+    require_user,
+)
+from app.core.errors import error_interno
 from app.schemas.stock import (
     StockAjusteInput,
     StockAjusteResponse,
@@ -13,11 +21,14 @@ from app.schemas.stock import (
 )
 from app.services.stock_service import StockService
 
-router = APIRouter(prefix="/api/stock", tags=["Stock CL2"])
+router = APIRouter(prefix="/api/stock", tags=["Stock CL2"], dependencies=[Depends(require_user)])
+require_ajuste_stock = require_roles(ROLES_EDICION_PLANIFICACION)
+require_config_materiales = require_roles(ROLES_CONFIG_MATERIALES)
+_service = StockService()
 
 
 def get_stock_service() -> StockService:
-    return StockService()
+    return _service
 
 
 @router.get("/movimientos", response_model=StockMovimientosResponse)
@@ -36,7 +47,7 @@ def get_stock_movimientos(
             page_size=page_size,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener movimientos de stock: {e}")
+        raise error_interno("Error al obtener movimientos de stock", e)
 
 
 @router.get("/deposito", response_model=StockListResponse)
@@ -59,21 +70,23 @@ def get_stock_deposito(
             page_size=page_size,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener stock: {e}")
+        raise error_interno("Error al obtener stock", e)
 
 
 @router.put("/deposito/{id_material:path}", response_model=StockAjusteResponse)
 def ajustar_stock_deposito(
     id_material: str,
     data: StockAjusteInput,
+    token_data: Dict[str, Any] = Depends(require_ajuste_stock),
     service: StockService = Depends(get_stock_service),
 ) -> StockAjusteResponse:
     try:
-        return service.ajustar_stock(id_material=id_material, data=data)
+        datos = data.model_copy(update={"id_usuario": id_usuario_de(token_data)})
+        return service.ajustar_stock(id_material=id_material, data=datos)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al actualizar stock: {e}")
+        raise error_interno("Error al actualizar stock", e)
 
 
 @router.get("/configuracion-materiales", response_model=MaterialConfigListResponse)
@@ -96,10 +109,10 @@ def get_materiales_configuracion(
             page_size=page_size,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener configuración de materiales: {e}")
+        raise error_interno("Error al obtener configuración de materiales", e)
 
 
-@router.put("/configuracion-materiales")
+@router.put("/configuracion-materiales", dependencies=[Depends(require_config_materiales)])
 def update_material_configuracion(
     data: MaterialConfigUpdate,
     service: StockService = Depends(get_stock_service),
@@ -110,7 +123,7 @@ def update_material_configuracion(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al guardar configuración de material: {e}")
+        raise error_interno("Error al guardar configuración de material", e)
 
 
 @router.get("/cajas", response_model=List[CajaPedidoOut])
@@ -120,10 +133,10 @@ def get_cajas_pedido(
     try:
         return service.get_cajas_pedido()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener cajas de pedido: {e}")
+        raise error_interno("Error al obtener cajas de pedido", e)
 
 
-@router.post("/cajas", response_model=CajaPedidoOut, status_code=status.HTTP_201_CREATED)
+@router.post("/cajas", response_model=CajaPedidoOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_config_materiales)])
 def create_caja_pedido(
     data: CajaPedidoCreate,
     service: StockService = Depends(get_stock_service),
@@ -133,10 +146,10 @@ def create_caja_pedido(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al crear caja de pedido: {e}")
+        raise error_interno("Error al crear caja de pedido", e)
 
 
-@router.put("/cajas/{id_caja}", response_model=CajaPedidoOut)
+@router.put("/cajas/{id_caja}", response_model=CajaPedidoOut, dependencies=[Depends(require_config_materiales)])
 def update_caja_pedido(
     id_caja: int,
     data: CajaPedidoCreate,
@@ -147,10 +160,10 @@ def update_caja_pedido(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al actualizar caja de pedido: {e}")
+        raise error_interno("Error al actualizar caja de pedido", e)
 
 
-@router.delete("/cajas/{id_caja}")
+@router.delete("/cajas/{id_caja}", dependencies=[Depends(require_config_materiales)])
 def delete_caja_pedido(
     id_caja: int,
     service: StockService = Depends(get_stock_service),
@@ -161,5 +174,4 @@ def delete_caja_pedido(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al eliminar caja de pedido: {e}")
-
+        raise error_interno("Error al eliminar caja de pedido", e)

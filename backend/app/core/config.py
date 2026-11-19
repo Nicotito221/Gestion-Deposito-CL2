@@ -1,4 +1,6 @@
 import os
+import secrets
+from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 import pyodbc
@@ -13,7 +15,26 @@ DB_TRUST_SERVER_CERTIFICATE: str = os.getenv("DB_TRUST_SERVER_CERTIFICATE", "yes
 DB_USER: Optional[str] = os.getenv("DB_USER", None)
 DB_PASSWORD: Optional[str] = os.getenv("DB_PASSWORD", None)
 
-SECRET_KEY: str = os.getenv("SECRET_KEY", "change-me-in-production-secret-key-32chars")
+_SECRET_KEY_INSEGURA = "change-me-in-production-secret-key-32chars"
+_RUTA_SECRET_KEY = Path(__file__).resolve().parents[2] / ".secret_key"
+
+
+def _cargar_secret_key() -> str:
+    valor = os.getenv("SECRET_KEY", "").strip()
+    if valor and valor != _SECRET_KEY_INSEGURA:
+        if len(valor) < 32:
+            raise RuntimeError("SECRET_KEY debe tener al menos 32 caracteres.")
+        return valor
+    if _RUTA_SECRET_KEY.exists():
+        guardada = _RUTA_SECRET_KEY.read_text(encoding="utf-8").strip()
+        if len(guardada) >= 32:
+            return guardada
+    nueva = secrets.token_urlsafe(48)
+    _RUTA_SECRET_KEY.write_text(nueva, encoding="utf-8")
+    return nueva
+
+
+SECRET_KEY: str = _cargar_secret_key()
 CORS_ORIGINS: str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 
 CL2_SYNC_ENABLED: bool = os.getenv("CL2_SYNC_ENABLED", "false").lower() in ("true", "1", "yes")

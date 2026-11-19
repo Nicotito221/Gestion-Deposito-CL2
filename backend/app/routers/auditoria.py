@@ -1,10 +1,11 @@
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
+from app.core.auth_deps import ROLES_CONFIG_MATERIALES, require_roles
 
 from app.schemas.auditoria import AuditListResponse
 from app.services.auditoria_service import AuditoriaService
 
-router = APIRouter(prefix="/api/auditoria", tags=["Auditoría"])
+router = APIRouter(prefix="/api/auditoria", tags=["Auditoría"], dependencies=[Depends(require_roles(ROLES_CONFIG_MATERIALES))])
 _service = AuditoriaService()
 
 

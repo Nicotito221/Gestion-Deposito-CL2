@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +16,6 @@ logger = logging.getLogger(__name__)
 async def _cl2_sync_polling_loop():
     from app.services.cl2_sync_service import Cl2SyncService
     sync_svc = Cl2SyncService()
-    # Espera inicial para no colisionar con el arranque del servidor
     await asyncio.sleep(10)
     while True:
         try:
@@ -33,21 +34,30 @@ async def lifespan(app: FastAPI):
     if polling_task:
         polling_task.cancel()
 
+_docs_habilitados = os.getenv("ENABLE_API_DOCS", "false").lower() in ("true", "1", "yes")
+
 app = FastAPI(
     title="Gestión Depósito API",
     version="1.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
+    docs_url="/api/docs" if _docs_habilitados else None,
+    redoc_url="/api/redoc" if _docs_habilitados else None,
+    openapi_url="/api/openapi.json" if _docs_habilitados else None,
     lifespan=lifespan,
 )
 
 
 allowed_origins_list = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
+_ORIGEN_LOCAL = re.compile(r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$")
+
+
+def _origen_permitido(origin: str) -> bool:
+    return origin in allowed_origins_list or bool(_ORIGEN_LOCAL.match(origin))
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins_list,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
+    allow_origin_regex=_ORIGEN_LOCAL.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -58,16 +68,17 @@ app.add_middleware(
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception("Error no controlado en la API: %s", exc)
-    origin = request.headers.get("origin") or "*"
-    headers = {
-        "Access-Control-Allow-Origin": origin,
-        "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Allow-Methods": "*",
-        "Access-Control-Allow-Headers": "*",
-    }
+    origin = request.headers.get("origin") or ""
+    headers = {}
+    if origin and _origen_permitido(origin):
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc)},
+        content={"detail": "Error interno del servidor. El detalle quedó registrado en el log."},
         headers=headers,
     )
 
@@ -96,6 +107,7 @@ def health_check():
         cur.close()
         conn.close()
     except Exception as e:
-        db_status = f"error: {e}"
+        logger.error("Health check sin conexión a la base: %s", e)
+        db_status = "error"
 
     return {"status": "ok", "database": db_status}

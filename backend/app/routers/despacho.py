@@ -6,7 +6,7 @@ from app.core.auth_deps import require_editor_planificacion as require_editor, r
 from app.repositories.despacho_repository import DespachoRepository
 from app.schemas.despacho import DespachoItem, DespachoUpsertBatch, DespachoUpsertResult
 
-router = APIRouter(prefix="/api/despachos", tags=["Despachos a terceros"])
+router = APIRouter(prefix="/api/despachos", tags=["Despachos a terceros"], dependencies=[Depends(require_user)])
 
 _repo = DespachoRepository()
 

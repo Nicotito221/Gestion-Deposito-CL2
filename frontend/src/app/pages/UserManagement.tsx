@@ -75,6 +75,8 @@ const ROLES_CONFIG: Record<string, { label: string; color: string }> = {
   solicitante: { label: "Solicitante", color: "bg-slate-100 text-slate-700 border-slate-200" },
 };
 
+const MIN_PASSWORD = 8;
+
 export function UserManagement() {
   const { user: currentUser } = useAuth();
   const [usuarios, setUsuarios] = useState<UsuarioItem[]>([]);
@@ -168,6 +170,10 @@ export function UserManagement() {
       toast.error("Por favor complete todos los campos obligatorios.");
       return;
     }
+    if (createForm.password.length < MIN_PASSWORD) {
+      toast.error(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`);
+      return;
+    }
     setIsSubmitting(true);
     try {
       await createUsuario(createForm);
@@ -220,6 +226,10 @@ export function UserManagement() {
     e.preventDefault();
     if (!selectedUser || !newPassword.trim()) {
       toast.error("Ingrese una contraseña válida.");
+      return;
+    }
+    if (newPassword.trim().length < MIN_PASSWORD) {
+      toast.error(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`);
       return;
     }
     setIsSubmitting(true);

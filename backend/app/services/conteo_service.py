@@ -12,6 +12,7 @@ from app.schemas.conteo import (
     ConteoResponse,
     MaterialConteoItemResponse,
 )
+from app.core.errors import error_interno
 
 
 class ConteoService:
@@ -99,11 +100,10 @@ class ConteoService:
                 total_items=res["total_items"],
                 items=[MaterialConteoItemResponse(**it) for it in res["items"]],
             )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al registrar conteo y sincronizar Rundown: {e}")
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al registrar conteo y sincronizar Rundown: {str(e)}",
-            )
+            raise error_interno("Error al registrar conteo y sincronizar Rundown", e)
 
     def get_historico(
         self,

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Literal, Optional
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 RolUsuario = Literal[
     "administrador",
@@ -32,7 +32,7 @@ class UsuarioBase(BaseModel):
 
 
 class UsuarioCreate(UsuarioBase):
-    password: str = Field(..., min_length=3, max_length=100)
+    password: str = Field(..., min_length=8, max_length=100)
 
 
 class UsuarioUpdate(BaseModel):
@@ -45,7 +45,7 @@ class UsuarioUpdate(BaseModel):
 
 
 class PasswordChangeRequest(BaseModel):
-    password_nuevo: str = Field(..., min_length=3, max_length=100)
+    password_nuevo: str = Field(..., min_length=8, max_length=100)
 
 
 class UsuarioResponse(BaseModel):

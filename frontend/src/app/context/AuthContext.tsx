@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
-import { getMe, loginUser, type UsuarioItem } from "../services/api";
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from "react";
+import { AUTH_EXPIRED_EVENT, getMe, loginUser, type UsuarioItem } from "../services/api";
 
 interface AuthContextType {
   user: UsuarioItem | null;
@@ -60,13 +60,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initAuth();
   }, [logout]);
 
-  const login = async (username: string, password: string) => {
+  useEffect(() => {
+    window.addEventListener(AUTH_EXPIRED_EVENT, logout);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, logout);
+  }, [logout]);
+
+  const login = useCallback(async (username: string, password: string) => {
     const res = await loginUser(username, password);
     localStorage.setItem("auth_token", res.token);
     localStorage.setItem("auth_user", JSON.stringify(res.usuario));
     setToken(res.token);
     setUser(res.usuario);
-  };
+  }, []);
 
   const hasRole = useCallback(
     (roles: string[]) => {
@@ -93,22 +98,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canAssignCyclic = hasRole(["administrador", "gerente", "jefe"]);
   const canManageUsers = user?.rol === "administrador";
 
+  const value = useMemo<AuthContextType>(
+    () => ({
+      user,
+      token,
+      loading,
+      login,
+      logout,
+      hasRole,
+      canAccessSector,
+      canModifyPedidoDeposito,
+      canModifyStockCL2,
+      canAssignCyclic,
+      canManageUsers,
+    }),
+    [user, token, loading, login, logout, hasRole, canAccessSector, canModifyPedidoDeposito, canModifyStockCL2, canAssignCyclic, canManageUsers]
+  );
+
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        loading,
-        login,
-        logout,
-        hasRole,
-        canAccessSector,
-        canModifyPedidoDeposito,
-        canModifyStockCL2,
-        canAssignCyclic,
-        canManageUsers,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

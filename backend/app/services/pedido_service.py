@@ -23,6 +23,7 @@ from app.schemas.pedido import (
     RemitoItemOut,
     SugerenciaMaterialDetalle,
 )
+from app.core.errors import error_interno
 
 
 class PedidoService:
@@ -675,11 +676,10 @@ class PedidoService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(ve),
             )
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al procesar preparación del pedido: {e}")
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error al procesar preparación del pedido: {str(e)}",
-            )
+            raise error_interno("Error al procesar preparación del pedido", e)
 
         from app.services.cl2_sync_service import Cl2SyncService
         Cl2SyncService().sync_remito_pedido(pedido_actualizado)

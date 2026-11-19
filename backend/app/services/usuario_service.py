@@ -1,3 +1,5 @@
+import threading
+import time
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException, status
 from app.core.security import (
@@ -8,14 +10,43 @@ from app.core.security import (
 from app.repositories.usuario_repository import UsuarioRepository
 from app.schemas.usuario import UsuarioCreate, UsuarioUpdate
 
+MAX_INTENTOS_LOGIN = 5
+VENTANA_LOGIN_SEGUNDOS = 15 * 60
+_intentos_fallidos: Dict[str, List[float]] = {}
+_lock_intentos = threading.Lock()
+
+
+def _intentos_recientes(clave: str, ahora: float) -> List[float]:
+    vigentes = [t for t in _intentos_fallidos.get(clave, []) if ahora - t < VENTANA_LOGIN_SEGUNDOS]
+    _intentos_fallidos[clave] = vigentes
+    return vigentes
+
+
+def _registrar_fallo(clave: str) -> None:
+    with _lock_intentos:
+        ahora = time.time()
+        _intentos_recientes(clave, ahora).append(ahora)
+
+
+def _verificar_bloqueo(clave: str) -> None:
+    with _lock_intentos:
+        if len(_intentos_recientes(clave, time.time())) >= MAX_INTENTOS_LOGIN:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiados intentos fallidos. Esperá 15 minutos antes de volver a intentar.",
+            )
+
 
 class UsuarioService:
     def __init__(self, repository: Optional[UsuarioRepository] = None) -> None:
         self.repository = repository or UsuarioRepository()
 
     def authenticate(self, username: str, password: str) -> Dict[str, Any]:
+        clave = username.strip().lower()
+        _verificar_bloqueo(clave)
         user = self.repository.get_by_username(username.strip())
-        if not user:
+        if not user or not verify_password(password, user["password_hash"]):
+            _registrar_fallo(clave)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Credenciales inválidas.",
@@ -25,11 +56,8 @@ class UsuarioService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="La cuenta de usuario se encuentra deshabilitada.",
             )
-        if not verify_password(password, user["password_hash"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Credenciales inválidas.",
-            )
+        with _lock_intentos:
+            _intentos_fallidos.pop(clave, None)
 
         self.repository.update_ultimo_acceso(user["id_usuario"])
         token_payload = {

@@ -5,11 +5,11 @@ import tempfile
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from app.core.auth_deps import require_editor_planificacion
+from app.core.auth_deps import id_usuario_de, require_editor_planificacion, require_user
 from app.schemas.supply import (
     ConversionOrdenImportResult,
     ConversionOrdenResumen,
@@ -19,8 +19,9 @@ from app.schemas.supply import (
 )
 from app.services.conversion_orden_service import ConversionOrdenError, ConversionOrdenService
 from app.services.supply_service import SupplyService
+from app.core.errors import error_interno
 
-router = APIRouter(prefix="/api/suministro", tags=["Orden de Suministro"])
+router = APIRouter(prefix="/api/suministro", tags=["Orden de Suministro"], dependencies=[Depends(require_user)])
 _service = SupplyService()
 _conversion_service = ConversionOrdenService()
 
@@ -29,11 +30,10 @@ _conversion_service = ConversionOrdenService()
 def get_supply_summary() -> SupplySummaryOut:
     try:
         return _service.get_summary()
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al obtener resumen de suministro: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al obtener resumen de suministro: {err}",
-        )
+        raise error_interno("Error al obtener resumen de suministro", err)
 
 
 @router.get("/conversiones/resumen", response_model=ConversionOrdenResumen)
@@ -55,52 +55,29 @@ def importar_conversiones(
         return _conversion_service.importar(temp_path, nombre)
     except ConversionOrdenError as err:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err))
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Fallo durante la importación de conversiones: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Fallo durante la importación de conversiones: {err}",
-        )
+        raise error_interno("Fallo durante la importación de conversiones", err)
     finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.put("/produccion-diaria")
 def update_produccion_diaria(
     data: SupplyItemUpdate,
-    authorization: Optional[str] = Header(None),
+    token_data: Dict[str, Any] = Depends(require_editor_planificacion),
 ):
-    user_id = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ")[1]
-        try:
-            from app.core.security import decode_token
-            payload = decode_token(token)
-            rol = str(payload.get("rol", "")).lower()
-            if rol not in ["administrador", "gerente", "jefe", "analista"]:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="No tiene permisos para modificar la orden de suministro. Roles permitidos: analista, jefe, gerente, administrador.",
-                )
-            user_id = payload.get("id_usuario")
-        except HTTPException:
-            raise
-        except Exception:
-            pass
-
     try:
-        _service.update_produccion_diaria(data.id_producto, data.fecha, data.cantidad, id_usuario=user_id)
+        _service.update_produccion_diaria(data.id_producto, data.fecha, data.cantidad, id_usuario=id_usuario_de(token_data))
         return {"mensaje": f"Producción de {data.id_producto} para {data.fecha} actualizada a {data.cantidad}"}
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al actualizar valor diario: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al actualizar valor diario: {err}",
-        )
+        raise error_interno("Error al actualizar valor diario", err)
 
 
-@router.post("/consolidar", response_model=SupplyConsolidateResult)
+@router.post("/consolidar", response_model=SupplyConsolidateResult, dependencies=[Depends(require_editor_planificacion)])
 def consolidate_supply(
     files_f1: List[UploadFile] = File(default=[]),
     files_f2: List[UploadFile] = File(default=[]),
@@ -120,14 +97,14 @@ def consolidate_supply(
 
     try:
         for idx, f in enumerate(f1_list):
-            name = f.filename or f"f1_{idx}.xlsx"
+            name = os.path.basename(f.filename or f"f1_{idx}.xlsx")
             dst = os.path.join(temp_dir, f"f1_{idx}_{name}")
             with open(dst, "wb") as buf:
                 shutil.copyfileobj(f.file, buf)
             paths_f1.append(dst)
 
         for idx, f in enumerate(f2_list):
-            name = f.filename or f"f2_{idx}.xlsx"
+            name = os.path.basename(f.filename or f"f2_{idx}.xlsx")
             dst = os.path.join(temp_dir, f"f2_{idx}_{name}")
             with open(dst, "wb") as buf:
                 shutil.copyfileobj(f.file, buf)
@@ -135,17 +112,12 @@ def consolidate_supply(
 
         result = _service.consolidar_archivos(f1_paths=paths_f1, f2_paths=paths_f2)
         return result
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error durante el procesamiento de la orden de suministro: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Error durante el procesamiento de la orden de suministro: {err}",
-        )
+        raise error_interno("Error durante el procesamiento de la orden de suministro", err)
     finally:
-        for p in paths_f1 + paths_f2:
-            if os.path.exists(p):
-                os.remove(p)
-        if os.path.exists(temp_dir):
-            os.rmdir(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.get("/exportar/excel")
@@ -166,11 +138,10 @@ def export_excel_consolidado(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             background=BackgroundTask(lambda: os.remove(temp_path) if os.path.exists(temp_path) else None),
         )
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al generar archivo Excel consolidado: {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al generar archivo Excel consolidado: {err}",
-        )
+        raise error_interno("Error al generar archivo Excel consolidado", err)
 
 
 @router.get("/exportar/sap-pir")
@@ -195,9 +166,8 @@ def export_sap_pir_txt(
             media_type="text/plain; charset=windows-1252",
             background=BackgroundTask(lambda: os.remove(temp_path) if os.path.exists(temp_path) else None),
         )
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al generar archivo SAP PIR (.txt): {err}")
     except Exception as err:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al generar archivo SAP PIR (.txt): {err}",
-        )
+        raise error_interno("Error al generar archivo SAP PIR (.txt)", err)
 

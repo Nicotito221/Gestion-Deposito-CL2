@@ -36,6 +36,7 @@ from app.schemas.rundown import (
     PlanSemanalConfirmOut,
 )
 from app.services.plan_semanal_parser import parse_plan_semanal_excel
+from app.core.errors import error_interno
 
 DIAS_ESP = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 
@@ -1010,11 +1011,10 @@ class RundownService:
 
         try:
             parsed = parse_plan_semanal_excel(file_bytes, override_fecha_inicio)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Error al interpretar el archivo de plan semanal: {e}")
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Error al interpretar el archivo de plan semanal: {str(e)}",
-            )
+            raise error_interno("Error al interpretar el archivo de plan semanal", e)
 
         sd_mapping = self._repo.get_sd_mappings_by_seccion(id_seccion)
         advertencias: List[str] = []
@@ -1060,7 +1060,7 @@ class RundownService:
         )
 
     def confirm_plan_semanal(
-        self, id_seccion: int, payload: PlanSemanalConfirmRequest
+        self, id_seccion: int, payload: PlanSemanalConfirmRequest, id_usuario: Optional[int] = None
     ) -> PlanSemanalConfirmOut:
         seccion = self._repo.get_seccion_info(id_seccion)
         if not seccion:
@@ -1078,6 +1078,7 @@ class RundownService:
         reg_linea, reg_plan = self._repo.save_plan_semanal_linea(
             id_seccion=id_seccion,
             items=payload.items,
+            id_usuario=id_usuario,
         )
 
         return PlanSemanalConfirmOut(

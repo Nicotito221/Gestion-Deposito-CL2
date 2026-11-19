@@ -119,3 +119,4 @@ dist-ssr/
 Thumbs.db
 frontend/.guidelines/
 Guidelines.md
+backend/.secret_key

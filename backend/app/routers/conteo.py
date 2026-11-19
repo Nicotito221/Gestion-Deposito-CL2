@@ -1,8 +1,8 @@
 from datetime import date
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
-from app.core.security import verify_access_token
+from app.core.auth_deps import ROLES_CONTEO, id_usuario_de, require_roles, require_user
 from app.schemas.conteo import (
     ConteoCreateRequest,
     ConteoHistoricoResponse,
@@ -11,18 +11,15 @@ from app.schemas.conteo import (
 )
 from app.services.conteo_service import ConteoService
 
-router = APIRouter(prefix="/api/conteo", tags=["Conteo de Planta"])
+router = APIRouter(prefix="/api/conteo", tags=["Conteo de Planta"], dependencies=[Depends(require_user)])
+require_contador = require_roles(ROLES_CONTEO)
+
+
+_service = ConteoService()
 
 
 def get_conteo_service() -> ConteoService:
-    return ConteoService()
-
-
-def get_optional_token_payload(authorization: Optional[str] = Header(None)) -> Optional[dict]:
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    token = authorization.split("Bearer ", 1)[1].strip()
-    return verify_access_token(token)
+    return _service
 
 
 @router.get(
@@ -53,11 +50,10 @@ def search_materiales_para_conteo(
 )
 def crear_conteo(
     data: ConteoCreateRequest,
-    token_data: Optional[dict] = Depends(get_optional_token_payload),
+    token_data: dict = Depends(require_contador),
     service: ConteoService = Depends(get_conteo_service),
 ) -> ConteoResponse:
-    id_usuario = token_data.get("id_usuario") if token_data else None
-    return service.crear_conteo(data=data, id_usuario=id_usuario)
+    return service.crear_conteo(data=data, id_usuario=id_usuario_de(token_data))
 
 
 @router.get(

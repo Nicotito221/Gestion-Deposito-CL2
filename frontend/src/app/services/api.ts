@@ -10,6 +10,29 @@ const isLocalHostname =
   typeof window !== "undefined" &&
   Boolean(window.location.hostname.match(/^(localhost|127\.0\.0\.1|172\.|192\.168\.|10\.)/));
 
+export const AUTH_EXPIRED_EVENT = "auth:expired";
+
+function leerTokenSesion(): string | null {
+  try {
+    return localStorage.getItem("auth_token");
+  } catch {
+    return null;
+  }
+}
+
+export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = leerTokenSesion();
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401 && token && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  }
+  return res;
+}
+
 export const IS_SUPABASE_ACTIVE = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY && !isLocalHostname);
 
 export interface BomVersionItem {
@@ -101,7 +124,7 @@ export interface SupplyConsolidateResultApi {
 }
 
 export async function getBomVersions(): Promise<BomVersionItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/versiones`);
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/versiones`);
   if (!res.ok) {
     throw new Error(`Error al obtener versiones de BOM (${res.status})`);
   }
@@ -120,7 +143,7 @@ export async function getBomEstructuraActiva(params?: {
   if (params?.limit) query.set("limit", String(params.limit));
   if (params?.offset) query.set("offset", String(params.offset));
 
-  const res = await fetch(`${API_BASE_URL}/api/bom/estructura-activa?${query.toString()}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/estructura-activa?${query.toString()}`);
   if (!res.ok) {
     throw new Error(`Error al obtener estructura de BOM (${res.status})`);
   }
@@ -139,7 +162,7 @@ export async function getSetComponentes(params?: {
   if (params?.limit) query.set("limit", String(params.limit));
   if (params?.offset) query.set("offset", String(params.offset));
 
-  const res = await fetch(`${API_BASE_URL}/api/bom/relaciones?${query.toString()}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/relaciones?${query.toString()}`);
   if (!res.ok) {
     throw new Error(`Error al obtener relaciones de BOM (${res.status})`);
   }
@@ -149,7 +172,7 @@ export async function getSetComponentes(params?: {
 export async function createSetComponente(
   data: SetComponenteInput
 ): Promise<SetComponenteItem> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/relaciones`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/relaciones`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -165,7 +188,7 @@ export async function updateSetComponente(
   id: number,
   data: Partial<SetComponenteInput> & { activo?: boolean }
 ): Promise<SetComponenteItem> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/relaciones/${id}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/relaciones/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -180,7 +203,7 @@ export async function updateSetComponente(
 export async function toggleSetComponente(
   id: number
 ): Promise<{ id_set_componente: number; activo: boolean }> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/relaciones/${id}/toggle`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/relaciones/${id}/toggle`, {
     method: "PATCH",
   });
   if (!res.ok) {
@@ -196,7 +219,7 @@ export async function importSetComponentesFile(
 ): Promise<{ mensaje: string; total_importados: number }> {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(
+  const res = await apiFetch(
     `${API_BASE_URL}/api/bom/relaciones/importar?reemplazar=${reemplazar ? "true" : "false"}`,
     {
       method: "POST",
@@ -221,7 +244,7 @@ export async function uploadBomFile(file: File): Promise<{
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch(`${API_BASE_URL}/api/bom/upload`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/upload`, {
     method: "POST",
     body: formData,
   });
@@ -247,7 +270,7 @@ export async function importarSdSets(file: File): Promise<SdSetImportResult> {
   const formData = new FormData();
   formData.append("file", file);
   const token = localStorage.getItem("auth_token");
-  const res = await fetch(`${API_BASE_URL}/api/bom/sd-sets/importar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/sd-sets/importar`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
@@ -273,7 +296,7 @@ export interface ConversionOrdenResumen {
 }
 
 export async function getConversionesResumen(): Promise<ConversionOrdenResumen> {
-  const res = await fetch(`${API_BASE_URL}/api/suministro/conversiones/resumen`);
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/conversiones/resumen`);
   if (!res.ok) {
     throw new Error(`Error al obtener conversiones (${res.status})`);
   }
@@ -284,7 +307,7 @@ export async function importarConversiones(file: File): Promise<ConversionOrdenI
   const formData = new FormData();
   formData.append("file", file);
   const token = localStorage.getItem("auth_token");
-  const res = await fetch(`${API_BASE_URL}/api/suministro/conversiones/importar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/conversiones/importar`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
@@ -297,7 +320,7 @@ export async function importarConversiones(file: File): Promise<ConversionOrdenI
 }
 
 export async function getSupplySummary(): Promise<SupplySummaryApi> {
-  const res = await fetch(`${API_BASE_URL}/api/suministro/resumen`);
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/resumen`);
   if (!res.ok) {
     throw new Error(`Error al obtener resumen de suministro (${res.status})`);
   }
@@ -320,7 +343,7 @@ export async function consolidateSupply(files: {
     }
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/suministro/consolidar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/consolidar`, {
     method: "POST",
     body: formData,
   });
@@ -336,7 +359,7 @@ export async function updateSupplyDailyProduction(data: {
   fecha: string;
   cantidad: number;
 }): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/suministro/produccion-diaria`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/produccion-diaria`, {
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -360,7 +383,7 @@ export async function downloadExcelConsolidado(
     params.set("fechas_tentativas", JSON.stringify(fechasTentativas));
   }
   const qs = params.toString();
-  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/excel${qs ? `?${qs}` : ""}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/exportar/excel${qs ? `?${qs}` : ""}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al descargar el archivo Excel consolidado");
@@ -395,7 +418,7 @@ export async function downloadSapPirTxt(
   }
   const qs = params.toString();
   const q = qs ? `?${qs}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/suministro/exportar/sap-pir${q}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/suministro/exportar/sap-pir${q}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al descargar archivo SAP PIR");
@@ -542,7 +565,7 @@ export async function getSupplierRundown(
   if (idSeccion) query.set("id_seccion", String(idSeccion));
 
   const qs = query.toString() ? `?${query.toString()}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedor/${identifier}${qs}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedor/${identifier}${qs}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar el rundown del proveedor");
@@ -553,7 +576,7 @@ export async function getSupplierRundown(
 export async function createRundownTransito(
   data: RundownTransitoInput
 ): Promise<{ id_transito: number; mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/transito`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/transito`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -568,7 +591,7 @@ export async function createRundownTransito(
 export async function upsertRundownIngresoDia(
   data: RundownIngresoDiaInput
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/ingreso-dia`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/ingreso-dia`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -583,7 +606,7 @@ export async function upsertRundownIngresoDia(
 export async function deleteRundownTransito(
   idTransito: number
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/transito/${idTransito}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/transito/${idTransito}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -598,7 +621,7 @@ export async function updateRundownStockInicial(
   stockInicial: number,
   tipoStock: "total" | "planta" = "total"
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/stock-inicial`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/stock-inicial`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id_parametro: idParametro, stock_inicial: stockInicial, tipo_stock: tipoStock }),
@@ -625,7 +648,7 @@ export interface RundownStockAjusteInput {
 export async function updateRundownStockAjuste(
   data: RundownStockAjusteInput
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/stock-ajuste`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/stock-ajuste`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -647,7 +670,7 @@ export async function deleteRundownStockAjuste(
     fecha,
     tipo_stock: tipoStock,
   });
-  const res = await fetch(`${API_BASE_URL}/api/rundown/stock-ajuste?${query.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/stock-ajuste?${query.toString()}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -661,7 +684,7 @@ export async function updateRundownScrap(
   idParametro: number,
   scrapPorcentaje: number
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/scrap`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/scrap`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id_parametro: idParametro, scrap_porcentaje: scrapPorcentaje }),
@@ -678,7 +701,7 @@ export async function updateRundownConsumoDia(data: {
   fecha: string;
   cantidad: number | null;
 }): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/consumo-dia`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/consumo-dia`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -727,7 +750,7 @@ export async function getRundownCalendarioMes(
   anio: number,
   mes: number
 ): Promise<RundownCalendarioMesOut> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/calendario?anio=${anio}&mes=${mes}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/calendario?anio=${anio}&mes=${mes}`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar calendario mensual");
@@ -738,7 +761,7 @@ export async function getRundownCalendarioMes(
 export async function saveRundownCalendarioMes(
   data: RundownCalendarioMesSave
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/calendario`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/calendario`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -795,7 +818,7 @@ export async function getRundownSecciones(): Promise<RundownSeccionItem[]> {
   if (IS_SUPABASE_ACTIVE) {
     return [];
   }
-  const res = await fetch(`${API_BASE_URL}/api/rundown/secciones`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/secciones`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar secciones de rundown");
@@ -806,7 +829,7 @@ export async function getRundownSecciones(): Promise<RundownSeccionItem[]> {
 export async function createRundownSeccion(
   data: RundownSeccionInput
 ): Promise<{ id_seccion: number; mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/secciones`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/secciones`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -821,7 +844,7 @@ export async function createRundownSeccion(
 export async function createRundownProveedor(
   data: RundownProveedorInput
 ): Promise<{ id_proveedor: number; mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -845,7 +868,7 @@ export async function updateRundownProveedor(
     doh_sugerido_planta?: number;
   }
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -912,7 +935,7 @@ export interface RundownLoteMaterialUpdate {
 }
 
 export async function updateLoteMaterial(data: RundownLoteMaterialUpdate): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/materiales/lote`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/materiales/lote`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -955,7 +978,7 @@ export async function searchMaterialesCatalogo(q: string = ""): Promise<Material
   }
 
   const qs = q ? `?q=${encodeURIComponent(q)}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo${qs}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/materiales-catalogo${qs}`);
   if (!res.ok) throw new Error("Error al buscar materiales en catálogo");
   return res.json();
 }
@@ -986,7 +1009,7 @@ export async function getMaterialCatalogoInfo(idMaterial: string): Promise<Mater
     };
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/rundown/materiales-catalogo/${encodeURIComponent(idMaterial.trim())}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/materiales-catalogo/${encodeURIComponent(idMaterial.trim())}`);
   if (!res.ok) {
     if (res.status === 404) return null;
     throw new Error("Error al obtener información del material");
@@ -995,7 +1018,7 @@ export async function getMaterialCatalogoInfo(idMaterial: string): Promise<Mater
 }
 
 export async function getProveedorMateriales(idProveedor: number): Promise<RundownParametroMaterialItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales`);
   if (!res.ok) throw new Error("Error al cargar materiales del proveedor");
   return res.json();
 }
@@ -1004,7 +1027,7 @@ export async function addProveedorMaterial(
   idProveedor: number,
   data: RundownParametroMaterialCreate
 ): Promise<{ id_parametro: number; mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -1020,7 +1043,7 @@ export async function deleteProveedorMaterial(
   idProveedor: number,
   idParametro: number
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales/${idParametro}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales/${idParametro}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -1050,7 +1073,7 @@ export interface RundownPeriodoProyeccionCreate {
 }
 
 export async function getPeriodosProyeccion(): Promise<RundownPeriodoProyeccionItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion`);
   if (!res.ok) throw new Error("Error al cargar períodos de proyección");
   return res.json();
 }
@@ -1058,7 +1081,7 @@ export async function getPeriodosProyeccion(): Promise<RundownPeriodoProyeccionI
 export async function createPeriodoProyeccion(
   data: RundownPeriodoProyeccionCreate
 ): Promise<{ id_proyeccion: number; mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -1073,7 +1096,7 @@ export async function createPeriodoProyeccion(
 export async function deletePeriodoProyeccion(
   idProyeccion: number
 ): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion/${idProyeccion}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/periodos-proyeccion/${idProyeccion}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -1141,7 +1164,7 @@ export async function previewPlanSemanal(
     formData.append("override_fecha_inicio", overrideFechaInicio);
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/rundown/secciones/${idSeccion}/plan-semanal/previsualizar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/secciones/${idSeccion}/plan-semanal/previsualizar`, {
     method: "POST",
     body: formData,
   });
@@ -1156,7 +1179,7 @@ export async function confirmPlanSemanal(
   idSeccion: number,
   payload: PlanSemanalConfirmRequest
 ): Promise<PlanSemanalConfirmOut> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/secciones/${idSeccion}/plan-semanal/confirmar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/secciones/${idSeccion}/plan-semanal/confirmar`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1233,7 +1256,7 @@ export async function getStockDeposito(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/stock/deposito${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al obtener stock");
@@ -1245,7 +1268,7 @@ export async function updateStockDeposito(
   idMaterial: string,
   payload: StockAjusteInput
 ): Promise<StockAjusteResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/stock/deposito/${encodeURIComponent(idMaterial)}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/deposito/${encodeURIComponent(idMaterial)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1296,7 +1319,7 @@ export async function getStockMovimientos(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/stock/movimientos${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al obtener movimientos de stock");
@@ -1388,7 +1411,7 @@ export async function searchMaterialesConteo(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/conteo/materiales${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al buscar materiales para conteo");
@@ -1397,7 +1420,7 @@ export async function searchMaterialesConteo(params?: {
 }
 
 export async function createConteo(data: ConteoCreateRequest): Promise<ConteoResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/conteo`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/conteo`, {
     method: "POST",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -1419,7 +1442,7 @@ export async function getHistoricoConteos(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/conteo/historico${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, { headers: getAuthHeaders() });
+  const res = await apiFetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar histórico de conteos");
@@ -1428,7 +1451,7 @@ export async function getHistoricoConteos(params?: {
 }
 
 export async function getDetalleConteo(id_conteo: number): Promise<ConteoResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/conteo/${id_conteo}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/conteo/${id_conteo}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -1608,7 +1631,7 @@ export interface PedidosListResponse {
 export async function calcularSugerenciaPedido(
   req: CalcularSugerenciaRequest
 ): Promise<CalcularSugerenciaResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/calcular-sugerencia`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/calcular-sugerencia`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(req),
@@ -1627,7 +1650,7 @@ export interface ReglaSugerenciaConfigApi {
 }
 
 export async function getReglaSugerenciaConfig(): Promise<ReglaSugerenciaConfigApi> {
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/regla-sugerencia`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/regla-sugerencia`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -1640,7 +1663,7 @@ export async function getReglaSugerenciaConfig(): Promise<ReglaSugerenciaConfigA
 export async function updateReglaSugerenciaConfig(data: {
   factor_consumo_siguiente: number;
 }): Promise<ReglaSugerenciaConfigApi> {
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/regla-sugerencia`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/regla-sugerencia`, {
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -1653,7 +1676,7 @@ export async function updateReglaSugerenciaConfig(data: {
 }
 
 export async function createPedido(data: PedidoCreate): Promise<PedidoOut> {
-  const res = await fetch(`${API_BASE_URL}/api/pedidos`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -1666,7 +1689,7 @@ export async function createPedido(data: PedidoCreate): Promise<PedidoOut> {
 }
 
 export async function createPedidosMultiples(pedidos: PedidoCreate[]): Promise<PedidoOut[]> {
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/multiples`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/multiples`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(pedidos),
@@ -1812,7 +1835,7 @@ export async function getPedidos(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/pedidos${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -1994,7 +2017,7 @@ export async function getPedidoDetalle(idPedido: number): Promise<PedidoOut> {
     };
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/${idPedido}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -2212,7 +2235,7 @@ export async function updatePreparacionPedido(
     };
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/preparacion`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/${idPedido}/preparacion`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
@@ -2228,7 +2251,7 @@ export async function updatePreparacionPedido(
 }
 
 export async function cancelarPedido(idPedido: number, motivo: string): Promise<PedidoOut> {
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/cancelar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/${idPedido}/cancelar`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -2312,7 +2335,7 @@ export async function getRemitoDetalle(idRemito: string): Promise<RemitoDetalleO
     };
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/remitos/${idRemito}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/remitos/${idRemito}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -2328,7 +2351,7 @@ export async function getRemitosByPedido(idPedido: number): Promise<RemitoDetall
     return ped?.remitos || [];
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/pedidos/${idPedido}/remitos`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/pedidos/${idPedido}/remitos`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -2393,13 +2416,13 @@ export async function getMaterialesConfiguracion(params?: {
   if (params?.page) query.append("page", String(params.page));
   if (params?.page_size) query.append("page_size", String(params.page_size));
 
-  const res = await fetch(`${API_BASE_URL}/api/stock/configuracion-materiales?${query.toString()}`);
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/configuracion-materiales?${query.toString()}`);
   if (!res.ok) throw new Error("Error al obtener la configuración de materiales");
   return res.json();
 }
 
 export async function updateMaterialConfiguracion(data: MaterialConfigUpdate): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/stock/configuracion-materiales`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/configuracion-materiales`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -2439,7 +2462,7 @@ export interface CajaPedidoOut {
 
 export async function getCajasPedido(): Promise<CajaPedidoOut[]> {
   if (IS_SUPABASE_ACTIVE) return [];
-  const res = await fetch(`${API_BASE_URL}/api/stock/cajas`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/cajas`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error("Error al obtener cajas de pedido");
@@ -2447,7 +2470,7 @@ export async function getCajasPedido(): Promise<CajaPedidoOut[]> {
 }
 
 export async function createCajaPedido(data: CajaPedidoCreate): Promise<CajaPedidoOut> {
-  const res = await fetch(`${API_BASE_URL}/api/stock/cajas`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/cajas`, {
     method: "POST",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -2460,7 +2483,7 @@ export async function createCajaPedido(data: CajaPedidoCreate): Promise<CajaPedi
 }
 
 export async function updateCajaPedido(idCaja: number, data: CajaPedidoCreate): Promise<CajaPedidoOut> {
-  const res = await fetch(`${API_BASE_URL}/api/stock/cajas/${idCaja}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/cajas/${idCaja}`, {
     method: "PUT",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -2473,7 +2496,7 @@ export async function updateCajaPedido(idCaja: number, data: CajaPedidoCreate): 
 }
 
 export async function deleteCajaPedido(idCaja: number): Promise<{ mensaje: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/stock/cajas/${idCaja}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/cajas/${idCaja}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
   });
@@ -2615,7 +2638,7 @@ export async function loginUser(username: string, password: string): Promise<Log
     return { token, usuario };
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -2687,7 +2710,7 @@ export async function getMe(): Promise<UsuarioItem> {
     };
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/auth/me`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -2706,7 +2729,7 @@ export async function getUsuarios(params?: {
   if (params?.sector && params.sector !== "TODOS") query.append("sector", params.sector);
   if (params?.solo_activos) query.append("solo_activos", "true");
 
-  const res = await fetch(`${API_BASE_URL}/api/usuarios?${query.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/usuarios?${query.toString()}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -2717,7 +2740,7 @@ export async function getUsuarios(params?: {
 }
 
 export async function createUsuario(data: UsuarioCreateInput): Promise<UsuarioItem> {
-  const res = await fetch(`${API_BASE_URL}/api/usuarios`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/usuarios`, {
     method: "POST",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -2730,7 +2753,7 @@ export async function createUsuario(data: UsuarioCreateInput): Promise<UsuarioIt
 }
 
 export async function updateUsuario(id_usuario: number, data: UsuarioUpdateInput): Promise<UsuarioItem> {
-  const res = await fetch(`${API_BASE_URL}/api/usuarios/${id_usuario}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/usuarios/${id_usuario}`, {
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify(data),
@@ -2743,7 +2766,7 @@ export async function updateUsuario(id_usuario: number, data: UsuarioUpdateInput
 }
 
 export async function changeUsuarioPassword(id_usuario: number, password_nuevo: string): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/usuarios/${id_usuario}/password`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/usuarios/${id_usuario}/password`, {
     method: "PUT",
     headers: getAuthHeaders(),
     body: JSON.stringify({ password_nuevo }),
@@ -2756,7 +2779,7 @@ export async function changeUsuarioPassword(id_usuario: number, password_nuevo: 
 }
 
 export async function deleteUsuario(id_usuario: number): Promise<{ message: string }> {
-  const res = await fetch(`${API_BASE_URL}/api/usuarios/${id_usuario}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/usuarios/${id_usuario}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
   });
@@ -2816,7 +2839,7 @@ export interface DashboardResumenResponse {
 }
 
 export async function getDashboardResumen(): Promise<DashboardResumenResponse> {
-  const res = await fetch(`${API_BASE_URL}/api/dashboard/resumen`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/dashboard/resumen`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -2915,7 +2938,7 @@ export async function parseInvoicePdf(file: File): Promise<ParsedInvoiceResult> 
   const token = localStorage.getItem("auth_token");
   const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
 
-  const res = await fetch(`${API_BASE_URL}/api/ingresos/parse-document`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/ingresos/parse-document`, {
     method: "POST",
     headers,
     body: formData,
@@ -3034,7 +3057,7 @@ export async function getIngresos(params?: {
   if (params?.id_proveedor && params.id_proveedor > 0) q.append("id_proveedor", String(params.id_proveedor));
   if (params?.search) q.append("search", params.search);
   const qs = q.toString() ? `?${q.toString()}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/ingresos${qs}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/ingresos${qs}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error("Error al obtener comprobantes de ingreso");
@@ -3049,7 +3072,7 @@ export async function getIngresoById(idIngreso: number): Promise<IngresoOut> {
     return found;
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) throw new Error(`Error al obtener comprobante #${idIngreso}`);
@@ -3148,7 +3171,7 @@ export async function createIngreso(data: IngresoCreate, idUsuario?: number): Pr
   }
 
   const qs = idUsuario ? `?id_usuario=${idUsuario}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/ingresos${qs}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/ingresos${qs}`, {
     method: "POST",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -3211,7 +3234,7 @@ export async function confirmarRecepcionIngreso(
   }
 
   const qs = idUsuario ? `?id_usuario=${idUsuario}` : "";
-  const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}/recepcion${qs}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/ingresos/${idIngreso}/recepcion${qs}`, {
     method: "PUT",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -3237,7 +3260,7 @@ export async function deleteIngreso(idIngreso: number): Promise<void> {
     return;
   }
 
-  const res = await fetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/ingresos/${idIngreso}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
   });
@@ -3283,7 +3306,7 @@ export async function getAuditoriaPedidos(params?: {
 
   const qs = query.toString();
   const url = `${API_BASE_URL}/api/auditoria/pedidos${qs ? `?${qs}` : ""}`;
-  const res = await fetch(url, { headers: getAuthHeaders() });
+  const res = await apiFetch(url, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al obtener historial de auditoría");
@@ -3331,7 +3354,7 @@ export async function getDespachos(
     anio_hasta: String(anioHasta),
     mes_hasta: String(mesHasta),
   });
-  const res = await fetch(`${API_BASE_URL}/api/despachos?${params.toString()}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/despachos?${params.toString()}`, {
     headers: getAuthHeaders(),
   });
   if (!res.ok) {
@@ -3342,7 +3365,7 @@ export async function getDespachos(
 }
 
 export async function guardarDespachos(items: DespachoUpsertInput[]): Promise<DespachoUpsertResult> {
-  const res = await fetch(`${API_BASE_URL}/api/despachos`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/despachos`, {
     method: "PUT",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify({ items }),
@@ -3381,7 +3404,7 @@ export interface BomExtensionResult {
 }
 
 export async function getBomExtension(): Promise<BomExtensionItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/extension`, { headers: getAuthHeaders() });
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/extension`, { headers: getAuthHeaders() });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar la extensión de BOM");
@@ -3390,7 +3413,7 @@ export async function getBomExtension(): Promise<BomExtensionItem[]> {
 }
 
 export async function guardarBomExtension(data: BomExtensionInput): Promise<BomExtensionResult> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/extension`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/extension`, {
     method: "PUT",
     headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -3403,7 +3426,7 @@ export async function guardarBomExtension(data: BomExtensionInput): Promise<BomE
 }
 
 export async function eliminarBomExtension(idExtension: number): Promise<BomExtensionResult> {
-  const res = await fetch(`${API_BASE_URL}/api/bom/extension/${idExtension}`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/extension/${idExtension}`, {
     method: "DELETE",
     headers: getAuthHeaders(),
   });
@@ -3426,7 +3449,7 @@ export async function importarBomExtension(file: File): Promise<BomExtensionImpo
   const formData = new FormData();
   formData.append("file", file);
   const token = localStorage.getItem("auth_token");
-  const res = await fetch(`${API_BASE_URL}/api/bom/extension/importar`, {
+  const res = await apiFetch(`${API_BASE_URL}/api/bom/extension/importar`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: formData,
@@ -3439,7 +3462,7 @@ export async function importarBomExtension(file: File): Promise<BomExtensionImpo
 }
 
 export async function getRundownMesesDisponibles(): Promise<RundownPeriodoItem[]> {
-  const res = await fetch(`${API_BASE_URL}/api/rundown/meses-disponibles`);
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/meses-disponibles`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al cargar los meses disponibles");

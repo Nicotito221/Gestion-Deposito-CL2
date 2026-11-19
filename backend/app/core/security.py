@@ -10,7 +10,8 @@ from app.core.config import SECRET_KEY
 
 ALGORITHM: str = "sha256"
 
-ITERATIONS: int = 100000
+ITERATIONS: int = 600000
+TOKEN_TTL_SEGUNDOS: int = 12 * 3600
 
 
 def hash_password(password: str) -> str:
@@ -43,7 +44,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(data: Dict[str, Any], expires_in_seconds: int = 86400 * 7) -> str:
+def create_access_token(data: Dict[str, Any], expires_in_seconds: int = TOKEN_TTL_SEGUNDOS) -> str:
     payload = data.copy()
     payload["exp"] = int(time.time()) + expires_in_seconds
     payload_json = json.dumps(payload, separators=(",", ":")).encode("utf-8")
