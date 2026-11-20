@@ -1,5 +1,8 @@
+import os
+import shutil
+import tempfile
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.core.auth_deps import (
     ROLES_CONFIG_MATERIALES,
@@ -10,6 +13,7 @@ from app.core.auth_deps import (
 )
 from app.core.errors import error_interno
 from app.schemas.stock import (
+    AsignacionProveedorResultado,
     StockAjusteInput,
     StockAjusteResponse,
     StockListResponse,
@@ -124,6 +128,32 @@ def update_material_configuracion(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise error_interno("Error al guardar configuración de material", e)
+
+
+@router.post(
+    "/configuracion-materiales/importar-proveedores",
+    response_model=AsignacionProveedorResultado,
+    dependencies=[Depends(require_config_materiales)],
+)
+def importar_asignacion_proveedores(
+    file: UploadFile = File(...),
+    service: StockService = Depends(get_stock_service),
+) -> AsignacionProveedorResultado:
+    nombre = os.path.basename(file.filename or "asignacion_proveedores.xlsx")
+    if not nombre.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El archivo debe ser un Excel (.xlsx).")
+    temp_dir = tempfile.mkdtemp()
+    temp_path = os.path.join(temp_dir, nombre)
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        return service.importar_asignacion_proveedores(temp_path, nombre)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise error_interno("Error al importar la asignación de proveedores", e)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.get("/cajas", response_model=List[CajaPedidoOut])

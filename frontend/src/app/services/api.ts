@@ -856,10 +856,57 @@ export async function createRundownProveedor(
   return res.json();
 }
 
+export interface ProveedorAdminItem {
+  id_proveedor: number;
+  codigo_proveedor: string;
+  nombre: string;
+  pais: string | null;
+  id_seccion: number | null;
+  nombre_seccion: string | null;
+  activo: boolean;
+  dias_alerta_rojo: number;
+  dias_alerta_amarillo: number;
+  deposito_en_planta: boolean;
+  doh_sugerido_planta: number;
+  materiales_activos: number;
+}
+
+export async function getProveedoresAdmin(): Promise<ProveedorAdminItem[]> {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cargar proveedores");
+  }
+  return res.json();
+}
+
+export interface AsignacionProveedorResultado {
+  nombre_archivo: string;
+  total_filas: number;
+  asignados: number;
+  sin_cambios: number;
+  errores: string[];
+}
+
+export async function importarAsignacionProveedores(file: File): Promise<AsignacionProveedorResultado> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await apiFetch(`${API_BASE_URL}/api/stock/configuracion-materiales/importar-proveedores`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al importar la asignación de proveedores");
+  }
+  return res.json();
+}
+
 export async function updateRundownProveedor(
   idProveedor: number,
   data: {
     nombre?: string;
+    pais?: string;
     id_seccion?: number | null;
     activo?: boolean;
     dias_alerta_rojo?: number;

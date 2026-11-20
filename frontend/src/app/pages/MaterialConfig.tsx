@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -38,6 +38,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Boxes,
+  FileSpreadsheet,
   ScrollText,
   Building2,
   Calendar,
@@ -60,6 +61,8 @@ import {
   updateCajaPedido,
   deleteCajaPedido,
   searchMaterialesCatalogo,
+  importarAsignacionProveedores,
+  type AsignacionProveedorResultado,
   type MaterialConfigItem,
   type MaterialConfigListResponse,
   type RundownSeccionItem,
@@ -70,6 +73,9 @@ import {
 import { useAuth } from "../context/AuthContext";
 
 export function MaterialConfig() {
+  const asignacionInputRef = useRef<HTMLInputElement>(null);
+  const [importandoAsignacion, setImportandoAsignacion] = useState<boolean>(false);
+  const [resultadoAsignacion, setResultadoAsignacion] = useState<AsignacionProveedorResultado | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [data, setData] = useState<MaterialConfigListResponse>({
     items: [],
@@ -448,6 +454,19 @@ export function MaterialConfig() {
   const startRecord = data.total > 0 ? (data.page - 1) * data.page_size + 1 : 0;
   const endRecord = Math.min(data.page * data.page_size, data.total);
 
+  const handleImportarAsignacion = async (file: File) => {
+    setImportandoAsignacion(true);
+    try {
+      const resultado = await importarAsignacionProveedores(file);
+      setResultadoAsignacion(resultado);
+      await fetchConfigList();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al importar la asignación de proveedores");
+    } finally {
+      setImportandoAsignacion(false);
+    }
+  };
+
   return (
     <div className="p-4 sm:p-8 max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -468,6 +487,28 @@ export function MaterialConfig() {
         </div>
 
         <div className="flex items-center gap-2">
+          <input
+            ref={asignacionInputRef}
+            type="file"
+            accept=".xlsx,.xlsm"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) void handleImportarAsignacion(f);
+            }}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => asignacionInputRef.current?.click()}
+            disabled={importandoAsignacion}
+            title="Excel con el código de material en la columna A y el código (o nombre) del proveedor en la columna B"
+            className="text-xs h-9 gap-1.5"
+          >
+            <FileSpreadsheet className={`w-4 h-4 ${importandoAsignacion ? "animate-pulse" : ""}`} />
+            Asignar proveedores (Excel)
+          </Button>
           <Button
             size="sm"
             onClick={() => {
@@ -1406,6 +1447,36 @@ export function MaterialConfig() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={resultadoAsignacion !== null} onOpenChange={(abierto) => !abierto && setResultadoAsignacion(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Asignación masiva de proveedores</DialogTitle>
+            <DialogDescription>{resultadoAsignacion?.nombre_archivo}</DialogDescription>
+          </DialogHeader>
+          {resultadoAsignacion && (
+            <div className="space-y-3 text-xs">
+              <p>
+                {resultadoAsignacion.total_filas} filas · {resultadoAsignacion.asignados} asignados ·{" "}
+                {resultadoAsignacion.sin_cambios} sin cambios · {resultadoAsignacion.errores.length} con error
+              </p>
+              {resultadoAsignacion.errores.length > 0 && (
+                <div className="max-h-60 overflow-y-auto rounded border border-amber-200 bg-amber-50 p-2 space-y-0.5">
+                  {resultadoAsignacion.errores.map((error) => (
+                    <p key={error} className="text-amber-800">
+                      {error}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button size="sm" onClick={() => setResultadoAsignacion(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

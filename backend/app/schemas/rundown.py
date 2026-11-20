@@ -198,8 +198,24 @@ class RundownProveedorCreate(BaseModel):
     doh_sugerido_planta: Optional[float] = Field(default=1.0, ge=0)
 
 
+class ProveedorAdminItem(BaseModel):
+    id_proveedor: int
+    codigo_proveedor: str
+    nombre: str
+    pais: Optional[str] = None
+    id_seccion: Optional[int] = None
+    nombre_seccion: Optional[str] = None
+    activo: bool
+    dias_alerta_rojo: float
+    dias_alerta_amarillo: float
+    deposito_en_planta: bool
+    doh_sugerido_planta: float
+    materiales_activos: int
+
+
 class RundownProveedorUpdate(BaseModel):
     nombre: Optional[str] = Field(default=None, max_length=80)
+    pais: Optional[str] = Field(default=None, max_length=30)
     id_seccion: Optional[int] = None
     activo: Optional[bool] = None
     dias_alerta_rojo: Optional[float] = Field(default=None, ge=0)

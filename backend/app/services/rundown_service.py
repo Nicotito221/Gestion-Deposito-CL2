@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 
 from app.repositories.despacho_repository import DespachoRepository
 from app.repositories.rundown_repository import RundownRepository
+from app.schemas.rundown import ProveedorAdminItem
 from app.schemas.rundown import (
     RundownDayCell,
     RundownMaterialGrid,
@@ -618,8 +619,13 @@ class RundownService:
             id_seccion=data.id_seccion,
             pais=data.pais,
             deposito_en_planta=data.deposito_en_planta,
-            doh_sugerido_planta=data.doh_sugerido_planta or 1.0,
+            doh_sugerido_planta=data.doh_sugerido_planta if data.doh_sugerido_planta is not None else 1.0,
+            dias_alerta_rojo=data.dias_alerta_rojo if data.dias_alerta_rojo is not None else 5.0,
+            dias_alerta_amarillo=data.dias_alerta_amarillo if data.dias_alerta_amarillo is not None else 15.0,
         )
+
+    def list_proveedores_admin(self) -> List[ProveedorAdminItem]:
+        return [ProveedorAdminItem(**p) for p in self._repo.list_proveedores_admin()]
 
     def update_proveedor(self, id_proveedor: int, data: RundownProveedorUpdate) -> bool:
         updated = self._repo.update_proveedor(
@@ -631,6 +637,7 @@ class RundownService:
             dias_alerta_amarillo=data.dias_alerta_amarillo,
             deposito_en_planta=data.deposito_en_planta,
             doh_sugerido_planta=data.doh_sugerido_planta,
+            pais=data.pais,
         )
         if not updated:
             raise HTTPException(

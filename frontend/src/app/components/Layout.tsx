@@ -15,6 +15,7 @@ import {
   FileSpreadsheet,
   Truck,
   SlidersHorizontal,
+  Building2,
   Users,
   LogOut,
   Menu,
@@ -70,6 +71,7 @@ const navGroups: NavGroup[] = [
     label: "Configuración & Control",
     items: [
       { path: "/configuracion-materiales", label: "Config. Materiales", icon: SlidersHorizontal, roles: PERMISOS_RUTA["/configuracion-materiales"] },
+      { path: "/proveedores", label: "Proveedores", icon: Building2, roles: PERMISOS_RUTA["/proveedores"] },
       { path: "/usuarios", label: "Usuarios", icon: Users, roles: PERMISOS_RUTA["/usuarios"] },
       { path: "/trazabilidad", label: "Auditoría", icon: Shield, roles: PERMISOS_RUTA["/trazabilidad"] },
     ],

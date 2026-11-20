@@ -20,6 +20,7 @@ import { SupplyOrderBom } from "./pages/SupplyOrderBom";
 import { DespachosTerceros } from "./pages/DespachosTerceros";
 import { MaterialConfig } from "./pages/MaterialConfig";
 import { UserManagement } from "./pages/UserManagement";
+import { Proveedores } from "./pages/Proveedores";
 import { PERMISOS_RUTA } from "./permisos";
 
 export const router = createBrowserRouter([
@@ -171,6 +172,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute roles={PERMISOS_RUTA["/configuracion-materiales"]}>
             <MaterialConfig />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "proveedores",
+        element: (
+          <ProtectedRoute roles={PERMISOS_RUTA["/proveedores"]}>
+            <Proveedores />
           </ProtectedRoute>
         ),
       },

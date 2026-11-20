@@ -120,6 +120,14 @@ class MaterialConfigUpdate(BaseModel):
     en_cl2: Optional[bool] = None
 
 
+class AsignacionProveedorResultado(BaseModel):
+    nombre_archivo: str
+    total_filas: int
+    asignados: int
+    sin_cambios: int
+    errores: List[str] = Field(default_factory=list)
+
+
 class CajaPedidoItemInput(BaseModel):
     id_material: str = Field(min_length=1, max_length=50)
     cantidad: float = Field(gt=0)

@@ -13,5 +13,6 @@ export const PERMISOS_RUTA: Record<string, string[]> = {
   "/configuracion-materiales": [...PLANIFICACION, "supervisor"],
   "/trazabilidad": [...PLANIFICACION, "supervisor"],
   "/conteo-ciclico": [...PLANIFICACION, "contador_ciclico"],
+  "/proveedores": [...PLANIFICACION, "supervisor"],
   "/usuarios": ["administrador"],
 };

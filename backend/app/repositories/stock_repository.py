@@ -705,6 +705,158 @@ class StockRepository:
             cursor.close()
             conn.close()
 
+    def asignar_proveedores_masivo(self, pares: List[Tuple[int, str, str]]) -> Tuple[int, int, List[str]]:
+        conn: pyodbc.Connection = self._get_connection()
+        conn.autocommit = False
+        cursor = conn.cursor()
+        asignados = 0
+        sin_cambios = 0
+        errores: List[str] = []
+        columnas_copia = (
+            "descripcion, unidad, lote_mts, scrap_porcentaje, factor_conversion, categoria_cabina, "
+            "stock_inicial_referencia, fecha_stock_inicial, stock_inicial_planta, stock_inicial_total, "
+            "doh_sugerido_planta, tipo_empaque, unidad_por_bulto, bultos_por_pallet, en_cl2"
+        )
+        try:
+            cursor.execute(
+                "SELECT id_proveedor, UPPER(LTRIM(RTRIM(ISNULL(codigo_proveedor, '')))), UPPER(LTRIM(RTRIM(nombre))), activo FROM dbo.proveedor"
+            )
+            proveedores_por_clave: Dict[str, Tuple[int, bool]] = {}
+            for id_p, codigo, nombre, activo in cursor.fetchall():
+                if codigo:
+                    proveedores_por_clave[codigo] = (int(id_p), bool(activo))
+                proveedores_por_clave.setdefault(nombre, (int(id_p), bool(activo)))
+
+            cursor.execute("SELECT TOP 1 id_version FROM dbo.bom_version WHERE es_vigente = 1")
+            fila_version = cursor.fetchone()
+            id_version_vigente = int(fila_version[0]) if fila_version else None
+
+            for fila, id_material, clave_proveedor in pares:
+                proveedor = proveedores_por_clave.get(clave_proveedor)
+                if proveedor is None:
+                    errores.append(f"Fila {fila}: el proveedor '{clave_proveedor}' no existe.")
+                    continue
+                id_proveedor, proveedor_activo = proveedor
+                if not proveedor_activo:
+                    errores.append(f"Fila {fila}: el proveedor '{clave_proveedor}' está inactivo.")
+                    continue
+                cursor.execute(
+                    "SELECT nombre, unidad, lote_minimo, tipo_empaque, en_cl2 FROM dbo.material WHERE id_material = ?",
+                    (id_material,),
+                )
+                material = cursor.fetchone()
+                if material is None:
+                    errores.append(f"Fila {fila}: el material '{id_material}' no existe.")
+                    continue
+
+                cursor.execute(
+                    """
+                    SELECT id_parametro, id_proveedor, activo
+                    FROM dbo.rundown_parametro_material WITH (UPDLOCK, HOLDLOCK)
+                    WHERE id_material = ?
+                    """,
+                    (id_material,),
+                )
+                parametros = [(int(r[0]), int(r[1]), bool(r[2])) for r in cursor.fetchall()]
+                activos_otro = [pid for pid, prov, act in parametros if act and prov != id_proveedor]
+                propio = next((pid for pid, prov, _ in parametros if prov == id_proveedor), None)
+                propio_activo = any(prov == id_proveedor and act for _, prov, act in parametros)
+
+                if propio_activo and not activos_otro:
+                    sin_cambios += 1
+                else:
+                    origen = activos_otro[0] if activos_otro else None
+                    if propio is not None:
+                        cursor.execute("UPDATE dbo.rundown_parametro_material SET activo = 1 WHERE id_parametro = ?", (propio,))
+                    elif origen is not None:
+                        cursor.execute(
+                            f"""
+                            INSERT INTO dbo.rundown_parametro_material (id_proveedor, id_material, {columnas_copia}, activo)
+                            OUTPUT INSERTED.id_parametro
+                            SELECT ?, id_material, {columnas_copia}, 1
+                            FROM dbo.rundown_parametro_material WHERE id_parametro = ?
+                            """,
+                            (id_proveedor, origen),
+                        )
+                        propio = int(cursor.fetchone()[0])
+                    else:
+                        cursor.execute(
+                            """
+                            INSERT INTO dbo.rundown_parametro_material (
+                                id_proveedor, id_material, descripcion, unidad, lote_mts, tipo_empaque, en_cl2, activo
+                            )
+                            OUTPUT INSERTED.id_parametro
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                            """,
+                            (
+                                id_proveedor, id_material, str(material[0] or id_material)[:150],
+                                str(material[1] or "UN")[:10], material[2], str(material[3] or "pallet"), material[4],
+                            ),
+                        )
+                        propio = int(cursor.fetchone()[0])
+
+                    cursor.execute(
+                        "UPDATE dbo.rundown_parametro_material SET activo = 0 WHERE id_material = ? AND id_parametro <> ?",
+                        (id_material, propio),
+                    )
+                    if origen is not None:
+                        cursor.execute(
+                            """
+                            INSERT INTO dbo.rundown_parametro_producto (id_parametro, id_producto, factor_uso)
+                            SELECT ?, rpp.id_producto, rpp.factor_uso
+                            FROM dbo.rundown_parametro_producto rpp
+                            WHERE rpp.id_parametro = ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM dbo.rundown_parametro_producto x
+                                  WHERE x.id_parametro = ? AND x.id_producto = rpp.id_producto
+                              )
+                            """,
+                            (propio, origen, propio),
+                        )
+                    if id_version_vigente is not None:
+                        cursor.execute(
+                            """
+                            INSERT INTO dbo.rundown_parametro_producto (id_parametro, id_producto, factor_uso)
+                            SELECT ?, e.id_producto_raiz, e.factor_consumo_total
+                            FROM dbo.bom_explosion_plana e
+                            WHERE e.id_version = ? AND e.id_material_insumo = ?
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM dbo.rundown_parametro_producto x
+                                  WHERE x.id_parametro = ? AND x.id_producto = e.id_producto_raiz
+                              )
+                            """,
+                            (propio, id_version_vigente, id_material, propio),
+                        )
+                    asignados += 1
+
+                cursor.execute(
+                    "UPDATE dbo.material SET id_proveedor_principal = ? WHERE id_material = ?",
+                    (id_proveedor, id_material),
+                )
+                cursor.execute(
+                    """
+                    MERGE dbo.proveedor_material AS target
+                    USING (SELECT ? AS id_proveedor, ? AS id_material) AS source
+                    ON (target.id_proveedor = source.id_proveedor AND target.id_material = source.id_material)
+                    WHEN MATCHED THEN UPDATE SET activo = 1
+                    WHEN NOT MATCHED THEN INSERT (id_proveedor, id_material, activo) VALUES (source.id_proveedor, source.id_material, 1);
+                    """,
+                    (id_proveedor, id_material),
+                )
+                cursor.execute(
+                    "UPDATE dbo.proveedor_material SET activo = 0 WHERE id_material = ? AND id_proveedor <> ?",
+                    (id_material, id_proveedor),
+                )
+
+            conn.commit()
+            return asignados, sin_cambios, errores
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
     def update_material_configuracion(
         self,
         id_material: str,

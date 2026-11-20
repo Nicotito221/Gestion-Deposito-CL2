@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from app.core.auth_deps import ROLES_PLANTA, id_usuario_de, require_roles, require_user
 from app.core.errors import error_interno
 
+from app.schemas.rundown import ProveedorAdminItem
 from app.schemas.rundown import (
     RundownProveedorCreate,
     RundownProveedorUpdate,
@@ -74,6 +75,13 @@ def create_proveedor(
             )
         raise error_interno("Error al registrar proveedor", err)
 
+
+
+@router.get("/proveedores", response_model=List[ProveedorAdminItem])
+def list_proveedores_admin(
+    service: RundownService = Depends(get_rundown_service),
+) -> List[ProveedorAdminItem]:
+    return service.list_proveedores_admin()
 
 
 @router.put("/proveedores/{id_proveedor}", dependencies=[Depends(require_planta)])

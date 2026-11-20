@@ -1,8 +1,11 @@
 from math import ceil
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
+
+import openpyxl
 
 from app.repositories.stock_repository import StockRepository
 from app.schemas.stock import (
+    AsignacionProveedorResultado,
     StockAjusteInput,
     StockAjusteResponse,
     StockListResponse,
@@ -174,6 +177,45 @@ class StockService:
             page=current_page,
             page_size=current_page_size,
             total_pages=total_pages,
+        )
+
+    @staticmethod
+    def _texto_celda(valor: Any) -> str:
+        if valor is None:
+            return ""
+        if isinstance(valor, float) and valor.is_integer():
+            return str(int(valor))
+        return str(valor).strip().upper()
+
+    def importar_asignacion_proveedores(self, ruta: str, nombre_archivo: str) -> AsignacionProveedorResultado:
+        wb = openpyxl.load_workbook(ruta, read_only=True, data_only=True)
+        try:
+            pares: List[Tuple[int, str, str]] = []
+            errores: List[str] = []
+            for numero, fila in enumerate(wb.worksheets[0].iter_rows(max_col=2, values_only=True), start=1):
+                material = self._texto_celda(fila[0] if len(fila) > 0 else None)
+                proveedor = self._texto_celda(fila[1] if len(fila) > 1 else None)
+                if not material and not proveedor:
+                    continue
+                if numero == 1 and ("PROVEED" in proveedor or "MATERIAL" in material or material in ("PN", "CODIGO", "CÓDIGO")):
+                    continue
+                if not material or not proveedor:
+                    errores.append(f"Fila {numero}: falta el material o el proveedor.")
+                    continue
+                pares.append((numero, material[:50], proveedor))
+        finally:
+            wb.close()
+
+        if not pares and not errores:
+            raise ValueError("El archivo no tiene filas con material (columna A) y proveedor (columna B).")
+
+        asignados, sin_cambios, errores_repo = self._repo.asignar_proveedores_masivo(pares)
+        return AsignacionProveedorResultado(
+            nombre_archivo=nombre_archivo,
+            total_filas=len(pares) + len(errores),
+            asignados=asignados,
+            sin_cambios=sin_cambios,
+            errores=errores + errores_repo,
         )
 
     def update_material_configuracion(self, data: MaterialConfigUpdate) -> None:

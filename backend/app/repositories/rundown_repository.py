@@ -1161,21 +1161,66 @@ class RundownRepository:
         pais: Optional[str],
         deposito_en_planta: bool = False,
         doh_sugerido_planta: float = 1.0,
+        dias_alerta_rojo: float = 5.0,
+        dias_alerta_amarillo: float = 15.0,
     ) -> int:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute(
                 """
-                INSERT INTO dbo.proveedor (codigo_proveedor, nombre, pais, activo, id_seccion, deposito_en_planta, doh_sugerido_planta)
+                INSERT INTO dbo.proveedor (
+                    codigo_proveedor, nombre, pais, activo, id_seccion, deposito_en_planta,
+                    doh_sugerido_planta, dias_alerta_rojo, dias_alerta_amarillo
+                )
                 OUTPUT INSERTED.id_proveedor
-                VALUES (?, ?, ?, 1, ?, ?, ?)
+                VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)
                 """,
-                (codigo_proveedor.strip().upper(), nombre.strip(), pais, id_seccion, 1 if deposito_en_planta else 0, doh_sugerido_planta),
+                (
+                    codigo_proveedor.strip().upper(), nombre.strip(), pais, id_seccion,
+                    1 if deposito_en_planta else 0, doh_sugerido_planta, dias_alerta_rojo, dias_alerta_amarillo,
+                ),
             )
             new_id = int(cursor.fetchone()[0])
             conn.commit()
             return new_id
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_proveedores_admin(self) -> List[Dict[str, Any]]:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT p.id_proveedor, ISNULL(p.codigo_proveedor, ''), p.nombre, p.pais, p.id_seccion, s.nombre,
+                       p.activo, ISNULL(p.dias_alerta_rojo, 5.0), ISNULL(p.dias_alerta_amarillo, 15.0),
+                       ISNULL(p.deposito_en_planta, 0), ISNULL(p.doh_sugerido_planta, 1.0),
+                       (SELECT COUNT(*) FROM dbo.rundown_parametro_material rpm
+                        WHERE rpm.id_proveedor = p.id_proveedor AND rpm.activo = 1)
+                FROM dbo.proveedor p
+                LEFT JOIN dbo.rundown_seccion s ON s.id_seccion = p.id_seccion
+                ORDER BY p.activo DESC, p.nombre
+                """
+            )
+            return [
+                {
+                    "id_proveedor": int(r[0]),
+                    "codigo_proveedor": str(r[1]),
+                    "nombre": str(r[2]),
+                    "pais": str(r[3]) if r[3] else None,
+                    "id_seccion": int(r[4]) if r[4] is not None else None,
+                    "nombre_seccion": str(r[5]) if r[5] else None,
+                    "activo": bool(r[6]),
+                    "dias_alerta_rojo": float(r[7]),
+                    "dias_alerta_amarillo": float(r[8]),
+                    "deposito_en_planta": bool(r[9]),
+                    "doh_sugerido_planta": float(r[10]),
+                    "materiales_activos": int(r[11] or 0),
+                }
+                for r in cursor.fetchall()
+            ]
         finally:
             cursor.close()
             conn.close()
@@ -1190,15 +1235,25 @@ class RundownRepository:
         dias_alerta_amarillo: Optional[float] = None,
         deposito_en_planta: Optional[bool] = None,
         doh_sugerido_planta: Optional[float] = None,
+        pais: Optional[str] = None,
     ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
         try:
+            cursor.execute(
+                "SELECT ISNULL(deposito_en_planta, 0) FROM dbo.proveedor WITH (UPDLOCK) WHERE id_proveedor = ?",
+                (id_proveedor,),
+            )
+            fila_actual = cursor.fetchone()
+            pasa_a_deposito_planta = bool(deposito_en_planta) and fila_actual is not None and not bool(fila_actual[0])
             updates: List[str] = []
             params: List[Any] = []
             if nombre is not None:
                 updates.append("nombre = ?")
                 params.append(nombre.strip())
+            if pais is not None:
+                updates.append("pais = ?")
+                params.append(pais.strip() or None)
             if id_seccion is not None:
                 updates.append("id_seccion = ?")
                 params.append(id_seccion if id_seccion > 0 else None)
@@ -1226,7 +1281,7 @@ class RundownRepository:
             cursor.execute(sql, params)
             affected = cursor.rowcount
 
-            if deposito_en_planta:
+            if pasa_a_deposito_planta:
                 cursor.execute(
                     """
                     UPDATE dbo.rundown_parametro_material
