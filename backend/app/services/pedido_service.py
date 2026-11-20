@@ -1,9 +1,16 @@
 from datetime import date, datetime, timedelta
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, status
 
-from app.core.time import get_argentina_today, get_turno_sugerido_actual, get_avance_jornada_produccion
+from app.core.time import (
+    HORA_INICIO_JORNADA,
+    HORAS_JORNADA_DIARIA,
+    get_argentina_now,
+    get_argentina_today,
+    get_fecha_operativa_stock,
+    get_turno_sugerido_actual,
+)
 from app.repositories.conteo_repository import ConteoRepository
 from app.repositories.despacho_repository import DespachoRepository
 from app.repositories.pedido_repository import PedidoRepository
@@ -32,8 +39,16 @@ class PedidoService:
         self._conteo_repo = ConteoRepository()
         self._despacho_repo = DespachoRepository()
 
+    @staticmethod
+    def _fraccion_jornada(dt: Optional[datetime] = None) -> Tuple[float, float]:
+        momento = dt or get_argentina_now()
+        hora = momento.hour + momento.minute / 60.0 + momento.second / 3600.0
+        horas_transcurridas = (hora - HORA_INICIO_JORNADA) % 24.0
+        transcurrida = min(1.0, horas_transcurridas / HORAS_JORNADA_DIARIA)
+        return transcurrida, 1.0 - transcurrida
+
     def calcular_sugerencia(self, request: CalcularSugerenciaRequest) -> CalcularSugerenciaResponse:
-        today = get_argentina_today()
+        today = get_fecha_operativa_stock()
         yesterday = today - timedelta(days=1)
         fecha_req = request.fecha_requerida or today
         fecha_sig = fecha_req + timedelta(days=1)
@@ -51,6 +66,7 @@ class PedidoService:
         fecha_conteo: date = request.fecha_conteo or yesterday
 
         hora_conteo_dt: Optional[datetime] = None
+        materiales_contados: set = set()
 
         if request.id_conteo:
             conteo = self._conteo_repo.get_conteo_detalle(request.id_conteo)
@@ -70,6 +86,7 @@ class PedidoService:
                 conteo_mat_ids = []
                 for it in conteo.get("items", []):
                     counts_map[it["id_material"]] = float(it["stock_contado"])
+                    materiales_contados.add(it["id_material"])
                     conteo_mat_ids.append(it["id_material"])
                 if request.solo_conteo and conteo_mat_ids:
                     ids_to_query = conteo_mat_ids
@@ -78,6 +95,7 @@ class PedidoService:
             ids_to_query = []
             for m in request.materiales:
                 counts_map[m.id_material] = float(m.stock_contado)
+                materiales_contados.add(m.id_material)
                 ids_to_query.append(m.id_material)
 
         if not request.id_conteo and not request.materiales:
@@ -95,10 +113,12 @@ class PedidoService:
                                 hora_conteo_dt = raw_fh
                             for it in conteo.get("items", []):
                                 counts_map[it["id_material"]] = float(it["stock_contado"])
+                                materiales_contados.add(it["id_material"])
                     except Exception:
                         pass
 
-        _, fraccion_restante = get_avance_jornada_produccion(hora_conteo_dt)
+        _, fraccion_restante_conteo = self._fraccion_jornada(hora_conteo_dt)
+        fraccion_transcurrida_ahora, fraccion_restante_ahora = self._fraccion_jornada()
 
         materiales = self._repo.get_materiales_para_sugerencia(ids_to_query)
 
@@ -232,6 +252,13 @@ class PedidoService:
                 if consumo_sig == 0 and consumo_diario > 0:
                     consumo_sig = consumo_diario
 
+            if mat_id in materiales_contados:
+                fraccion_restante = fraccion_restante_conteo
+                stock_partida = stock_contado
+            else:
+                fraccion_restante = fraccion_restante_ahora
+                stock_partida = round(stock_contado - consumo_hoy * fraccion_transcurrida_ahora, 2)
+
             veh_prod_prom = sum(
                 prod_map_prom_mes.get(p["id_producto"], 0.0) * p["factor_uso"]
                 for p in m["productos"]
@@ -242,13 +269,13 @@ class PedidoService:
             )
 
             if fecha_req <= today:
-                stock_proyectado_inicio = stock_contado
+                stock_proyectado_inicio = stock_partida
                 consumo_evaluar_hoy = round(consumo_diario * fraccion_restante, 2)
             else:
                 dias_avance = (fecha_req - today).days
                 consumo_intermedio = round(consumo_hoy * fraccion_restante, 2) + round(consumo_hoy * (dias_avance - 1), 2)
                 pedidos_intermedios = pedidos_hoy_map.get(mat_id, 0.0)
-                stock_proyectado_inicio = round(stock_contado + pedidos_intermedios - consumo_intermedio, 2)
+                stock_proyectado_inicio = round(stock_partida + pedidos_intermedios - consumo_intermedio, 2)
                 consumo_evaluar_hoy = consumo_diario
 
             mat_pedidos = pedidos_por_mat.get(mat_id, [])
