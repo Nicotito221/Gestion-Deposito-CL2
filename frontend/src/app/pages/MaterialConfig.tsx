@@ -503,7 +503,7 @@ export function MaterialConfig() {
             variant="outline"
             onClick={() => asignacionInputRef.current?.click()}
             disabled={importandoAsignacion}
-            title="Excel con el código de material en la columna A y el código (o nombre) del proveedor en la columna B"
+            title="Excel con el PN en la columna A y el proveedor en la columna J, desde la fila 2. Los proveedores que no existen se crean."
             className="text-xs h-9 gap-1.5"
           >
             <FileSpreadsheet className={`w-4 h-4 ${importandoAsignacion ? "animate-pulse" : ""}`} />
@@ -1461,6 +1461,18 @@ export function MaterialConfig() {
                 {resultadoAsignacion.total_filas} filas · {resultadoAsignacion.asignados} asignados ·{" "}
                 {resultadoAsignacion.sin_cambios} sin cambios · {resultadoAsignacion.errores.length} con error
               </p>
+              {resultadoAsignacion.proveedores_creados.length > 0 && (
+                <div className="max-h-40 overflow-y-auto rounded border border-blue-200 bg-blue-50 p-2 space-y-0.5">
+                  <p className="font-medium text-blue-900">
+                    Proveedores creados ({resultadoAsignacion.proveedores_creados.length}). Completalos desde Proveedores:
+                  </p>
+                  {resultadoAsignacion.proveedores_creados.map((nombre) => (
+                    <p key={nombre} className="text-blue-800">
+                      {nombre}
+                    </p>
+                  ))}
+                </div>
+              )}
               {resultadoAsignacion.errores.length > 0 && (
                 <div className="max-h-60 overflow-y-auto rounded border border-amber-200 bg-amber-50 p-2 space-y-0.5">
                   {resultadoAsignacion.errores.map((error) => (

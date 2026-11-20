@@ -125,6 +125,7 @@ class AsignacionProveedorResultado(BaseModel):
     total_filas: int
     asignados: int
     sin_cambios: int
+    proveedores_creados: List[str] = Field(default_factory=list)
     errores: List[str] = Field(default_factory=list)
 
 

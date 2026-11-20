@@ -885,6 +885,7 @@ export interface AsignacionProveedorResultado {
   total_filas: number;
   asignados: number;
   sin_cambios: number;
+  proveedores_creados: string[];
   errores: string[];
 }
 

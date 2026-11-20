@@ -1,3 +1,4 @@
+import unicodedata
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 import pyodbc
@@ -705,13 +706,28 @@ class StockRepository:
             cursor.close()
             conn.close()
 
-    def asignar_proveedores_masivo(self, pares: List[Tuple[int, str, str]]) -> Tuple[int, int, List[str]]:
+    @staticmethod
+    def _codigo_desde_nombre(nombre: str, usados: set) -> str:
+        sin_acentos = unicodedata.normalize("NFKD", nombre.upper()).encode("ascii", "ignore").decode("ascii")
+        base = "".join(c for c in sin_acentos if c.isalnum())[:30] or "PROV"
+        codigo = base
+        sufijo = 2
+        while codigo in usados:
+            extra = f"-{sufijo}"
+            codigo = f"{base[:30 - len(extra)]}{extra}"
+            sufijo += 1
+        return codigo
+
+    def asignar_proveedores_masivo(
+        self, pares: List[Tuple[int, str, str]]
+    ) -> Tuple[int, int, List[str], List[str]]:
         conn: pyodbc.Connection = self._get_connection()
         conn.autocommit = False
         cursor = conn.cursor()
         asignados = 0
         sin_cambios = 0
         errores: List[str] = []
+        creados: List[str] = []
         columnas_copia = (
             "descripcion, unidad, lote_mts, scrap_porcentaje, factor_conversion, categoria_cabina, "
             "stock_inicial_referencia, fecha_stock_inicial, stock_inicial_planta, stock_inicial_total, "
@@ -722,10 +738,12 @@ class StockRepository:
                 "SELECT id_proveedor, UPPER(LTRIM(RTRIM(ISNULL(codigo_proveedor, '')))), UPPER(LTRIM(RTRIM(nombre))), activo FROM dbo.proveedor"
             )
             proveedores_por_clave: Dict[str, Tuple[int, bool]] = {}
+            codigos_usados: set = set()
             for id_p, codigo, nombre, activo in cursor.fetchall():
+                proveedores_por_clave[nombre] = (int(id_p), bool(activo))
                 if codigo:
-                    proveedores_por_clave[codigo] = (int(id_p), bool(activo))
-                proveedores_por_clave.setdefault(nombre, (int(id_p), bool(activo)))
+                    codigos_usados.add(codigo)
+                    proveedores_por_clave.setdefault(codigo, (int(id_p), bool(activo)))
 
             cursor.execute("SELECT TOP 1 id_version FROM dbo.bom_version WHERE es_vigente = 1")
             fila_version = cursor.fetchone()
@@ -734,8 +752,19 @@ class StockRepository:
             for fila, id_material, clave_proveedor in pares:
                 proveedor = proveedores_por_clave.get(clave_proveedor)
                 if proveedor is None:
-                    errores.append(f"Fila {fila}: el proveedor '{clave_proveedor}' no existe.")
-                    continue
+                    codigo_nuevo = self._codigo_desde_nombre(clave_proveedor, codigos_usados)
+                    cursor.execute(
+                        """
+                        INSERT INTO dbo.proveedor (codigo_proveedor, nombre, activo)
+                        OUTPUT INSERTED.id_proveedor
+                        VALUES (?, ?, 1)
+                        """,
+                        (codigo_nuevo, clave_proveedor[:100]),
+                    )
+                    proveedor = (int(cursor.fetchone()[0]), True)
+                    proveedores_por_clave[clave_proveedor] = proveedor
+                    codigos_usados.add(codigo_nuevo)
+                    creados.append(f"{clave_proveedor} (código {codigo_nuevo})")
                 id_proveedor, proveedor_activo = proveedor
                 if not proveedor_activo:
                     errores.append(f"Fila {fila}: el proveedor '{clave_proveedor}' está inactivo.")
@@ -849,7 +878,7 @@ class StockRepository:
                 )
 
             conn.commit()
-            return asignados, sin_cambios, errores
+            return asignados, sin_cambios, errores, creados
         except Exception:
             conn.rollback()
             raise

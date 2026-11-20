@@ -3,6 +3,9 @@ from typing import Any, List, Optional, Tuple
 
 import openpyxl
 
+COLUMNA_MATERIAL = 0
+COLUMNA_PROVEEDOR = 9
+
 from app.repositories.stock_repository import StockRepository
 from app.schemas.stock import (
     AsignacionProveedorResultado,
@@ -192,12 +195,12 @@ class StockService:
         try:
             pares: List[Tuple[int, str, str]] = []
             errores: List[str] = []
-            for numero, fila in enumerate(wb.worksheets[0].iter_rows(max_col=2, values_only=True), start=1):
-                material = self._texto_celda(fila[0] if len(fila) > 0 else None)
-                proveedor = self._texto_celda(fila[1] if len(fila) > 1 else None)
+            for numero, fila in enumerate(
+                wb.worksheets[0].iter_rows(min_row=2, max_col=COLUMNA_PROVEEDOR + 1, values_only=True), start=2
+            ):
+                material = self._texto_celda(fila[COLUMNA_MATERIAL] if len(fila) > COLUMNA_MATERIAL else None)
+                proveedor = self._texto_celda(fila[COLUMNA_PROVEEDOR] if len(fila) > COLUMNA_PROVEEDOR else None)
                 if not material and not proveedor:
-                    continue
-                if numero == 1 and ("PROVEED" in proveedor or "MATERIAL" in material or material in ("PN", "CODIGO", "CÓDIGO")):
                     continue
                 if not material or not proveedor:
                     errores.append(f"Fila {numero}: falta el material o el proveedor.")
@@ -207,14 +210,15 @@ class StockService:
             wb.close()
 
         if not pares and not errores:
-            raise ValueError("El archivo no tiene filas con material (columna A) y proveedor (columna B).")
+            raise ValueError("El archivo no tiene filas con PN (columna A) y proveedor (columna J) desde la fila 2.")
 
-        asignados, sin_cambios, errores_repo = self._repo.asignar_proveedores_masivo(pares)
+        asignados, sin_cambios, errores_repo, creados = self._repo.asignar_proveedores_masivo(pares)
         return AsignacionProveedorResultado(
             nombre_archivo=nombre_archivo,
             total_filas=len(pares) + len(errores),
             asignados=asignados,
             sin_cambios=sin_cambios,
+            proveedores_creados=creados,
             errores=errores + errores_repo,
         )
 
