@@ -727,10 +727,13 @@ class RundownService:
     def add_material_proveedor(
         self, id_proveedor: int, data: RundownParametroMaterialCreate
     ) -> int:
-        param_id = self._repo.create_or_update_parametro_material(
-            id_proveedor=id_proveedor,
-            data=data.model_dump(),
-        )
+        try:
+            param_id = self._repo.create_or_update_parametro_material(
+                id_proveedor=id_proveedor,
+                data=data.model_dump(),
+            )
+        except ValueError as err:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
         self._repo.auto_link_bom_productos(param_id, data.id_material)
         return param_id
 

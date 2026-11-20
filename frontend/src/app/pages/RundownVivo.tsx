@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { DateInputAR } from "../components/DateInputAR";
-import { useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -47,7 +47,6 @@ import {
   TrendingDown,
   Settings,
   FolderPlus,
-  UserPlus,
   Warehouse,
   Globe2,
   Percent,
@@ -69,8 +68,9 @@ import { CalendarioLaboralModal } from "../components/CalendarioLaboralModal";
 import {
   getRundownSecciones,
   createRundownSeccion,
-  createRundownProveedor,
   updateRundownProveedor,
+  getProveedoresAdmin,
+  type ProveedorAdminItem,
   getSupplierRundown,
   createRundownTransito,
   upsertRundownIngresoDia,
@@ -195,8 +195,10 @@ export function RundownVivo() {
     dias_amarillo: number;
   }>({ dias_rojo: 5, dias_amarillo: 15 });
 
+  const navigate = useNavigate();
   const [adminModalOpen, setAdminModalOpen] = useState<boolean>(false);
-  const [adminTab, setAdminTab] = useState<"secciones" | "proveedores" | "materiales">("secciones");
+  const [adminTab, setAdminTab] = useState<"secciones" | "materiales">("secciones");
+  const [proveedoresActivos, setProveedoresActivos] = useState<ProveedorAdminItem[]>([]);
   const [adminMaterialProvId, setAdminMaterialProvId] = useState<number>(0);
   const [provMaterialesList, setProvMaterialesList] = useState<RundownParametroMaterialItem[]>([]);
   const [loadingProvMateriales, setLoadingProvMateriales] = useState<boolean>(false);
@@ -221,32 +223,15 @@ export function RundownVivo() {
     stock_inicial_total: 0,
   });
   const [isAddingMaterial, setIsAddingMaterial] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!adminModalOpen) return;
+    getProveedoresAdmin()
+      .then((lista) => setProveedoresActivos(lista.filter((p) => p.activo)))
+      .catch(() => toast.error("Error al cargar proveedores"));
+  }, [adminModalOpen]);
   const [newSeccionForm, setNewSeccionForm] = useState({ codigo: "", nombre: "", descripcion: "" });
-  const [newProvForm, setNewProvForm] = useState({ codigo_proveedor: "", nombre: "", id_seccion: 0, deposito_en_planta: false });
   const [isSavingAdmin, setIsSavingAdmin] = useState<boolean>(false);
-  const [editProvModalOpen, setEditProvModalOpen] = useState<boolean>(false);
-  const [isSavingEditProv, setIsSavingEditProv] = useState<boolean>(false);
-  const [editProvForm, setEditProvForm] = useState<{
-    id_proveedor: number;
-    codigo_proveedor: string;
-    nombre: string;
-    id_seccion: number;
-    deposito_en_planta: boolean;
-    dias_alerta_rojo: number;
-    dias_alerta_amarillo: number;
-    doh_sugerido_planta: number;
-    activo: boolean;
-  }>({
-    id_proveedor: 0,
-    codigo_proveedor: "",
-    nombre: "",
-    id_seccion: 0,
-    deposito_en_planta: false,
-    dias_alerta_rojo: 5,
-    dias_alerta_amarillo: 15,
-    doh_sugerido_planta: 1.0,
-    activo: true,
-  });
 
   const [loteMaterialModalOpen, setLoteMaterialModalOpen] = useState<boolean>(false);
   const [editingLoteMaterial, setEditingLoteMaterial] = useState<{
@@ -1184,107 +1169,6 @@ export function RundownVivo() {
     }
   };
 
-  const handleCreateProveedor = async () => {
-    if (!newProvForm.nombre.trim()) {
-      toast.error("El nombre del proveedor es obligatorio");
-      return;
-    }
-    const cod = newProvForm.codigo_proveedor.trim() || newProvForm.nombre.trim().toUpperCase().replace(/\s+/g, "_");
-    setIsSavingAdmin(true);
-    try {
-      await createRundownProveedor({
-        codigo_proveedor: cod,
-        nombre: newProvForm.nombre.trim().toUpperCase(),
-        id_seccion: newProvForm.id_seccion > 0 ? newProvForm.id_seccion : (selectedSeccionId || undefined),
-        deposito_en_planta: newProvForm.deposito_en_planta,
-      });
-      toast.success("Proveedor registrado correctamente");
-      setNewProvForm({ codigo_proveedor: "", nombre: "", id_seccion: selectedSeccionId, deposito_en_planta: false });
-      await fetchSecciones();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al registrar proveedor");
-    } finally {
-      setIsSavingAdmin(false);
-    }
-  };
-
-  const handleToggleDepositoEnPlanta = async (prov: RundownProveedorItem) => {
-    const nextVal = !prov.deposito_en_planta;
-    try {
-      await updateRundownProveedor(prov.id_proveedor, { deposito_en_planta: nextVal });
-      toast.success(
-        nextVal
-          ? `Depósito unificado en Planta para ${prov.nombre}`
-          : `Depósito CL2 habilitado para ${prov.nombre}`
-      );
-      await fetchSecciones();
-      if (selectedSupplierCode === prov.codigo_proveedor) {
-        await fetchRundown(true);
-      }
-    } catch {
-      toast.error("Error al actualizar configuración de depósito");
-    }
-  };
-
-  const handleReassignProveedor = async (idProveedor: number, newSeccionId: number) => {
-    try {
-      await updateRundownProveedor(idProveedor, { id_seccion: newSeccionId });
-      toast.success("Línea del proveedor actualizada");
-      await fetchSecciones();
-    } catch {
-      toast.error("Error al reasignar proveedor");
-    }
-  };
-
-  const handleOpenEditProveedor = (prov: RundownProveedorItem) => {
-    setEditProvForm({
-      id_proveedor: prov.id_proveedor,
-      codigo_proveedor: prov.codigo_proveedor,
-      nombre: prov.nombre,
-      id_seccion: prov.id_seccion,
-      deposito_en_planta: Boolean(prov.deposito_en_planta),
-      dias_alerta_rojo: prov.dias_alerta_rojo ?? 5,
-      dias_alerta_amarillo: prov.dias_alerta_amarillo ?? 15,
-      doh_sugerido_planta: prov.doh_sugerido_planta ?? 1.0,
-      activo: prov.activo,
-    });
-    setEditProvModalOpen(true);
-  };
-
-  const handleSubmitEditProveedor = async () => {
-    if (!editProvForm.id_proveedor) return;
-    if (!editProvForm.nombre.trim()) {
-      toast.error("El nombre del proveedor no puede estar vacío");
-      return;
-    }
-    if (editProvForm.dias_alerta_amarillo <= editProvForm.dias_alerta_rojo) {
-      toast.error("El umbral amarillo debe ser mayor que el umbral rojo");
-      return;
-    }
-    setIsSavingEditProv(true);
-    try {
-      await updateRundownProveedor(editProvForm.id_proveedor, {
-        nombre: editProvForm.nombre.trim(),
-        id_seccion: editProvForm.id_seccion,
-        deposito_en_planta: editProvForm.deposito_en_planta,
-        dias_alerta_rojo: Number(editProvForm.dias_alerta_rojo),
-        dias_alerta_amarillo: Number(editProvForm.dias_alerta_amarillo),
-        doh_sugerido_planta: Number(editProvForm.doh_sugerido_planta),
-        activo: editProvForm.activo,
-      });
-      toast.success("Proveedor actualizado correctamente");
-      setEditProvModalOpen(false);
-      await fetchSecciones();
-      if (selectedSupplierCode === editProvForm.codigo_proveedor) {
-        await fetchRundown(true);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al actualizar proveedor");
-    } finally {
-      setIsSavingEditProv(false);
-    }
-  };
-
   const fetchProvMateriales = useCallback(async (idProv: number) => {
     if (!idProv) return;
     setLoadingProvMateriales(true);
@@ -1390,12 +1274,12 @@ export function RundownVivo() {
     try {
       const res = await addProveedorMaterial(adminMaterialProvId, {
         id_material: newMaterialForm.id_material.trim().toUpperCase(),
-        descripcion: newMaterialForm.descripcion.trim(),
-        unidad: newMaterialForm.unidad.trim() || "MTS",
-        lote_mts: newMaterialForm.lote_mts,
-        scrap_porcentaje: newMaterialForm.scrap_porcentaje / 100,
-        stock_inicial_planta: Math.round(newMaterialForm.stock_inicial_planta),
-        stock_inicial_total: Math.round(newMaterialForm.stock_inicial_total),
+        descripcion: newMaterialForm.descripcion.trim() || undefined,
+        scrap_porcentaje: newMaterialForm.scrap_porcentaje > 0 ? newMaterialForm.scrap_porcentaje / 100 : undefined,
+        stock_inicial_planta:
+          newMaterialForm.stock_inicial_planta > 0 ? Math.round(newMaterialForm.stock_inicial_planta) : undefined,
+        stock_inicial_total:
+          newMaterialForm.stock_inicial_total > 0 ? Math.round(newMaterialForm.stock_inicial_total) : undefined,
       });
       toast.success(res.mensaje);
       setNewMaterialForm({
@@ -3001,7 +2885,7 @@ export function RundownVivo() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings className="w-5 h-5 text-blue-600" />
-              <span>Administrar Rundown — Líneas, Proveedores y Materiales</span>
+              <span>Configurar Rundown — Líneas y Materiales</span>
             </DialogTitle>
           </DialogHeader>
 
@@ -3017,18 +2901,9 @@ export function RundownVivo() {
                 Líneas
               </button>
               <button
-                onClick={() => setAdminTab("proveedores")}
-                className={`px-4 py-2 text-xs font-semibold border-b-2 transition-colors ${adminTab === "proveedores"
-                    ? "border-blue-600 text-blue-600"
-                    : "border-transparent text-slate-500 hover:text-slate-700"
-                  }`}
-              >
-                Proveedores y Asignaciones
-              </button>
-              <button
                 onClick={() => {
                   setAdminTab("materiales");
-                  const pId = adminMaterialProvId || activeSupplier?.id_proveedor || (secciones[0]?.proveedores[0]?.id_proveedor ?? 0);
+                  const pId = adminMaterialProvId || activeSupplier?.id_proveedor || (proveedoresActivos[0]?.id_proveedor ?? 0);
                   if (pId) {
                     setAdminMaterialProvId(pId);
                     fetchProvMateriales(pId);
@@ -3073,13 +2948,27 @@ export function RundownVivo() {
                   </div>
                 </div>
 
+                <div className="flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50/40 p-3 text-xs">
+                  <span className="text-slate-700">
+                    Los proveedores, sus líneas, alertas y DOH se administran en la pantalla Proveedores.
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => navigate("/proveedores")}
+                    className="h-7 text-xs shrink-0"
+                  >
+                    Gestionar proveedores
+                  </Button>
+                </div>
+
                 <div className="border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-slate-100 text-slate-700 border-b">
                       <tr>
                         <th className="p-2 text-left">Código</th>
                         <th className="p-2 text-left">Nombre</th>
-                        <th className="p-2 text-center">Proveedores</th>
+                        <th className="p-2 text-left">Proveedores</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -3087,154 +2976,8 @@ export function RundownVivo() {
                         <tr key={s.id_seccion} className="hover:bg-slate-50">
                           <td className="p-2 font-mono font-bold text-slate-800">{s.codigo}</td>
                           <td className="p-2 text-slate-700">{s.nombre}</td>
-                          <td className="p-2 text-center">
-                            <Badge variant="outline" className="text-[10px]">
-                              {s.proveedores.length} proveedores
-                            </Badge>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : adminTab === "proveedores" ? (
-              <div className="space-y-4">
-                <div className="border rounded-lg p-3 bg-slate-50 space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-                    <UserPlus className="w-4 h-4 text-blue-600" />
-                    <span>Nuevo Proveedor</span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <Input
-                      placeholder="Nombre del proveedor"
-                      value={newProvForm.nombre}
-                      onChange={(e) => setNewProvForm({ ...newProvForm, nombre: e.target.value })}
-                      className="text-xs h-8"
-                    />
-                    <Select
-                      value={newProvForm.id_seccion ? String(newProvForm.id_seccion) : String(selectedSeccionId)}
-                      onValueChange={(val) => setNewProvForm({ ...newProvForm, id_seccion: parseInt(val, 10) })}
-                    >
-                      <SelectTrigger className="text-xs h-8">
-                        <SelectValue placeholder="Línea" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {secciones.map((s) => (
-                          <SelectItem key={s.id_seccion} value={String(s.id_seccion)}>
-                            {s.nombre}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      onClick={handleCreateProveedor}
-                      disabled={isSavingAdmin || !newProvForm.nombre.trim()}
-                      className="text-xs h-8 bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      {isSavingAdmin ? "Guardando..." : "Agregar Proveedor"}
-                    </Button>
-                  </div>
-                  <div className="flex items-center gap-2 pt-0.5">
-                    <input
-                      type="checkbox"
-                      id="new-prov-dep-planta"
-                      checked={newProvForm.deposito_en_planta}
-                      onChange={(e) => setNewProvForm({ ...newProvForm, deposito_en_planta: e.target.checked })}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5 cursor-pointer"
-                    />
-                    <Label htmlFor="new-prov-dep-planta" className="text-xs text-slate-700 font-medium cursor-pointer select-none">
-                      Depósito en Planta (Stock único sin transferencia intermedia desde CL2)
-                    </Label>
-                  </div>
-                </div>
-
-                <div className="border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-slate-100 text-slate-700 border-b">
-                      <tr>
-                        <th className="p-2 text-left">Proveedor</th>
-                        <th className="p-2 text-left">Línea Asignada</th>
-                        <th className="p-2 text-center">Tipo Depósito</th>
-                        <th className="p-2 text-center">Estado</th>
-                        <th className="p-2 text-center">Acción</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {secciones.flatMap((s) => s.proveedores).map((p) => (
-                        <tr key={p.id_proveedor} className="hover:bg-slate-50">
-                          <td className="p-2 font-mono font-bold text-slate-800">{p.nombre}</td>
-                          <td className="p-2">
-                            <Select
-                              value={p.id_seccion ? String(p.id_seccion) : ""}
-                              onValueChange={(val) => handleReassignProveedor(p.id_proveedor, parseInt(val, 10))}
-                            >
-                              <SelectTrigger className="text-xs h-7 w-40">
-                                <SelectValue placeholder="Asignar línea" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {secciones.map((sec) => (
-                                  <SelectItem key={sec.id_seccion} value={String(sec.id_seccion)}>
-                                    {sec.nombre}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="p-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleDepositoEnPlanta(p)}
-                              title="Haga clic para alternar: Depósito unificado en Planta o con Depósito intermedio CL2"
-                              className="focus:outline-none transition-transform active:scale-95"
-                            >
-                              {p.deposito_en_planta ? (
-                                <Badge className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] cursor-pointer shadow-xs">
-                                  En Planta (Unificado)
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-slate-600 border-slate-300 text-[10px] hover:bg-slate-100 cursor-pointer">
-                                  Con Depósito CL2
-                                </Badge>
-                              )}
-                            </button>
-                          </td>
-                          <td className="p-2 text-center">
-                            {p.tiene_parametros ? (
-                              <Badge className="bg-emerald-100 text-emerald-800 border-emerald-300 text-[10px]">
-                                Configurado
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-slate-400 text-[10px]">
-                                Sin recetas
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="p-2 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleOpenEditProveedor(p)}
-                                className="h-6 px-2 text-[11px] border-slate-300 text-slate-700 hover:bg-slate-100 flex items-center gap-1"
-                                title="Configurar proveedor"
-                              >
-                                <Settings className="w-3 h-3 text-slate-500" />
-                                Configurar
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => {
-                                  setAdminMaterialProvId(p.id_proveedor);
-                                  fetchProvMateriales(p.id_proveedor);
-                                  setAdminTab("materiales");
-                                }}
-                                className="h-6 px-2 text-[11px] text-blue-600 hover:text-blue-800 hover:bg-blue-50"
-                              >
-                                Materiales →
-                              </Button>
-                            </div>
+                          <td className="p-2 text-slate-600">
+                            {s.proveedores.length > 0 ? s.proveedores.map((p) => p.nombre).join(", ") : "Sin proveedores"}
                           </td>
                         </tr>
                       ))}
@@ -3261,13 +3004,13 @@ export function RundownVivo() {
                       <SelectValue placeholder="Seleccione proveedor" />
                     </SelectTrigger>
                     <SelectContent>
-                      {secciones.flatMap((s) =>
-                        s.proveedores.map((p) => (
-                          <SelectItem key={p.id_proveedor} value={String(p.id_proveedor)} className="text-xs">
-                            {p.nombre} ({s.nombre}) {p.tiene_parametros ? "✓" : ""}
-                          </SelectItem>
-                        ))
-                      )}
+                      {proveedoresActivos.map((p) => (
+                        <SelectItem key={p.id_proveedor} value={String(p.id_proveedor)} className="text-xs">
+                          {p.nombre}
+                          {p.nombres_secciones.length > 0 ? ` (${p.nombres_secciones.join(", ")})` : " (sin línea)"}
+                          {p.materiales_activos > 0 ? ` · ${p.materiales_activos} mat.` : ""}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -3353,30 +3096,9 @@ export function RundownVivo() {
                         className="text-xs h-8 bg-white mt-1"
                       />
                     </div>
-                    <div>
-                      <Label className="text-[11px] text-slate-600">Unidad</Label>
-                      <Input
-                        placeholder="MTS, UN, KG"
-                        value={newMaterialForm.unidad}
-                        onChange={(e) => setNewMaterialForm({ ...newMaterialForm, unidad: e.target.value })}
-                        className="text-xs h-8 bg-white mt-1 font-mono uppercase"
-                      />
-                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                    <div>
-                      <Label className="text-[11px] text-slate-600">Lote Estándar</Label>
-                      <Input
-                        type="number"
-                        placeholder="ej. 2464"
-                        value={newMaterialForm.lote_mts || ""}
-                        onChange={(e) =>
-                          setNewMaterialForm({ ...newMaterialForm, lote_mts: parseFloat(e.target.value) || 0 })
-                        }
-                        className="text-xs h-8 bg-white mt-1 font-mono"
-                      />
-                    </div>
                     <div>
                       <Label className="text-[11px] text-slate-600">Scrap (%)</Label>
                       <Input
@@ -4594,185 +4316,6 @@ export function RundownVivo() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editProvModalOpen} onOpenChange={setEditProvModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base font-bold text-slate-800">
-              <Settings className="w-4 h-4 text-blue-600" />
-              Configurar Proveedor
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Nombre del Proveedor</Label>
-              <Input
-                value={editProvForm.nombre}
-                onChange={(e) => setEditProvForm({ ...editProvForm, nombre: e.target.value })}
-                placeholder="Nombre del proveedor"
-                className="h-8 text-xs"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold text-slate-700">Línea Asignada</Label>
-              <Select
-                value={editProvForm.id_seccion ? String(editProvForm.id_seccion) : ""}
-                onValueChange={(val) => setEditProvForm({ ...editProvForm, id_seccion: parseInt(val, 10) })}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Seleccionar línea" />
-                </SelectTrigger>
-                <SelectContent>
-                  {secciones.map((s) => (
-                    <SelectItem key={s.id_seccion} value={String(s.id_seccion)}>
-                      {s.nombre}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="p-3 bg-slate-50 border rounded-lg space-y-2">
-              <Label className="text-xs font-semibold text-slate-700">Modalidad de Depósito</Label>
-              <div className="flex items-start gap-2 pt-1">
-                <input
-                  type="checkbox"
-                  id="edit-prov-dep-planta"
-                  checked={editProvForm.deposito_en_planta}
-                  onChange={(e) => setEditProvForm({ ...editProvForm, deposito_en_planta: e.target.checked })}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 mt-0.5 cursor-pointer"
-                />
-                <Label htmlFor="edit-prov-dep-planta" className="text-xs text-slate-700 font-normal cursor-pointer leading-relaxed">
-                  <span className="font-semibold text-slate-900 block">Depósito unificado en Planta</span>
-                  Stock único sin transferencias intermedias. Los cambios en el stock de planta y total se sincronizan en ambos rundowns.
-                </Label>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs font-semibold text-slate-700">Umbrales de Semáforo de Riesgo</Label>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1 p-2.5 rounded-md border border-red-200 bg-red-50/40">
-                  <Label className="text-[11px] font-bold text-red-900 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-red-600 inline-block" />
-                    Crítico / Rojo (&lt;)
-                  </Label>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={editProvForm.dias_alerta_rojo}
-                      onChange={(e) =>
-                        setEditProvForm({
-                          ...editProvForm,
-                          dias_alerta_rojo: Math.max(0, parseFloat(e.target.value) || 0),
-                        })
-                      }
-                      className="h-7 font-mono text-xs bg-white"
-                    />
-                    <span className="text-[11px] text-slate-500">días</span>
-                  </div>
-                </div>
-
-                <div className="space-y-1 p-2.5 rounded-md border border-amber-200 bg-amber-50/40">
-                  <Label className="text-[11px] font-bold text-amber-900 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
-                    Atención / Amarillo (&lt;)
-                  </Label>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={editProvForm.dias_alerta_amarillo}
-                      onChange={(e) =>
-                        setEditProvForm({
-                          ...editProvForm,
-                          dias_alerta_amarillo: Math.max(0, parseFloat(e.target.value) || 0),
-                        })
-                      }
-                      className="h-7 font-mono text-xs bg-white"
-                    />
-                    <span className="text-[11px] text-slate-500">días</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-1 p-2.5 rounded-md border border-blue-200 bg-blue-50/50 mt-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-[11px] font-bold text-blue-900 flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" />
-                    DOH Sugerido Planta (Objetivo)
-                  </Label>
-                  <span className="text-[10px] text-blue-600 font-medium">Cobertura piso de planta</span>
-                </div>
-                <div className="flex items-center gap-1.5 pt-1">
-                  <Input
-                    type="number"
-                    min="0.1"
-                    step="0.1"
-                    value={editProvForm.doh_sugerido_planta}
-                    onChange={(e) =>
-                      setEditProvForm({
-                        ...editProvForm,
-                        doh_sugerido_planta: Math.max(0.1, parseFloat(e.target.value) || 1.0),
-                      })
-                    }
-                    className="h-7 font-mono text-xs bg-white w-28"
-                  />
-                  <span className="text-[11px] text-slate-600">días de producción</span>
-                </div>
-                <p className="text-[10px] text-slate-500 pt-0.5">
-                  Días de stock a mantener en planta para la sugerencia de pedidos diaria (independiente del DOH de TBAR).
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 pt-1">
-              <input
-                type="checkbox"
-                id="edit-prov-activo"
-                checked={editProvForm.activo}
-                onChange={(e) => setEditProvForm({ ...editProvForm, activo: e.target.checked })}
-                className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4 cursor-pointer"
-              />
-              <Label htmlFor="edit-prov-activo" className="text-xs text-slate-700 font-medium cursor-pointer">
-                Proveedor activo en el sistema
-              </Label>
-            </div>
-          </div>
-
-          <DialogFooter className="pt-2 flex items-center justify-between">
-            <Button variant="outline" size="sm" onClick={() => setEditProvModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleSubmitEditProveedor}
-              disabled={
-                isSavingEditProv ||
-                !editProvForm.nombre.trim() ||
-                editProvForm.dias_alerta_amarillo <= editProvForm.dias_alerta_rojo
-              }
-              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
-            >
-              {isSavingEditProv ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Guardando...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Guardar Cambios</span>
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

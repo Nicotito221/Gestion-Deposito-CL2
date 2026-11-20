@@ -279,14 +279,14 @@ class MaterialCatalogoItem(BaseModel):
 class RundownParametroMaterialCreate(BaseModel):
     id_material: str = Field(min_length=1, max_length=50)
     descripcion: Optional[str] = Field(default=None, max_length=150)
-    unidad: str = Field(default="MTS", max_length=10)
+    unidad: Optional[str] = Field(default=None, max_length=10)
     lote_mts: Optional[float] = Field(default=None, ge=0)
-    tipo_empaque: str = Field(default="pallet", max_length=20)
-    scrap_porcentaje: float = Field(default=0.0, ge=0, le=1.0)
-    factor_conversion: float = Field(default=1.0, gt=0)
+    tipo_empaque: Optional[str] = Field(default=None, max_length=20)
+    scrap_porcentaje: Optional[float] = Field(default=None, ge=0, le=1.0)
+    factor_conversion: Optional[float] = Field(default=None, gt=0)
     categoria_cabina: Optional[str] = Field(default=None, max_length=30)
-    stock_inicial_planta: float = Field(default=0.0, ge=0)
-    stock_inicial_total: float = Field(default=0.0, ge=0)
+    stock_inicial_planta: Optional[float] = Field(default=None, ge=0)
+    stock_inicial_total: Optional[float] = Field(default=None, ge=0)
     doh_sugerido_planta: Optional[float] = Field(default=None, ge=0)
 
 

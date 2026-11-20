@@ -1955,25 +1955,42 @@ class RundownRepository:
     ) -> int:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
+        id_material = data["id_material"]
         try:
             cursor.execute(
-                "SELECT id_parametro FROM dbo.rundown_parametro_material WHERE id_proveedor = ? AND id_material = ?",
-                (id_proveedor, data["id_material"]),
+                """
+                SELECT TOP 1 p.nombre
+                FROM dbo.rundown_parametro_material rpm
+                INNER JOIN dbo.proveedor p ON p.id_proveedor = rpm.id_proveedor
+                WHERE rpm.id_material = ? AND rpm.activo = 1 AND rpm.id_proveedor <> ?
+                """,
+                (id_material, id_proveedor),
+            )
+            otro = cursor.fetchone()
+            if otro:
+                raise ValueError(
+                    f"El material {id_material} ya está asignado al proveedor {otro[0]}. "
+                    "Para cambiarlo de proveedor usá Configuración de Materiales."
+                )
+
+            cursor.execute(
+                "SELECT id_parametro FROM dbo.rundown_parametro_material WITH (UPDLOCK, HOLDLOCK) WHERE id_proveedor = ? AND id_material = ?",
+                (id_proveedor, id_material),
             )
             existing = cursor.fetchone()
-            tipo_empaque = data.get("tipo_empaque") or ("pallet" if data.get("lote_mts", 0) and float(data.get("lote_mts", 0)) > 1 else "unidad")
 
+            cursor.execute(
+                "SELECT nombre, unidad, lote_minimo, tipo_empaque, en_cl2 FROM dbo.material WHERE id_material = ?",
+                (id_material,),
+            )
+            material = cursor.fetchone()
+
+            hay_stock = data.get("stock_inicial_planta") is not None or data.get("stock_inicial_total") is not None
             horizon_date = self._get_fecha_inicio_firme_cursor(cursor)
 
             cursor.execute(
-                """
-                SELECT 
-                    ISNULL(sd.stock_actual, 0.0) AS stock_cl2,
-                    ISNULL(sd.stock_planta, 0.0) AS stock_planta
-                FROM dbo.stock_deposito sd
-                WHERE sd.id_material = ?
-                """,
-                (data["id_material"],),
+                "SELECT ISNULL(stock_actual, 0.0), ISNULL(stock_planta, 0.0) FROM dbo.stock_deposito WHERE id_material = ?",
+                (id_material,),
             )
             row_sd = cursor.fetchone()
             curr_cl2 = float(row_sd[0]) if row_sd else 0.0
@@ -1984,16 +2001,16 @@ class RundownRepository:
             is_dep_planta = bool(row_dep[0]) if row_dep else False
 
             raw_planta = data.get("stock_inicial_planta")
-            planta_in = float(raw_planta) if raw_planta is not None and float(raw_planta) > 0 else curr_planta
+            planta_in = float(raw_planta) if raw_planta is not None else curr_planta
             explicit_total = data.get("stock_inicial_total")
             if is_dep_planta:
                 total_in = planta_in
-            elif explicit_total is not None and float(explicit_total) > 0:
+            elif explicit_total is not None:
                 total_in = float(explicit_total)
             else:
                 total_in = planta_in + curr_cl2
 
-            if planta_in > 0:
+            if raw_planta is not None:
                 cursor.execute(
                     """
                     MERGE dbo.stock_deposito AS target
@@ -2005,57 +2022,57 @@ class RundownRepository:
                         INSERT (id_material, stock_actual, stock_planta, stock_warehouse, fecha_actualizacion)
                         VALUES (source.id_material, 0.0, source.stock_planta, 0.0, SYSUTCDATETIME());
                     """,
-                    (data["id_material"], planta_in),
+                    (id_material, planta_in),
                 )
 
             if existing:
                 param_id = int(existing[0])
+                sets: List[str] = ["activo = 1"]
+                params: List[Any] = []
+                for campo in (
+                    "descripcion", "unidad", "lote_mts", "scrap_porcentaje", "factor_conversion",
+                    "categoria_cabina", "doh_sugerido_planta", "tipo_empaque",
+                ):
+                    if data.get(campo) is not None:
+                        sets.append(f"{campo} = ?")
+                        params.append(data[campo])
+                if hay_stock:
+                    sets.extend([
+                        "stock_inicial_planta = ?", "stock_inicial_total = ?",
+                        "stock_inicial_referencia = ?", "fecha_stock_inicial = ?",
+                    ])
+                    params.extend([planta_in, total_in, total_in, horizon_date])
+                params.append(param_id)
                 cursor.execute(
-                    """
-                    UPDATE dbo.rundown_parametro_material
-                    SET descripcion = ?, unidad = ?, lote_mts = ?, scrap_porcentaje = ?,
-                        factor_conversion = ?, categoria_cabina = ?,
-                        stock_inicial_planta = ?, stock_inicial_total = ?, stock_inicial_referencia = ?,
-                        fecha_stock_inicial = ?, doh_sugerido_planta = ?, tipo_empaque = ?,
-                        activo = 1
-                    WHERE id_parametro = ?
-                    """,
-                    (
-                        data.get("descripcion") or data["id_material"],
-                        data.get("unidad", "MTS"),
-                        data.get("lote_mts"),
-                        data.get("scrap_porcentaje", 0.0),
-                        data.get("factor_conversion", 1.0),
-                        data.get("categoria_cabina"),
-                        planta_in,
-                        total_in,
-                        total_in,
-                        horizon_date,
-                        data.get("doh_sugerido_planta"),
-                        tipo_empaque,
-                        param_id,
-                    ),
+                    f"UPDATE dbo.rundown_parametro_material SET {', '.join(sets)} WHERE id_parametro = ?",
+                    params,
                 )
             else:
+                lote = data.get("lote_mts")
+                if lote is None and material is not None and material[2] is not None:
+                    lote = float(material[2])
+                tipo_empaque = data.get("tipo_empaque") or (str(material[3]) if material is not None and material[3] else None)
+                if not tipo_empaque:
+                    tipo_empaque = "pallet" if lote and float(lote) > 1 else "unidad"
                 cursor.execute(
                     """
                     INSERT INTO dbo.rundown_parametro_material (
                         id_proveedor, id_material, descripcion, unidad, lote_mts,
                         scrap_porcentaje, factor_conversion, categoria_cabina,
                         stock_inicial_planta, stock_inicial_total, stock_inicial_referencia,
-                        fecha_stock_inicial, doh_sugerido_planta, tipo_empaque, activo
+                        fecha_stock_inicial, doh_sugerido_planta, tipo_empaque, en_cl2, activo
                     )
                     OUTPUT INSERTED.id_parametro
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                     """,
                     (
                         id_proveedor,
-                        data["id_material"],
-                        data.get("descripcion") or data["id_material"],
-                        data.get("unidad", "MTS"),
-                        data.get("lote_mts"),
-                        data.get("scrap_porcentaje", 0.0),
-                        data.get("factor_conversion", 1.0),
+                        id_material,
+                        data.get("descripcion") or (str(material[0]) if material is not None and material[0] else id_material),
+                        data.get("unidad") or (str(material[1]) if material is not None and material[1] else "UN"),
+                        lote,
+                        data.get("scrap_porcentaje") if data.get("scrap_porcentaje") is not None else 0.0,
+                        data.get("factor_conversion") if data.get("factor_conversion") is not None else 1.0,
                         data.get("categoria_cabina"),
                         planta_in,
                         total_in,
@@ -2063,11 +2080,15 @@ class RundownRepository:
                         horizon_date,
                         data.get("doh_sugerido_planta"),
                         tipo_empaque,
+                        material[4] if material is not None else None,
                     ),
                 )
                 param_id = int(cursor.fetchone()[0])
             conn.commit()
             return param_id
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             cursor.close()
             conn.close()
