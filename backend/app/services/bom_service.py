@@ -162,8 +162,11 @@ class BomService:
             )
 
         cursor.execute("SELECT id_set, id_producto, cantidad, unidad FROM dbo.bom_set_producto")
-        for padre, hijo, cant, unidad in cursor.fetchall():
-            hijos.setdefault(str(padre), {})[str(hijo)] = BomComponenteDirecto(
+        filas_set = cursor.fetchall()
+        for id_set in {str(r[0]) for r in filas_set}:
+            hijos[id_set] = {}
+        for padre, hijo, cant, unidad in filas_set:
+            hijos[str(padre)][str(hijo)] = BomComponenteDirecto(
                 id_hijo=str(hijo), cantidad=Decimal(cant), unidad=str(unidad)
             )
 

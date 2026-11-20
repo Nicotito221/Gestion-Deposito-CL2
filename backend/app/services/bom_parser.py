@@ -223,8 +223,7 @@ class BomParser:
                     columnas = detectadas
                 continue
 
-            nivel = next((i for i in range(3) if cols[i]), -1)
-            if nivel == -1:
+            if not any(cols[i] for i in range(3)):
                 continue
 
             if columnas:
@@ -236,34 +235,31 @@ class BomParser:
             desc = cols[c_desc][:100]
             cantidad = clean_quantity(cols[c_cant])
             unidad = (cols[c_un] or "UN")[:10]
+            sd_fila = cols[0].upper()[:30]
+            set_fila = cols[1].upper()[:30]
+            producto = cols[2].upper()[:30]
 
-            if nivel == 0:
+            if sd_fila and sd_fila != sd_actual:
                 cerrar_bloque()
+                sd_actual = sd_fila
+                sd_desc = desc if not set_fila and not producto else ""
                 set_actual, bloque_actual = None, []
-                sd_actual = cols[0].upper()[:30]
-                sd_desc = desc
-                if not cols[1]:
-                    continue
-                nivel = 1
-                desc = ""
 
-            if nivel == 1:
+            if set_fila and set_fila != set_actual:
                 cerrar_bloque()
                 bloque_actual = []
-                set_actual = cols[1].upper()[:30]
-                registrar_material(set_actual, desc, unidad)
+                set_actual = set_fila
+                registrar_material(set_actual, "" if producto else desc, unidad)
                 if sd_actual and (sd_actual, set_actual) not in sd_sets:
                     sd_sets[(sd_actual, set_actual)] = SdSetRecord(
                         codigo_sd=sd_actual,
                         id_set=set_actual,
                         descripcion_sd=sd_desc,
-                        cantidad=cantidad if cantidad > 0 else Decimal("1.0000"),
+                        cantidad=cantidad if cantidad > 0 and not producto else Decimal("1.0000"),
                         unidad=unidad,
                     )
-                continue
 
-            producto = cols[2].upper()[:30]
-            if not set_actual or producto == set_actual or cantidad <= 0:
+            if not producto or not set_actual or producto == set_actual or cantidad <= 0:
                 continue
             registrar_material(producto, desc, unidad)
             bloque_actual.append(BomComponenteDirecto(id_hijo=producto, cantidad=cantidad, unidad=unidad))

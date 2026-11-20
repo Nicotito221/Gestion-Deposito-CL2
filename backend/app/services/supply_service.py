@@ -251,7 +251,7 @@ class SupplyService:
                 consolidator.custom_tentative_dates[col_name] = sec_wed_str
                 consolidator.custom_tentative_dates[f"{fecha_dt.year}-{fecha_dt.month:02d}"] = sec_wed_str
                 consolidator.custom_tentative_dates[fecha_dt.month] = sec_wed_str
-            consolidator.register_demand_item(item)
+            consolidator.register_demand_por_codigo(item)
 
         self._agregar_despachos(consolidator, month_dates, daily_month_keys)
         return consolidator, filename, (min(month_dates.keys()) if month_dates else None)

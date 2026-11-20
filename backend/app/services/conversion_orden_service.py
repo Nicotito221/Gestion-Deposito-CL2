@@ -5,7 +5,7 @@ import openpyxl
 
 from app.repositories.conversion_orden_repository import ConversionOrdenRepository
 from app.schemas.supply import ConversionOrdenImportResult, ConversionOrdenResumen, DemandRowOut
-from consolidate_production import clean_code
+from consolidate_production import clean_code, format_part_number
 
 
 class ConversionOrdenError(ValueError):
@@ -18,6 +18,10 @@ def _texto_celda(valor: object) -> str:
     if isinstance(valor, float) and valor.is_integer():
         return str(int(valor))
     return str(valor).strip().upper()
+
+
+def clave_pn(valor: Optional[str]) -> str:
+    return clean_code(format_part_number(valor)) if valor else ""
 
 
 def _nombre_hoja(nombre: str) -> str:
@@ -43,16 +47,16 @@ class ConversionOrdenService:
             tasa_a_sap: Dict[str, str] = {}
             for fila in hoja_conv.iter_rows(min_row=2, max_col=2, values_only=True):
                 tasa, sap = _texto_celda(fila[0]), _texto_celda(fila[1])
-                clave = clean_code(tasa)
+                clave = clave_pn(tasa)
                 if clave and sap and clave not in tasa_a_sap:
                     tasa_a_sap[clave] = sap[:30]
 
             conversiones: Dict[str, Tuple[str, Optional[str]]] = {}
             for fila in hoja_osum.iter_rows(min_row=2, max_col=2, values_only=True):
-                pn_orden = clean_code(_texto_celda(fila[0]))[:30]
+                pn_orden = clave_pn(_texto_celda(fila[0]))[:30]
                 tasa = _texto_celda(fila[1])[:30]
                 if pn_orden and tasa and pn_orden not in conversiones:
-                    conversiones[pn_orden] = (tasa, tasa_a_sap.get(clean_code(tasa)))
+                    conversiones[pn_orden] = (tasa, tasa_a_sap.get(clave_pn(tasa)))
         finally:
             wb.close()
 
@@ -81,9 +85,9 @@ class ConversionOrdenService:
 
         for item in items:
             canon = clean_code(item.part_number)
-            destino = item.part_number
+            destino = padres.get(canon, item.part_number)
             if canon not in padres:
-                tasa, sap = mapa.get(canon, (None, None))
+                tasa, sap = mapa.get(clave_pn(item.part_number), (None, None))
                 candidato = next(
                     (padres[clean_code(c)] for c in (sap, tasa) if c and clean_code(c) in padres),
                     sap or tasa,

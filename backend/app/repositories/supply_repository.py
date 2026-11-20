@@ -619,6 +619,22 @@ class SupplyRepository:
                         VALUES (source.id_producto, source.fecha, source.cantidad_planificada, source.id_importacion, source.id_usuario, SYSDATETIME());
                     """
                 )
+                meses_cubiertos = sorted(daily_months | meses_tentativos)
+                for anio_c, mes_c in meses_cubiertos:
+                    inicio_mes = datetime.date(anio_c, mes_c, 1)
+                    fin_mes = datetime.date(anio_c + (mes_c // 12), mes_c % 12 + 1, 1)
+                    cursor.execute(
+                        """
+                        DELETE pp
+                        FROM dbo.produccion_planificada pp
+                        INNER JOIN dbo.importacion_archivo ia ON ia.id_importacion = pp.id_importacion
+                        WHERE pp.fecha >= ? AND pp.fecha < ?
+                          AND ia.nombre_archivo NOT LIKE 'Plan Semanal%'
+                          AND NOT EXISTS (SELECT 1 FROM #staging_plan s WHERE s.id_producto = pp.id_producto)
+                        """,
+                        (inicio_mes, fin_mes),
+                    )
+
                 cursor.execute("DROP TABLE #staging_plan")
 
             if pn_reemplazados and planned_dict:

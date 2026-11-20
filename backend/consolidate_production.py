@@ -346,6 +346,12 @@ class ProductionConsolidator:
             if key:
                 self.demand_lookup[key] = item
 
+    def register_demand_por_codigo(self, item: ProductionItem) -> None:
+        self.demand_items[item.canonical_pn] = item
+        for key in (item.canonical_pn, clean_code(item.n_parte)):
+            if key:
+                self.demand_lookup[key] = item
+
     def get_or_create_demand(self, canonical_pn: str) -> ProductionItem:
         if canonical_pn not in self.demand_items:
             self.demand_items[canonical_pn] = ProductionItem(canonical_pn=canonical_pn)
