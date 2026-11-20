@@ -196,6 +196,7 @@ class RundownProveedorCreate(BaseModel):
     dias_alerta_amarillo: Optional[float] = Field(default=15.0, ge=0)
     deposito_en_planta: bool = False
     doh_sugerido_planta: Optional[float] = Field(default=1.0, ge=0)
+    secciones: Optional[List[int]] = None
 
 
 class ProveedorAdminItem(BaseModel):
@@ -203,8 +204,8 @@ class ProveedorAdminItem(BaseModel):
     codigo_proveedor: str
     nombre: str
     pais: Optional[str] = None
-    id_seccion: Optional[int] = None
-    nombre_seccion: Optional[str] = None
+    secciones: List[int] = []
+    nombres_secciones: List[str] = []
     activo: bool
     dias_alerta_rojo: float
     dias_alerta_amarillo: float
@@ -217,6 +218,7 @@ class RundownProveedorUpdate(BaseModel):
     nombre: Optional[str] = Field(default=None, max_length=80)
     pais: Optional[str] = Field(default=None, max_length=30)
     id_seccion: Optional[int] = None
+    secciones: Optional[List[int]] = None
     activo: Optional[bool] = None
     dias_alerta_rojo: Optional[float] = Field(default=None, ge=0)
     dias_alerta_amarillo: Optional[float] = Field(default=None, ge=0)

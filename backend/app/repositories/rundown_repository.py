@@ -1091,7 +1091,8 @@ class RundownRepository:
                        ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta,
                        ISNULL(p.doh_sugerido_planta, 1.0) AS doh_sugerido_planta
                 FROM dbo.rundown_seccion s
-                LEFT JOIN dbo.proveedor p ON s.id_seccion = p.id_seccion
+                LEFT JOIN dbo.proveedor_seccion ps ON ps.id_seccion = s.id_seccion
+                LEFT JOIN dbo.proveedor p ON p.id_proveedor = ps.id_proveedor
                 LEFT JOIN (
                     SELECT id_proveedor, COUNT(*) AS cant_params
                     FROM dbo.rundown_parametro_material
@@ -1163,6 +1164,7 @@ class RundownRepository:
         doh_sugerido_planta: float = 1.0,
         dias_alerta_rojo: float = 5.0,
         dias_alerta_amarillo: float = 15.0,
+        secciones: Optional[List[int]] = None,
     ) -> int:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -1182,11 +1184,26 @@ class RundownRepository:
                 ),
             )
             new_id = int(cursor.fetchone()[0])
+            lineas = secciones if secciones is not None else ([id_seccion] if id_seccion else [])
+            self._reemplazar_secciones_proveedor(cursor, new_id, lineas)
             conn.commit()
             return new_id
         finally:
             cursor.close()
             conn.close()
+
+    @staticmethod
+    def _reemplazar_secciones_proveedor(cursor: Any, id_proveedor: int, secciones: List[int]) -> None:
+        cursor.execute("DELETE FROM dbo.proveedor_seccion WHERE id_proveedor = ?", (id_proveedor,))
+        unicas = list(dict.fromkeys(s for s in secciones if s and s > 0))
+        if unicas:
+            cursor.executemany(
+                "INSERT INTO dbo.proveedor_seccion (id_proveedor, id_seccion) VALUES (?, ?)",
+                [(id_proveedor, s) for s in unicas],
+            )
+            cursor.execute("UPDATE dbo.proveedor SET id_seccion = ? WHERE id_proveedor = ?", (unicas[0], id_proveedor))
+        else:
+            cursor.execute("UPDATE dbo.proveedor SET id_seccion = NULL WHERE id_proveedor = ?", (id_proveedor,))
 
     def list_proveedores_admin(self) -> List[Dict[str, Any]]:
         conn: pyodbc.Connection = self._get_connection()
@@ -1194,13 +1211,18 @@ class RundownRepository:
         try:
             cursor.execute(
                 """
-                SELECT p.id_proveedor, ISNULL(p.codigo_proveedor, ''), p.nombre, p.pais, p.id_seccion, s.nombre,
+                SELECT p.id_proveedor, ISNULL(p.codigo_proveedor, ''), p.nombre, p.pais,
+                       (SELECT STRING_AGG(CAST(ps.id_seccion AS VARCHAR(10)), ',') WITHIN GROUP (ORDER BY s.orden, s.nombre)
+                        FROM dbo.proveedor_seccion ps INNER JOIN dbo.rundown_seccion s ON s.id_seccion = ps.id_seccion
+                        WHERE ps.id_proveedor = p.id_proveedor),
+                       (SELECT STRING_AGG(s.nombre, '|') WITHIN GROUP (ORDER BY s.orden, s.nombre)
+                        FROM dbo.proveedor_seccion ps INNER JOIN dbo.rundown_seccion s ON s.id_seccion = ps.id_seccion
+                        WHERE ps.id_proveedor = p.id_proveedor),
                        p.activo, ISNULL(p.dias_alerta_rojo, 5.0), ISNULL(p.dias_alerta_amarillo, 15.0),
                        ISNULL(p.deposito_en_planta, 0), ISNULL(p.doh_sugerido_planta, 1.0),
                        (SELECT COUNT(*) FROM dbo.rundown_parametro_material rpm
                         WHERE rpm.id_proveedor = p.id_proveedor AND rpm.activo = 1)
                 FROM dbo.proveedor p
-                LEFT JOIN dbo.rundown_seccion s ON s.id_seccion = p.id_seccion
                 ORDER BY p.activo DESC, p.nombre
                 """
             )
@@ -1210,8 +1232,8 @@ class RundownRepository:
                     "codigo_proveedor": str(r[1]),
                     "nombre": str(r[2]),
                     "pais": str(r[3]) if r[3] else None,
-                    "id_seccion": int(r[4]) if r[4] is not None else None,
-                    "nombre_seccion": str(r[5]) if r[5] else None,
+                    "secciones": [int(x) for x in str(r[4]).split(",")] if r[4] else [],
+                    "nombres_secciones": str(r[5]).split("|") if r[5] else [],
                     "activo": bool(r[6]),
                     "dias_alerta_rojo": float(r[7]),
                     "dias_alerta_amarillo": float(r[8]),
@@ -1236,6 +1258,7 @@ class RundownRepository:
         deposito_en_planta: Optional[bool] = None,
         doh_sugerido_planta: Optional[float] = None,
         pais: Optional[str] = None,
+        secciones: Optional[List[int]] = None,
     ) -> bool:
         conn: pyodbc.Connection = self._get_connection()
         cursor = conn.cursor()
@@ -1254,9 +1277,14 @@ class RundownRepository:
             if pais is not None:
                 updates.append("pais = ?")
                 params.append(pais.strip() or None)
-            if id_seccion is not None:
+            lineas: Optional[List[int]] = None
+            if secciones is not None:
+                lineas = [s for s in secciones if s > 0]
+            elif id_seccion is not None:
+                lineas = [id_seccion] if id_seccion > 0 else []
+            if lineas is not None:
                 updates.append("id_seccion = ?")
-                params.append(id_seccion if id_seccion > 0 else None)
+                params.append(lineas[0] if lineas else None)
             if activo is not None:
                 updates.append("activo = ?")
                 params.append(1 if activo else 0)
@@ -1275,6 +1303,9 @@ class RundownRepository:
 
             if not updates:
                 return False
+
+            if lineas is not None:
+                self._reemplazar_secciones_proveedor(cursor, id_proveedor, lineas)
 
             params.append(id_proveedor)
             sql = f"UPDATE dbo.proveedor SET {', '.join(updates)} WHERE id_proveedor = ?"

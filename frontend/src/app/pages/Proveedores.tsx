@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
+import { Checkbox } from "../components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +31,7 @@ interface FormularioProveedor {
   codigo_proveedor: string;
   nombre: string;
   pais: string;
-  id_seccion: string;
+  secciones: number[];
   dias_alerta_rojo: string;
   dias_alerta_amarillo: string;
   doh_sugerido_planta: string;
@@ -41,7 +42,7 @@ const FORMULARIO_VACIO: FormularioProveedor = {
   codigo_proveedor: "",
   nombre: "",
   pais: "",
-  id_seccion: "none",
+  secciones: [],
   dias_alerta_rojo: "5",
   dias_alerta_amarillo: "15",
   doh_sugerido_planta: "1",
@@ -102,7 +103,7 @@ export function Proveedores() {
       codigo_proveedor: p.codigo_proveedor,
       nombre: p.nombre,
       pais: p.pais ?? "",
-      id_seccion: p.id_seccion != null ? String(p.id_seccion) : "none",
+      secciones: p.secciones,
       dias_alerta_rojo: String(p.dias_alerta_rojo),
       dias_alerta_amarillo: String(p.dias_alerta_amarillo),
       doh_sugerido_planta: String(p.doh_sugerido_planta),
@@ -122,9 +123,9 @@ export function Proveedores() {
       toast.error("Completá el código y el nombre del proveedor.");
       return;
     }
-    const idSeccion = formulario.id_seccion !== "none" ? parseInt(formulario.id_seccion, 10) : undefined;
     const comunes = {
       nombre: formulario.nombre.trim(),
+      secciones: formulario.secciones,
       pais: formulario.pais.trim(),
       dias_alerta_rojo: numero(formulario.dias_alerta_rojo, 5),
       dias_alerta_amarillo: numero(formulario.dias_alerta_amarillo, 15),
@@ -134,13 +135,12 @@ export function Proveedores() {
     setGuardando(true);
     try {
       if (editando) {
-        await updateRundownProveedor(editando.id_proveedor, { ...comunes, id_seccion: idSeccion ?? 0 });
+        await updateRundownProveedor(editando.id_proveedor, comunes);
         toast.success(`Proveedor ${comunes.nombre} actualizado.`);
       } else {
         await createRundownProveedor({
           ...comunes,
           codigo_proveedor: formulario.codigo_proveedor.trim().toUpperCase(),
-          id_seccion: idSeccion,
         });
         toast.success(`Proveedor ${comunes.nombre} creado.`);
       }
@@ -226,7 +226,7 @@ export function Proveedores() {
                   <TableHead>Código</TableHead>
                   <TableHead>Nombre</TableHead>
                   <TableHead>País</TableHead>
-                  <TableHead>Sección</TableHead>
+                  <TableHead>Líneas</TableHead>
                   <TableHead className="text-right">Alerta roja / amarilla</TableHead>
                   <TableHead className="text-right">DOH</TableHead>
                   <TableHead className="text-center">Depósito en planta</TableHead>
@@ -248,7 +248,7 @@ export function Proveedores() {
                       <TableCell className="font-mono text-xs">{p.codigo_proveedor || "—"}</TableCell>
                       <TableCell className="text-xs font-medium">{p.nombre}</TableCell>
                       <TableCell className="text-xs">{p.pais || "—"}</TableCell>
-                      <TableCell className="text-xs">{p.nombre_seccion || "—"}</TableCell>
+                      <TableCell className="text-xs">{p.nombres_secciones.length > 0 ? p.nombres_secciones.join(", ") : "—"}</TableCell>
                       <TableCell className="text-right font-mono text-xs">
                         {p.dias_alerta_rojo} / {p.dias_alerta_amarillo}
                       </TableCell>
@@ -324,20 +324,29 @@ export function Proveedores() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs">Sección del rundown</Label>
-              <Select value={formulario.id_seccion} onValueChange={(v) => setFormulario({ ...formulario, id_seccion: v })}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none" className="text-xs">Sin sección</SelectItem>
-                  {secciones.map((s) => (
-                    <SelectItem key={s.id_seccion} value={String(s.id_seccion)} className="text-xs">
+              <Label className="text-xs">Líneas del rundown</Label>
+              <div className="grid grid-cols-2 gap-1.5 rounded-lg border p-2 max-h-36 overflow-y-auto">
+                {secciones.length === 0 ? (
+                  <p className="text-[11px] text-slate-500 col-span-2">No hay líneas creadas.</p>
+                ) : (
+                  secciones.map((s) => (
+                    <label key={s.id_seccion} className="flex items-center gap-2 text-xs cursor-pointer">
+                      <Checkbox
+                        checked={formulario.secciones.includes(s.id_seccion)}
+                        onCheckedChange={(marcado) =>
+                          setFormulario({
+                            ...formulario,
+                            secciones: marcado
+                              ? [...formulario.secciones, s.id_seccion]
+                              : formulario.secciones.filter((id) => id !== s.id_seccion),
+                          })
+                        }
+                      />
                       {s.nombre}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    </label>
+                  ))
+                )}
+              </div>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">

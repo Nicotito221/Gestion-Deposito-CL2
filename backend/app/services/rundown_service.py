@@ -88,7 +88,7 @@ class RundownService:
                 target_sec = next((s for s in secciones_raw if s["id_seccion"] == id_seccion), None)
                 prov_list = target_sec["proveedores"] if target_sec else []
             else:
-                prov_list = [p for s in secciones_raw for p in s["proveedores"]]
+                prov_list = list({p["id_proveedor"]: p for s in secciones_raw for p in s["proveedores"]}.values())
 
             prov_ids = [p["id_proveedor"] for p in prov_list]
             prov_map = {p["id_proveedor"]: p for p in prov_list}
@@ -622,6 +622,7 @@ class RundownService:
             doh_sugerido_planta=data.doh_sugerido_planta if data.doh_sugerido_planta is not None else 1.0,
             dias_alerta_rojo=data.dias_alerta_rojo if data.dias_alerta_rojo is not None else 5.0,
             dias_alerta_amarillo=data.dias_alerta_amarillo if data.dias_alerta_amarillo is not None else 15.0,
+            secciones=data.secciones,
         )
 
     def list_proveedores_admin(self) -> List[ProveedorAdminItem]:
@@ -638,6 +639,7 @@ class RundownService:
             deposito_en_planta=data.deposito_en_planta,
             doh_sugerido_planta=data.doh_sugerido_planta,
             pais=data.pais,
+            secciones=data.secciones,
         )
         if not updated:
             raise HTTPException(

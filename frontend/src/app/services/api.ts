@@ -812,6 +812,7 @@ export interface RundownProveedorInput {
   dias_alerta_amarillo?: number;
   deposito_en_planta?: boolean;
   doh_sugerido_planta?: number;
+  secciones?: number[];
 }
 
 export async function getRundownSecciones(): Promise<RundownSeccionItem[]> {
@@ -861,8 +862,8 @@ export interface ProveedorAdminItem {
   codigo_proveedor: string;
   nombre: string;
   pais: string | null;
-  id_seccion: number | null;
-  nombre_seccion: string | null;
+  secciones: number[];
+  nombres_secciones: string[];
   activo: boolean;
   dias_alerta_rojo: number;
   dias_alerta_amarillo: number;
@@ -909,6 +910,7 @@ export async function updateRundownProveedor(
     nombre?: string;
     pais?: string;
     id_seccion?: number | null;
+    secciones?: number[];
     activo?: boolean;
     dias_alerta_rojo?: number;
     dias_alerta_amarillo?: number;
