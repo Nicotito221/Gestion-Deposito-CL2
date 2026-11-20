@@ -47,6 +47,7 @@ import {
   Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useAuth } from "../context/AuthContext";
 import {
   getStockDeposito,
   updateStockDeposito,
@@ -63,6 +64,8 @@ const getTodayBA = (): string =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
 
 export function Stock() {
+  const { hasRole } = useAuth();
+  const puedeAjustar = hasRole(["gerente", "jefe", "analista"]);
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<string>("stock");
 
@@ -601,7 +604,8 @@ export function Stock() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleOpenAdjust(mat)}
-                                title="Ajustar stock (sincronizado con Rundown)"
+                                disabled={!puedeAjustar}
+                                title={puedeAjustar ? "Ajustar stock (sincronizado con Rundown)" : "Requiere rol de planificación"}
                                 className="h-7 px-2.5 text-[11px] border-slate-300 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-1 mx-auto"
                               >
                                 <Edit3 className="w-3 h-3" />

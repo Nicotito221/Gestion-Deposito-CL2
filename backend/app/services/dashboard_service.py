@@ -37,12 +37,24 @@ class DashboardService:
             )
             ids = [int(r[0]) for r in cursor.fetchall()]
             if ids:
+                cursor.execute(
+                    """
+                    SELECT TOP 1 id_usuario FROM dbo.usuario
+                    WHERE activo = 1
+                    ORDER BY CASE WHEN username = 'admin' THEN 0 ELSE 1 END, id_usuario
+                    """
+                )
+                fila_usuario = cursor.fetchone()
+                if not fila_usuario:
+                    conn.rollback()
+                    return 0
+                id_sistema = int(fila_usuario[0])
                 cursor.executemany(
                     """
                     INSERT INTO dbo.auditoria (entidad, id_entidad, tipo_evento, id_usuario, fecha, detalle)
-                    VALUES ('pedido', ?, 'modificacion', NULL, ?, 'Preparación vencida: el pedido vuelve a pendiente')
+                    VALUES ('pedido', ?, 'modificacion', ?, ?, 'Preparación vencida: el pedido vuelve a pendiente')
                     """,
-                    [(str(i), get_argentina_now_naive()) for i in ids],
+                    [(str(i), id_sistema, get_argentina_now_naive()) for i in ids],
                 )
             conn.commit()
             return len(ids)

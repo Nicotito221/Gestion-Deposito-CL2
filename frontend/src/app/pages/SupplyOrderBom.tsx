@@ -773,7 +773,7 @@ export function SupplyOrderBom() {
             variant="outline"
             size="sm"
             onClick={() => conversionInputRef.current?.click()}
-            disabled={isUploadingConversion}
+            disabled={!canEdit || isUploadingConversion}
             title={
               conversionResumen && conversionResumen.total_conversiones > 0
                 ? `Vigente: ${conversionResumen.total_conversiones} conversiones · ${conversionResumen.nombre_archivo ?? ""} · ${conversionResumen.fecha_carga ?? ""}`
@@ -1043,7 +1043,7 @@ export function SupplyOrderBom() {
                 <div className="flex items-center gap-2">
                   <Button
                     onClick={handleProcessDemand}
-                    disabled={isProcessingDemand || (f1Files.length === 0 && f2Files.length === 0)}
+                    disabled={!canEdit || isProcessingDemand || (f1Files.length === 0 && f2Files.length === 0)}
                     className="flex items-center gap-2"
                   >
                     <RefreshCw className={`w-4 h-4 ${isProcessingDemand ? "animate-spin" : ""}`} />
@@ -1429,7 +1429,7 @@ export function SupplyOrderBom() {
                   />
                   <Button
                     onClick={handleUploadBom}
-                    disabled={isUploadingBom}
+                    disabled={!canEdit || isUploadingBom}
                     className="flex items-center gap-2 w-full sm:w-auto"
                   >
                     <RefreshCw className={`w-4 h-4 ${isUploadingBom ? "animate-spin" : ""}`} />
@@ -1455,7 +1455,7 @@ export function SupplyOrderBom() {
                   />
                   <Button
                     onClick={handleUploadSd}
-                    disabled={isUploadingSd}
+                    disabled={!canEdit || isUploadingSd}
                     className="flex items-center gap-2 w-full sm:w-auto"
                   >
                     <RefreshCw className={`w-4 h-4 ${isUploadingSd ? "animate-spin" : ""}`} />
@@ -1570,13 +1570,13 @@ export function SupplyOrderBom() {
                   <Button
                     variant="outline"
                     onClick={() => setsFileInputRef.current?.click()}
-                    disabled={isImportingSets}
+                    disabled={!canEdit || isImportingSets}
                     className="flex items-center gap-2"
                   >
                     <Upload className={`w-4 h-4 ${isImportingSets ? "animate-spin" : ""}`} />
                     Importar Excel / CSV
                   </Button>
-                  <Button onClick={openNewRelationDialog} className="flex items-center gap-2">
+                  <Button onClick={openNewRelationDialog} disabled={!canEdit} className="flex items-center gap-2">
                     <Plus className="w-4 h-4" />
                     Nueva Relación
                   </Button>
@@ -1771,8 +1771,8 @@ export function SupplyOrderBom() {
                               <TableCell className="text-xs">{rel.unidad}</TableCell>
                               <TableCell className="text-center">
                                 <span
-                                  onClick={() => handleToggleRelationActive(rel.id_set_componente)}
-                                  className="cursor-pointer"
+                                  onClick={canEdit ? () => handleToggleRelationActive(rel.id_set_componente) : undefined}
+                                  className={canEdit ? "cursor-pointer" : ""}
                                 >
                                   {rel.activo ? (
                                     <Badge className="bg-green-100 text-green-700" variant="outline">
@@ -1791,6 +1791,7 @@ export function SupplyOrderBom() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => openEditRelationDialog(rel)}
+                                    disabled={!canEdit}
                                     className="h-8 w-8 p-0"
                                   >
                                     <Edit2 className="w-3.5 h-3.5 text-slate-600" />
@@ -1799,6 +1800,7 @@ export function SupplyOrderBom() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() => handleToggleRelationActive(rel.id_set_componente)}
+                                    disabled={!canEdit}
                                     className="h-8 w-8 p-0 text-red-600"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />

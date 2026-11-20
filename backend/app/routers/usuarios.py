@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.core.auth_deps import id_usuario_de, require_admin, require_user
+from app.core.auth_deps import id_usuario_de, invalidar_cache_usuario, require_admin, require_user
 from app.schemas.usuario import (
     PasswordChangeRequest,
     UsuarioCreate,
@@ -49,6 +49,7 @@ def update_usuario(
     service: UsuarioService = Depends(get_usuario_service),
 ):
     updated = service.update_user(id_usuario, req)
+    invalidar_cache_usuario(id_usuario)
     return UsuarioResponse.model_validate(updated)
 
 
@@ -63,6 +64,7 @@ def change_usuario_password(
     if not es_admin and id_usuario_de(token_data) != id_usuario:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Solo podés cambiar tu propia contraseña.")
     service.change_password(id_usuario, req.password_nuevo)
+    invalidar_cache_usuario(id_usuario)
     return {"message": "Contraseña actualizada exitosamente."}
 
 
@@ -72,4 +74,5 @@ def delete_usuario(
     service: UsuarioService = Depends(get_usuario_service),
 ):
     service.delete_user(id_usuario)
+    invalidar_cache_usuario(id_usuario)
     return {"message": "Usuario desactivado exitosamente."}

@@ -816,7 +816,7 @@ class PedidoRepository:
                 cursor.execute("SELECT COUNT(*) FROM dbo.remito WITH (UPDLOCK, HOLDLOCK) WHERE id_pedido = ?", (id_pedido,))
                 n_rem = cursor.fetchone()[0]
                 seq = n_rem + 1
-                id_remito_generado = f"RI-{id_pedido:06d}-{seq:02d}"
+                id_remito_generado = f"RP-{id_pedido:06d}-{seq:02d}"
 
                 obs_remito = f"Remito de entrega #{seq} por pedido #{id_pedido} para sector {sector_pedido}"
                 cursor.execute(

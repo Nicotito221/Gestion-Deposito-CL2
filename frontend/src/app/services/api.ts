@@ -2231,13 +2231,13 @@ export async function updatePreparacionPedido(
     }), "No se pudo registrar la preparación en CL2");
 
     const seq = (currentOrder.remitos?.length || 0) + 1;
-    const idRemitoGenerado = `RI-${String(idPedido).padStart(6, "0")}-${String(seq).padStart(2, "0")}`;
+    const idRemitoGenerado = `RC-${String(idPedido).padStart(6, "0")}-${String(seq).padStart(2, "0")}`;
     const obsRemito =
       data.comentario || `Remito de entrega #${seq} por pedido #${idPedido} para sector ${currentOrder.sector}`;
 
     await exigirOk(fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2`, {
       method: "POST",
-      headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
+      headers: getAuthHeaders(),
       body: JSON.stringify({
         id_remito: idRemitoGenerado,
         id_pedido: idPedido,
@@ -2263,7 +2263,7 @@ export async function updatePreparacionPedido(
 
       await exigirOk(fetch(`${SUPABASE_URL}/rest/v1/remitos_cl2_detalle`, {
         method: "POST",
-        headers: { ...getAuthHeaders(), Prefer: "resolution=merge-duplicates" },
+        headers: getAuthHeaders(),
         body: JSON.stringify(remitoItems),
       }), "No se pudo registrar la preparación en CL2");
     }

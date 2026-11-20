@@ -45,7 +45,8 @@ BEGIN
     END IF;
 
     SELECT COUNT(*) + 1 INTO v_seq FROM public.remitos_cl2 WHERE id_pedido = p_id_pedido;
-    v_id_remito := 'RI-' || LPAD(p_id_pedido::TEXT, 6, '0') || '-' || LPAD(v_seq::TEXT, 2, '0');
+    v_id_remito := 'RC-' || LPAD(p_id_pedido::TEXT, GREATEST(6, LENGTH(p_id_pedido::TEXT)), '0')
+        || '-' || LPAD(v_seq::TEXT, GREATEST(2, LENGTH(v_seq::TEXT)), '0');
 
     INSERT INTO public.remitos_cl2 (id_remito, id_pedido, fecha_emision, fecha_entrega, estado, operador_nombre, observacion)
     VALUES (

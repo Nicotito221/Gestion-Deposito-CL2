@@ -1,7 +1,10 @@
-from typing import Any, Callable, Dict, Optional
+import threading
+import time
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from fastapi import Depends, Header, HTTPException, status
 
+from app.core.config import get_db_connection
 from app.core.security import verify_access_token
 
 ROLES_EDICION_PLANIFICACION = {"administrador", "gerente", "jefe", "analista"}
@@ -12,13 +15,53 @@ ROLES_CONTEO = ROLES_EDICION_PLANIFICACION | {"contador_ciclico", "operario_plan
 ROLES_DEPOSITO = ROLES_EDICION_PLANIFICACION | {"deposito", "operario_deposito"}
 
 
+CACHE_USUARIO_SEGUNDOS = 60
+_cache_usuarios: Dict[int, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_lock_cache_usuarios = threading.Lock()
+
+
+def _estado_usuario(id_usuario: int) -> Optional[Dict[str, Any]]:
+    ahora = time.monotonic()
+    with _lock_cache_usuarios:
+        en_cache = _cache_usuarios.get(id_usuario)
+        if en_cache and en_cache[0] > ahora:
+            return en_cache[1]
+
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT rol, sector FROM dbo.usuario
+            WHERE id_usuario = ? AND activo = 1 AND ISNULL(eliminado, 0) = 0
+            """,
+            (id_usuario,),
+        )
+        fila = cursor.fetchone()
+        estado = {"rol": str(fila[0]), "sector": fila[1]} if fila else None
+    finally:
+        conn.close()
+
+    with _lock_cache_usuarios:
+        _cache_usuarios[id_usuario] = (ahora + CACHE_USUARIO_SEGUNDOS, estado)
+    return estado
+
+
+def invalidar_cache_usuario(id_usuario: int) -> None:
+    with _lock_cache_usuarios:
+        _cache_usuarios.pop(id_usuario, None)
+
+
 def require_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token de autenticación requerido.")
     payload = verify_access_token(authorization.split("Bearer ", 1)[1].strip())
-    if not payload:
+    if not payload or payload.get("id_usuario") is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido o expirado.")
-    return payload
+    estado = _estado_usuario(int(payload["id_usuario"]))
+    if estado is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="El usuario está deshabilitado o fue eliminado.")
+    return {**payload, "rol": estado["rol"], "sector": estado["sector"]}
 
 
 def require_roles(*grupos: set) -> Callable[[Dict[str, Any]], Dict[str, Any]]:

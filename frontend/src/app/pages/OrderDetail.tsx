@@ -32,7 +32,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getPedidoDetalle, cancelarPedido, type PedidoOut } from "../services/api";
+import { IS_SUPABASE_ACTIVE, getPedidoDetalle, cancelarPedido, type PedidoOut } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import {
   Dialog,
@@ -136,7 +136,7 @@ export function OrderDetail() {
   const puedeCancelarPorRol = Boolean(
     user && (ROLES_CANCELACION.includes(user.rol) || (order?.id_usuario_solicitante != null && String(order.id_usuario_solicitante) === String(user.id_usuario)))
   );
-  const canCancel = Boolean(order && order.estado !== "completo" && order.estado !== "cancelado" && puedeCancelarPorRol);
+  const canCancel = Boolean(!IS_SUPABASE_ACTIVE && order && order.estado !== "completo" && order.estado !== "cancelado" && puedeCancelarPorRol);
 
   if (loading) {
     return (

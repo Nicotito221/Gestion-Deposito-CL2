@@ -17,6 +17,7 @@ MAX_LARGO_ID_REMITO = 50
 REINTENTO_BASE_MINUTOS = 5
 REINTENTO_MAX_MINUTOS = 240
 LOTE_OUTBOX = 50
+TAMANIO_PAGINA = 1000
 
 ESTADOS_REMITO_LOCAL = {
     "anulado": "anulado",
@@ -85,6 +86,18 @@ class Cl2SyncService:
         except Exception as ex:
             logger.error("Error consultando nodo CL2 [%s]: %s", table, str(ex))
         return None
+
+    def _get_todo(self, table: str, params: str, orden: str) -> Optional[List[Dict[str, Any]]]:
+        filas: List[Dict[str, Any]] = []
+        offset = 0
+        while True:
+            pagina = self._get(table, f"{params}&order={orden}&limit={TAMANIO_PAGINA}&offset={offset}")
+            if pagina is None:
+                return None if offset == 0 else filas
+            filas.extend(pagina)
+            if len(pagina) < TAMANIO_PAGINA:
+                return filas
+            offset += TAMANIO_PAGINA
 
     def enqueue_outbox(
         self,
@@ -362,9 +375,10 @@ class Cl2SyncService:
             logger.error("Error al sincronizar ingresos pendientes a CL2: %s", str(ex))
 
     def _aplicar_recepciones_ingresos(self) -> None:
-        ingresos_remotos = self._get(
+        ingresos_remotos = self._get_todo(
             "remitos_cl2",
-            "select=*,remitos_cl2_detalle(*)&id_pedido=is.null&estado=in.(parcial,completo)"
+            "select=*,remitos_cl2_detalle(*)&id_pedido=is.null&estado=in.(parcial,completo)",
+            "id_remito.asc",
         )
         if not ingresos_remotos:
             return
@@ -500,11 +514,15 @@ class Cl2SyncService:
         self.procesar_outbox()
         self._aplicar_recepciones_ingresos()
 
-        pedidos_remotos = self._get(
+        pedidos_remotos = self._get_todo(
             "pedidos_cl2",
-            "select=id_pedido,estado,preparado_por_nombre,fecha_despacho,fecha_entrega,pedidos_cl2_detalle(id_material,cantidad_preparada,cantidad_entregada,cantidad_pallets_preparada,estado)&estado=in.(en_preparacion,completo,parcial)"
+            "select=id_pedido,estado,preparado_por_nombre,fecha_despacho,fecha_entrega,pedidos_cl2_detalle(id_material,cantidad_preparada,cantidad_entregada,cantidad_pallets_preparada,estado)&estado=in.(en_preparacion,completo,parcial)",
+            "id_pedido.asc",
         )
-        remitos_pedidos = self._get("remitos_cl2", "select=*,remitos_cl2_detalle(*)&id_pedido=not.is.null") or []
+        remitos_pedidos = self._get_todo("remitos_cl2", "select=*,remitos_cl2_detalle(*)&id_pedido=not.is.null", "id_remito.asc")
+        if remitos_pedidos is None:
+            logger.error("No se pudieron leer los remitos de CL2; se omite la aplicación de pedidos en este ciclo.")
+            return
 
         if pedidos_remotos:
             conn = get_db_connection()

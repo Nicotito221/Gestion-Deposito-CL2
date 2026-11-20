@@ -295,7 +295,7 @@ class IngresoRepository:
                 """
                 SELECT im.id_proveedor, im.numero_factura, im.orden_compra, im.estado,
                        ISNULL(p.deposito_en_planta, 0) AS deposito_en_planta
-                FROM dbo.ingreso_material im
+                FROM dbo.ingreso_material im WITH (UPDLOCK, HOLDLOCK)
                 INNER JOIN dbo.proveedor p ON im.id_proveedor = p.id_proveedor
                 WHERE im.id_ingreso = ?
                 """,
@@ -330,7 +330,7 @@ class IngresoRepository:
             cursor.execute(
                 """
                 SELECT id_ingreso_detalle, id_material, CAST(cantidad_facturada AS FLOAT), CAST(ISNULL(cantidad_recibida, 0.0) AS FLOAT)
-                FROM dbo.ingreso_material_detalle
+                FROM dbo.ingreso_material_detalle WITH (UPDLOCK, HOLDLOCK)
                 WHERE id_ingreso = ?
                 """,
                 (id_ingreso,),

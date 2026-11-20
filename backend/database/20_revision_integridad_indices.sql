@@ -1,6 +1,10 @@
 -- Migracion 20: correcciones de integridad, tipos e indices surgidas de la revision de codigo.
 -- Motor: SQL Server. Es idempotente: se puede ejecutar mas de una vez.
 
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 IF OBJECT_ID(N'dbo.schema_migration', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.schema_migration (
@@ -44,7 +48,18 @@ ALTER TABLE dbo.bom_explosion_plana ALTER COLUMN factor_consumo_total DECIMAL(18
 IF OBJECT_ID(N'dbo.bom_componente_directo', N'U') IS NOT NULL
     ALTER TABLE dbo.bom_componente_directo ALTER COLUMN cantidad DECIMAL(18, 8) NOT NULL;
 IF OBJECT_ID(N'dbo.bom_extension', N'U') IS NOT NULL
+BEGIN
+    DECLARE @ck_extension SYSNAME;
+    SELECT @ck_extension = cc.name
+    FROM sys.check_constraints cc
+    INNER JOIN sys.columns c ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+    WHERE cc.parent_object_id = OBJECT_ID('dbo.bom_extension') AND c.name = 'cantidad';
+    IF @ck_extension IS NOT NULL
+        EXEC('ALTER TABLE dbo.bom_extension DROP CONSTRAINT ' + @ck_extension);
     ALTER TABLE dbo.bom_extension ALTER COLUMN cantidad DECIMAL(18, 8) NOT NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_bom_extension_cantidad')
+        ALTER TABLE dbo.bom_extension WITH CHECK ADD CONSTRAINT CK_bom_extension_cantidad CHECK (cantidad > 0);
+END
 IF OBJECT_ID(N'dbo.bom_set_producto', N'U') IS NOT NULL
     ALTER TABLE dbo.bom_set_producto ALTER COLUMN cantidad DECIMAL(18, 8) NOT NULL;
 IF OBJECT_ID(N'dbo.rundown_parametro_producto', N'U') IS NOT NULL
@@ -96,26 +111,16 @@ BEGIN
 END
 GO
 
--- Transitos sin duplicados (solo si los datos actuales lo cumplen)
-IF OBJECT_ID(N'dbo.rundown_transito_arribo', N'U') IS NOT NULL
-   AND COL_LENGTH('dbo.rundown_transito_arribo', 'destino') IS NOT NULL
-   AND NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_transito_clave' AND object_id = OBJECT_ID('dbo.rundown_transito_arribo'))
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM dbo.rundown_transito_arribo
-        GROUP BY id_proveedor, id_material, fecha_eta, tipo_via, destino HAVING COUNT(*) > 1
-    )
-        PRINT 'AVISO: hay transitos duplicados en rundown_transito_arribo. No se creo UX_transito_clave; depurar y volver a ejecutar.';
-    ELSE
-        EXEC('CREATE UNIQUE INDEX UX_transito_clave ON dbo.rundown_transito_arribo (id_proveedor, id_material, fecha_eta, tipo_via, destino)');
-END
-GO
-
 -- Indices duplicados
 IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_rundown_calendario_laboral_fecha' AND object_id = OBJECT_ID('dbo.rundown_calendario_laboral'))
    AND EXISTS (
        SELECT 1 FROM sys.indexes i
-       WHERE i.object_id = OBJECT_ID('dbo.rundown_calendario_laboral') AND i.is_unique = 1 AND i.name <> 'IX_rundown_calendario_laboral_fecha'
+       INNER JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+       INNER JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+       WHERE i.object_id = OBJECT_ID('dbo.rundown_calendario_laboral')
+         AND i.is_unique = 1 AND i.is_primary_key = 0
+         AND i.name <> 'IX_rundown_calendario_laboral_fecha'
+         AND c.name = 'fecha'
    )
     DROP INDEX IX_rundown_calendario_laboral_fecha ON dbo.rundown_calendario_laboral;
 IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_rundown_stock_ajuste_mat_fecha' AND object_id = OBJECT_ID('dbo.rundown_stock_ajuste'))
@@ -124,6 +129,21 @@ IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_rundown_stock_ajuste_mat_f
 GO
 
 IF NOT EXISTS (SELECT 1 FROM dbo.schema_migration WHERE version = '20')
-    INSERT INTO dbo.schema_migration (version, descripcion)
-    VALUES ('20', 'Revision: roles, comentarios, precision BOM, indices y unicidades');
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM sys.columns c
+        WHERE (c.object_id = OBJECT_ID('dbo.bom_estructura') AND c.name = 'cantidad')
+           OR (c.object_id = OBJECT_ID('dbo.bom_explosion_plana') AND c.name = 'factor_consumo_total')
+           OR (c.object_id = OBJECT_ID('dbo.bom_componente_directo') AND c.name = 'cantidad')
+           OR (c.object_id = OBJECT_ID('dbo.bom_extension') AND c.name = 'cantidad')
+           OR (c.object_id = OBJECT_ID('dbo.bom_set_producto') AND c.name = 'cantidad')
+           OR (c.object_id = OBJECT_ID('dbo.rundown_parametro_producto') AND c.name = 'factor_uso')
+        HAVING MIN(c.scale) < 8
+    )
+        RAISERROR('La migracion 20 no se registro: hay columnas de factores que no quedaron con 8 decimales. Revisar los errores anteriores.', 16, 1);
+    ELSE
+        INSERT INTO dbo.schema_migration (version, descripcion)
+        VALUES ('20', 'Revision: roles, comentarios, precision BOM, indices y unicidades');
+END
 GO
