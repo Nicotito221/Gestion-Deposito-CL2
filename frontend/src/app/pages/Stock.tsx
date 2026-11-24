@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -52,12 +52,12 @@ import {
   getStockDeposito,
   updateStockDeposito,
   getStockMovimientos,
-  getRundownSecciones,
+  getProveedoresFiltro,
   type StockMaterialItem,
   type StockListResponse,
   type StockMovimientoItem,
   type StockMovimientosResponse,
-  type RundownSeccionItem,
+  type ProveedorFiltroItem,
 } from "../services/api";
 
 const getTodayBA = (): string =>
@@ -98,7 +98,7 @@ export function Stock() {
   const [pageMov, setPageMov] = useState<number>(1);
   const [pageSizeMov, setPageSizeMov] = useState<number>(50);
 
-  const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
+  const [proveedoresList, setProveedoresList] = useState<ProveedorFiltroItem[]>([]);
 
   const [adjustOpen, setAdjustOpen] = useState<boolean>(false);
   const [isSavingAdjust, setIsSavingAdjust] = useState<boolean>(false);
@@ -116,28 +116,19 @@ export function Stock() {
     observacion: "",
   });
 
-  const proveedoresList = useMemo(() => {
-    const list: { id_proveedor: number; nombre: string }[] = [];
-    secciones.forEach((sec) => {
-      sec.proveedores.forEach((p) => {
-        if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
-          list.push({ id_proveedor: p.id_proveedor, nombre: p.nombre });
-        }
-      });
-    });
-    return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [secciones]);
 
   const fetchSeccionesList = useCallback(async () => {
     try {
-      const data = await getRundownSecciones();
-      setSecciones(data);
+      setProveedoresList(await getProveedoresFiltro());
     } catch {
       toast.error("Error al cargar proveedores");
     }
   }, []);
 
+  const stockRequestRef = useRef(0);
+
   const fetchStock = useCallback(async () => {
+    const requestId = ++stockRequestRef.current;
     setLoadingStock(true);
     try {
       const provIdNum = selectedProvId !== "all" ? parseInt(selectedProvId, 10) : undefined;
@@ -148,15 +139,20 @@ export function Stock() {
         page: pageStock,
         page_size: pageSizeStock,
       });
+      if (requestId !== stockRequestRef.current) return;
       setStockData(res);
     } catch (err) {
+      if (requestId !== stockRequestRef.current) return;
       toast.error(err instanceof Error ? err.message : "Error al cargar stock");
     } finally {
-      setLoadingStock(false);
+      if (requestId === stockRequestRef.current) setLoadingStock(false);
     }
   }, [activeSearchStock, selectedProvId, soloConStock, pageStock, pageSizeStock]);
 
+  const movRequestRef = useRef(0);
+
   const fetchMovimientos = useCallback(async () => {
+    const requestId = ++movRequestRef.current;
     setLoadingMovs(true);
     try {
       const res = await getStockMovimientos({
@@ -165,11 +161,13 @@ export function Stock() {
         page: pageMov,
         page_size: pageSizeMov,
       });
+      if (requestId !== movRequestRef.current) return;
       setMovsData(res);
     } catch (err) {
+      if (requestId !== movRequestRef.current) return;
       toast.error(err instanceof Error ? err.message : "Error al cargar movimientos");
     } finally {
-      setLoadingMovs(false);
+      if (requestId === movRequestRef.current) setLoadingMovs(false);
     }
   }, [activeSearchMov, tipoMovFilter, pageMov, pageSizeMov]);
 
@@ -180,6 +178,26 @@ export function Stock() {
   useEffect(() => {
     fetchStock();
   }, [fetchStock]);
+
+  useEffect(() => {
+    const termino = searchMovInput.trim();
+    if (termino === activeSearchMov.trim()) return;
+    const timer = setTimeout(() => {
+      setPageMov(1);
+      setActiveSearchMov(termino);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchMovInput, activeSearchMov]);
+
+  useEffect(() => {
+    const termino = searchStockInput.trim();
+    if (termino === activeSearchStock.trim()) return;
+    const timer = setTimeout(() => {
+      setPageStock(1);
+      setActiveSearchStock(termino);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchStockInput, activeSearchStock]);
 
   useEffect(() => {
     if (activeTab === "movimientos") {

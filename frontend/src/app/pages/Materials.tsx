@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -45,10 +45,10 @@ import { toast } from "sonner";
 import {
   getStockDeposito,
   updateStockDeposito,
-  getRundownSecciones,
+  getProveedoresFiltro,
   type StockMaterialItem,
   type StockListResponse,
-  type RundownSeccionItem,
+  type ProveedorFiltroItem,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 
@@ -64,7 +64,7 @@ export function Materials() {
     total_pages: 1,
   });
 
-  const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
+  const [proveedoresList, setProveedoresList] = useState<ProveedorFiltroItem[]>([]);
   const [searchInput, setSearchInput] = useState<string>("");
   const [activeSearch, setActiveSearch] = useState<string>("");
   const [selectedProvId, setSelectedProvId] = useState<string>("all");
@@ -83,28 +83,19 @@ export function Materials() {
     observacion: "",
   });
 
-  const proveedoresList = useMemo(() => {
-    const list: { id_proveedor: number; nombre: string }[] = [];
-    secciones.forEach((sec) => {
-      sec.proveedores.forEach((p) => {
-        if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
-          list.push({ id_proveedor: p.id_proveedor, nombre: p.nombre });
-        }
-      });
-    });
-    return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [secciones]);
 
   const fetchSeccionesList = useCallback(async () => {
     try {
-      const data = await getRundownSecciones();
-      setSecciones(data);
+      setProveedoresList(await getProveedoresFiltro());
     } catch {
       toast.error("Error al cargar lista de proveedores");
     }
   }, []);
 
+  const stockRequestRef = useRef(0);
+
   const fetchStock = useCallback(async () => {
+    const requestId = ++stockRequestRef.current;
     setLoading(true);
     try {
       const provIdNum = selectedProvId !== "all" ? parseInt(selectedProvId, 10) : undefined;
@@ -116,11 +107,13 @@ export function Materials() {
         page,
         page_size: pageSize,
       });
+      if (requestId !== stockRequestRef.current) return;
       setStockData(res);
     } catch (err) {
+      if (requestId !== stockRequestRef.current) return;
       toast.error(err instanceof Error ? err.message : "Error al cargar stock en CL2");
     } finally {
-      setLoading(false);
+      if (requestId === stockRequestRef.current) setLoading(false);
     }
   }, [activeSearch, selectedProvId, soloConStock, page, pageSize]);
 
@@ -131,6 +124,16 @@ export function Materials() {
   useEffect(() => {
     fetchStock();
   }, [fetchStock]);
+
+  useEffect(() => {
+    const termino = searchInput.trim();
+    if (termino === activeSearch.trim()) return;
+    const timer = setTimeout(() => {
+      setPage(1);
+      setActiveSearch(termino);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchInput, activeSearch]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();

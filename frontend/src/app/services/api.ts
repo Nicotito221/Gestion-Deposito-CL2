@@ -881,6 +881,40 @@ export async function getProveedoresAdmin(): Promise<ProveedorAdminItem[]> {
   return res.json();
 }
 
+export interface ProveedorFiltroItem {
+  id_proveedor: number;
+  nombre: string;
+  activo: boolean;
+  deposito_en_planta: boolean;
+}
+
+export async function getProveedoresFiltro(): Promise<ProveedorFiltroItem[]> {
+  const unicos = new Map<number, ProveedorFiltroItem>();
+  if (IS_SUPABASE_ACTIVE) {
+    const secciones = await getRundownSecciones();
+    for (const seccion of secciones) {
+      for (const p of seccion.proveedores) {
+        unicos.set(p.id_proveedor, {
+          id_proveedor: p.id_proveedor,
+          nombre: p.nombre,
+          activo: p.activo,
+          deposito_en_planta: Boolean(p.deposito_en_planta),
+        });
+      }
+    }
+  } else {
+    for (const p of await getProveedoresAdmin()) {
+      unicos.set(p.id_proveedor, {
+        id_proveedor: p.id_proveedor,
+        nombre: p.nombre,
+        activo: p.activo,
+        deposito_en_planta: p.deposito_en_planta,
+      });
+    }
+  }
+  return [...unicos.values()].sort((a, b) => Number(b.activo) - Number(a.activo) || a.nombre.localeCompare(b.nombre));
+}
+
 export interface AsignacionProveedorResultado {
   nombre_archivo: string;
   total_filas: number;

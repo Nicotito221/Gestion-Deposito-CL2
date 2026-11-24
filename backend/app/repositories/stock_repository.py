@@ -28,8 +28,9 @@ class StockRepository:
 
             if search and search.strip():
                 term = f"%{search.strip()}%"
-                where_clauses.append("(m.id_material LIKE ? OR m.nombre LIKE ?)")
-                params.extend([term, term])
+                compacto = "%" + "".join(c for c in search.strip() if c not in "- ") + "%"
+                where_clauses.append("(m.id_material LIKE ? OR m.nombre LIKE ? OR REPLACE(REPLACE(m.id_material, '-', ''), ' ', '') LIKE ?)")
+                params.extend([term, term, compacto])
 
             if id_proveedor and id_proveedor > 0:
                 where_clauses.append("prov.id_proveedor = ?")
@@ -485,8 +486,11 @@ class StockRepository:
 
             if search and search.strip():
                 term = f"%{search.strip()}%"
-                where_clauses.append("(ms.id_material LIKE ? OR m.nombre LIKE ? OR ms.observacion LIKE ?)")
-                params.extend([term, term, term])
+                compacto = "%" + "".join(c for c in search.strip() if c not in "- ") + "%"
+                where_clauses.append(
+                    "(ms.id_material LIKE ? OR m.nombre LIKE ? OR ms.observacion LIKE ? OR REPLACE(REPLACE(ms.id_material, '-', ''), ' ', '') LIKE ?)"
+                )
+                params.extend([term, term, term, compacto])
 
             if tipo and tipo.strip() and tipo != "all":
                 where_clauses.append("ms.tipo = ?")

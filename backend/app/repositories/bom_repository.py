@@ -62,10 +62,12 @@ class BomRepository:
 
             if search:
                 pattern = f"%{search.strip()}%"
+                compacto = "%" + "".join(c for c in search.strip() if c not in "- ") + "%"
                 where_clauses.append(
-                    "(s.sd LIKE ? OR s.codigo_tasa LIKE ? OR s.codigo_sap_padre LIKE ? OR s.id_material_hijo LIKE ? OR m.nombre LIKE ?)"
+                    "(s.sd LIKE ? OR s.codigo_tasa LIKE ? OR s.codigo_sap_padre LIKE ? OR s.id_material_hijo LIKE ? OR m.nombre LIKE ? "
+                    "OR REPLACE(REPLACE(s.codigo_sap_padre, '-', ''), ' ', '') LIKE ? OR REPLACE(REPLACE(s.id_material_hijo, '-', ''), ' ', '') LIKE ?)"
                 )
-                params.extend([pattern, pattern, pattern, pattern, pattern])
+                params.extend([pattern, pattern, pattern, pattern, pattern, compacto, compacto])
 
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -371,10 +373,12 @@ class BomRepository:
 
             if search and search.strip():
                 s = f"%{search.strip()}%"
+                compacto = "%" + "".join(c for c in search.strip() if c not in "- ") + "%"
                 where_conditions.append(
-                    "(b.id_producto_raiz LIKE ? OR b.id_padre LIKE ? OR b.id_hijo LIKE ? OR m.nombre LIKE ?)"
+                    "(b.id_producto_raiz LIKE ? OR b.id_padre LIKE ? OR b.id_hijo LIKE ? OR m.nombre LIKE ? "
+                    "OR REPLACE(REPLACE(b.id_producto_raiz, '-', ''), ' ', '') LIKE ? OR REPLACE(REPLACE(b.id_padre, '-', ''), ' ', '') LIKE ? OR REPLACE(REPLACE(b.id_hijo, '-', ''), ' ', '') LIKE ?)"
                 )
-                params.extend([s, s, s, s])
+                params.extend([s, s, s, s, compacto, compacto, compacto])
 
             where_sql = " AND ".join(where_conditions)
 

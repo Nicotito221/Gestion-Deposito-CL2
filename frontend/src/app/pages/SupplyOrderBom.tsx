@@ -77,6 +77,7 @@ import {
   type DemandItemApi,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { coincideCodigo, coincideTexto, normalizarTermino } from "../busqueda";
 
 const TENTATIVE_MONTHS_LOOKUP: Record<string, number> = {
   ene: 1, enero: 1, jan: 1,
@@ -280,11 +281,12 @@ export function SupplyOrderBom() {
   }, [fetchData]);
 
   const filteredDemand = useMemo(() => {
+    const term = normalizarTermino(searchDemand);
     return demandItems.filter((item) => {
       const matchSearch =
-        item.part_number.toLowerCase().includes(searchDemand.toLowerCase()) ||
-        item.tasa_code.toLowerCase().includes(searchDemand.toLowerCase()) ||
-        item.description.toLowerCase().includes(searchDemand.toLowerCase());
+        coincideCodigo(item.part_number, term) ||
+        coincideCodigo(item.tasa_code, term) ||
+        coincideTexto(item.description, term);
       const matchStatus =
         filterStatus === "todos" ? true : item.status === filterStatus;
       return matchSearch && matchStatus;
@@ -341,15 +343,15 @@ export function SupplyOrderBom() {
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const filteredRelations = useMemo(() => {
-    const q = searchRelation.toLowerCase();
+    const q = normalizarTermino(searchRelation);
     return relations.filter((rel) => {
       const matchSearch =
-        (rel.sd && rel.sd.toLowerCase().includes(q)) ||
-        (rel.sector && rel.sector.toLowerCase().includes(q)) ||
-        rel.codigo_tasa.toLowerCase().includes(q) ||
-        rel.codigo_sap_padre.toLowerCase().includes(q) ||
-        rel.id_material_hijo.toLowerCase().includes(q) ||
-        (rel.descripcion_hijo && rel.descripcion_hijo.toLowerCase().includes(q));
+        coincideTexto(rel.sd, q) ||
+        coincideTexto(rel.sector, q) ||
+        coincideCodigo(rel.codigo_tasa, q) ||
+        coincideCodigo(rel.codigo_sap_padre, q) ||
+        coincideCodigo(rel.id_material_hijo, q) ||
+        coincideTexto(rel.descripcion_hijo, q);
       const matchSector =
         filterSector === "todos" ? true : rel.sector === filterSector;
       return matchSearch && matchSector;

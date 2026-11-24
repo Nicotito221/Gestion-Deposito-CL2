@@ -68,7 +68,7 @@ import {
   createConteo,
   getHistoricoConteos,
   getDetalleConteo,
-  getRundownSecciones,
+  getProveedoresFiltro,
   calcularSugerenciaPedido,
   createPedido,
   createPedidosMultiples,
@@ -76,7 +76,7 @@ import {
   type ConteoMaterialSearchItem,
   type ConteoHistoricoItem,
   type ConteoResponse,
-  type RundownSeccionItem,
+  type ProveedorFiltroItem,
   type CalcularSugerenciaResponse,
   type SugerenciaMaterialDetalle,
   type PedidoCreate,
@@ -164,7 +164,7 @@ export function StockCount() {
   const [showDropdown, setShowDropdown] = useState<boolean>(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
+  const [proveedoresList, setProveedoresList] = useState<ProveedorFiltroItem[]>([]);
   const [selectedProvId, setSelectedProvId] = useState<string>("all");
   const [loadingPreload, setLoadingPreload] = useState<boolean>(false);
 
@@ -217,22 +217,10 @@ export function StockCount() {
     }).format(ahora);
   }, [ahora]);
 
-  const proveedoresList = useMemo(() => {
-    const list: { id_proveedor: number; nombre: string }[] = [];
-    secciones.forEach((sec) => {
-      sec.proveedores.forEach((p) => {
-        if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
-          list.push({ id_proveedor: p.id_proveedor, nombre: p.nombre });
-        }
-      });
-    });
-    return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [secciones]);
 
   const fetchSecciones = useCallback(async () => {
     try {
-      const data = await getRundownSecciones();
-      setSecciones(data);
+      setProveedoresList(await getProveedoresFiltro());
     } catch {
       toast.error("Error al cargar proveedores para conteo");
     }

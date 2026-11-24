@@ -1705,6 +1705,7 @@ class RundownRepository:
         cursor = conn.cursor()
         try:
             term = f"%{query.strip()}%" if query.strip() else "%"
+            compacto = "%" + "".join(c for c in query.strip() if c not in "- ") + "%"
             cursor.execute(
                 """
                 SELECT TOP (?)
@@ -1767,10 +1768,10 @@ class RundownRepository:
                     WHERE id_material = m.id_material AND activo = 1
                     ORDER BY id_parametro DESC
                 ) rpm
-                WHERE m.activo = 1 AND (m.id_material LIKE ? OR m.nombre LIKE ?)
+                WHERE m.activo = 1 AND (m.id_material LIKE ? OR m.nombre LIKE ? OR REPLACE(REPLACE(m.id_material, '-', ''), ' ', '') LIKE ?)
                 ORDER BY m.id_material
                 """,
-                (limit, term, term),
+                (limit, term, term, compacto),
             )
             rows = cursor.fetchall()
             result = []

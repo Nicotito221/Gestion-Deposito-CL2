@@ -36,6 +36,7 @@ import { toast } from "sonner";
 import { getPedidos, type PedidoOut } from "../services/api";
 import { formatSoloFechaAR, formatFechaHoraAR, getTodayISODate } from "../components/ui/format";
 import { DeliveryNoteModal } from "../components/DeliveryNoteModal";
+import { coincideCodigo, coincideNumero, coincideTexto, normalizarTermino } from "../busqueda";
 
 const statusConfig: Record<string, { label: string; color: string }> = {
   pendiente: { label: "Pendiente", color: "bg-amber-100 text-amber-800 border-amber-200" },
@@ -100,15 +101,16 @@ export function WarehouseOrders() {
     if (statusFilter === "tarde") {
       list = list.filter((o) => o.es_demorado && o.estado !== "completo" && o.estado !== "cancelado");
     }
-    if (!search.trim()) return list;
-    const term = search.toLowerCase();
-    return list.filter((o) => {
-      const idMatch = String(o.id_pedido).includes(term);
-      const sectorMatch = o.sector.toLowerCase().includes(term);
-      const userMatch = (o.usuario_solicitante || "").toLowerCase().includes(term);
-      const commentMatch = (o.comentario || "").toLowerCase().includes(term);
-      return idMatch || sectorMatch || userMatch || commentMatch;
-    });
+    const term = normalizarTermino(search);
+    if (!term) return list;
+    return list.filter(
+      (o) =>
+        coincideNumero(o.id_pedido, term) ||
+        coincideTexto(o.sector, term) ||
+        coincideTexto(o.usuario_solicitante, term) ||
+        coincideTexto(o.comentario, term) ||
+        (o.items ?? []).some((it) => coincideCodigo(it.id_material, term) || coincideTexto(it.nombre_material, term))
+    );
   }, [orders, search, statusFilter]);
 
   const todayIso = getTodayISODate();

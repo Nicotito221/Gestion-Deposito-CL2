@@ -58,13 +58,13 @@ import {
   createIngreso,
   confirmarRecepcionIngreso,
   deleteIngreso,
-  getRundownSecciones,
+  getProveedoresFiltro,
   searchMaterialesCatalogo,
   parseInvoicePdf,
   type IngresoOut,
   type IngresoCreate,
   type IngresoConfirmarRecepcion,
-  type RundownSeccionItem,
+  type ProveedorFiltroItem,
   type MaterialCatalogoItem,
   type ParsedInvoiceResult,
 } from "../services/api";
@@ -82,7 +82,7 @@ export function Remitos() {
 
   const [ingresos, setIngresos] = useState<IngresoOut[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
+  const [proveedoresFiltro, setProveedoresFiltro] = useState<ProveedorFiltroItem[]>([]);
   const [search, setSearch] = useState<string>("");
   const [filterEstado, setFilterEstado] = useState<string>("all");
   const [filterProveedor, setFilterProveedor] = useState<string>("all");
@@ -178,16 +178,8 @@ export function Remitos() {
 
   const proveedoresList = useMemo(() => {
     const list: { id_proveedor: number; nombre: string; deposito_en_planta?: boolean }[] = [];
-    secciones.forEach((sec) => {
-      sec.proveedores?.forEach((p) => {
-        if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
-          list.push({
-            id_proveedor: p.id_proveedor,
-            nombre: p.nombre,
-            deposito_en_planta: p.deposito_en_planta,
-          });
-        }
-      });
+    proveedoresFiltro.forEach((p) => {
+      list.push({ id_proveedor: p.id_proveedor, nombre: p.nombre, deposito_en_planta: p.deposito_en_planta });
     });
     ingresos.forEach((ing) => {
       if (ing.id_proveedor && ing.nombre_proveedor && !list.some((it) => it.id_proveedor === ing.id_proveedor)) {
@@ -199,7 +191,7 @@ export function Remitos() {
       }
     });
     return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [secciones, ingresos]);
+  }, [proveedoresFiltro, ingresos]);
 
   const [searchDebounced, setSearchDebounced] = useState<string>(search);
   useEffect(() => {
@@ -220,6 +212,7 @@ export function Remitos() {
       if (requestId !== ingresosRequestRef.current) return;
       setIngresos(data);
     } catch {
+      if (requestId !== ingresosRequestRef.current) return;
       toast.error("Error al cargar comprobantes de ingreso");
     } finally {
       if (requestId === ingresosRequestRef.current) setLoading(false);
@@ -228,8 +221,7 @@ export function Remitos() {
 
   const fetchProveedores = useCallback(async () => {
     try {
-      const secs = await getRundownSecciones();
-      setSecciones(secs);
+      setProveedoresFiltro(await getProveedoresFiltro());
     } catch {
       toast.error("Error al cargar proveedores");
     }
