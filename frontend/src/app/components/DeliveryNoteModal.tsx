@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Dialog,
   DialogContent,
@@ -127,17 +128,14 @@ export function DeliveryNoteModal({
               size: A4 portrait;
               margin: 8mm 10mm;
             }
-            body * {
-              visibility: hidden !important;
+            html, body {
+              height: auto !important;
+              overflow: visible !important;
             }
-            #printable-remito, #printable-remito * {
-              visibility: visible !important;
+            body > *:not(#printable-remito) {
+              display: none !important;
             }
             #printable-remito {
-              position: absolute !important;
-              left: 0 !important;
-              top: 0 !important;
-              width: 100% !important;
               display: block !important;
               background: #ffffff !important;
               color: #000000 !important;
@@ -385,96 +383,106 @@ export function DeliveryNoteModal({
         </div>
 
         {/* PLANTILLA DE IMPRESIÓN OFICIAL RÉPLICA INDUSTRIAL */}
-        {remito && (
-          <div id="printable-remito" className="hidden font-mono text-black text-xs bg-white p-4 leading-tight">
-            <div className="border-b-2 border-black pb-3 mb-3">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h2 className="font-extrabold text-base tracking-wider">CL2</h2>
-                  <p className="text-[10px] text-gray-700">Destino: {remito.sector_destino || "Planta"}</p>
+        {remito &&
+          createPortal(
+          <div id="printable-remito" className="hidden">
+            {[0, 1].map((copia) => (
+              <div
+                key={copia}
+                className="font-mono text-black text-xs bg-white p-4 leading-tight"
+                style={copia === 0 ? { breakAfter: "page" } : undefined}
+              >
+                <div className="border-b-2 border-black pb-3 mb-3">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h2 className="font-extrabold text-base tracking-wider">CL2</h2>
+                      <p className="text-[10px] text-gray-700">Destino: {remito.sector_destino || "Planta"}</p>
+                    </div>
+                    <div className="text-right space-y-0.5">
+                      <p className="font-extrabold text-base tracking-wider">REMITO</p>
+                      <p className="text-[9px] font-bold uppercase tracking-tight">DOCUMENTO NO VÁLIDO COMO FACTURA</p>
+                      <p className="font-bold text-xs mt-1">
+                        N° DE CPTE: <span className="font-extrabold text-sm">{remito.id_remito}</span>
+                      </p>
+                      <p className="text-[11px]">
+                        FECHA: <span className="font-bold">{formatDDMMAAAA(remito.fecha_emision)}</span> &nbsp;
+                        HORA: <span className="font-bold">{formatHora(remito.fecha_emision)}</span>
+                      </p>
+                      <p className="text-[11px]">
+                        PEDIDO ORIGEN: <span className="font-bold">#{remito.id_pedido}</span>
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-right space-y-0.5">
-                  <p className="font-extrabold text-base tracking-wider">REMITO</p>
-                  <p className="text-[9px] font-bold uppercase tracking-tight">DOCUMENTO NO VÁLIDO COMO FACTURA</p>
-                  <p className="font-bold text-xs mt-1">
-                    N° DE CPTE: <span className="font-extrabold text-sm">{remito.id_remito}</span>
-                  </p>
-                  <p className="text-[11px]">
-                    FECHA: <span className="font-bold">{formatDDMMAAAA(remito.fecha_emision)}</span> &nbsp;
-                    HORA: <span className="font-bold">{formatHora(remito.fecha_emision)}</span>
-                  </p>
-                  <p className="text-[11px]">
-                    PEDIDO ORIGEN: <span className="font-bold">#{remito.id_pedido}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
 
-            <div className="border-t-2 border-b-2 border-black py-1 mb-2">
-              <table className="w-full text-left text-[11px] border-collapse">
-                <thead>
-                  <tr className="border-b border-black">
-                    <th className="py-1 px-1 font-bold w-[30%]">CODIGO</th>
-                    <th className="py-1 px-1 font-bold w-[45%]">DESCRIPCION</th>
-                    <th className="py-1 px-1 font-bold text-right w-[25%]">CANTIDAD</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {remito.items.map((it) => {
-                    const isPallet = (it.tipo_empaque === "pallet" || it.tipo_empaque === "rollo") && (it.tamanio_lote || 1) > 1;
-                    const palletsCount = (isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined)
-                      ? it.cantidad_pallets
-                      : (isPallet && (it.tamanio_lote || 1) > 1 ? Math.ceil(it.cantidad / (it.tamanio_lote || 1)) : null);
-
-                    let displayCantText = `${it.cantidad} ${it.unidad || "UN"}`;
-                    if (isPallet && palletsCount !== null) {
-                      const pLabel = palletsCount === 1 ? "PALLET" : "PALLETS";
-                      if (it.tipo_empaque === "rollo" && it.bultos_por_pallet) {
-                        const rollosTotal = palletsCount * it.bultos_por_pallet;
-                        displayCantText = `${palletsCount} ${pLabel} (${rollosTotal} ROLLOS)`;
-                      } else {
-                        displayCantText = `${palletsCount} ${pLabel} (${it.cantidad} ${it.unidad || "UN"})`;
-                      }
-                    }
-
-                    return (
-                      <tr key={it.id_material} className="align-top border-b border-gray-200">
-                        <td colSpan={3} className="py-1 px-1">
-                          <div className="flex justify-between items-baseline font-mono">
-                            <span className="w-[30%] font-bold">{it.id_material}</span>
-                            <span className="w-[45%] truncate font-medium">{it.nombre_material || it.id_material}</span>
-                            <span className="w-[25%] text-right font-bold">{displayCantText}</span>
-                          </div>
-                        </td>
+                <div className="border-t-2 border-b-2 border-black py-1 mb-2">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead>
+                      <tr className="border-b border-black">
+                        <th className="py-1 px-1 font-bold w-[30%]">CODIGO</th>
+                        <th className="py-1 px-1 font-bold w-[45%]">DESCRIPCION</th>
+                        <th className="py-1 px-1 font-bold text-right w-[25%]">CANTIDAD</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {remito.items.map((it) => {
+                        const isPallet = (it.tipo_empaque === "pallet" || it.tipo_empaque === "rollo") && (it.tamanio_lote || 1) > 1;
+                        const palletsCount = (isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined)
+                          ? it.cantidad_pallets
+                          : (isPallet && (it.tamanio_lote || 1) > 1 ? Math.ceil(it.cantidad / (it.tamanio_lote || 1)) : null);
 
-            <div className="flex justify-between items-center px-2 py-1.5 border-b border-black text-[11px] font-bold mb-4">
-              <div>
-                TOTAL LÍNEAS / ÍTEMS: {remito.items.length}
-              </div>
-              <div className="flex gap-6">
-                {remito.total_pallets > 0 && (
-                  <span>TOTAL PALLETS: {remito.total_pallets}</span>
-                )}
-                <span>TOTAL UNIDADES: {remito.total_unidades} UN</span>
-              </div>
-            </div>
+                        let displayCantText = `${it.cantidad} ${it.unidad || "UN"}`;
+                        if (isPallet && palletsCount !== null) {
+                          const pLabel = palletsCount === 1 ? "PALLET" : "PALLETS";
+                          if (it.tipo_empaque === "rollo" && it.bultos_por_pallet) {
+                            const rollosTotal = palletsCount * it.bultos_por_pallet;
+                            displayCantText = `${palletsCount} ${pLabel} (${rollosTotal} ROLLOS)`;
+                          } else {
+                            displayCantText = `${palletsCount} ${pLabel} (${it.cantidad} ${it.unidad || "UN"})`;
+                          }
+                        }
 
-            <div className="pt-6 grid grid-cols-2 gap-12 text-[10px]">
-              <div className="border-t border-black pt-1 text-center">
-                Firma y Aclaración Depósito Emisor
+                        return (
+                          <tr key={it.id_material} className="align-top border-b border-gray-200">
+                            <td colSpan={3} className="py-1 px-1">
+                              <div className="flex justify-between items-baseline font-mono">
+                                <span className="w-[30%] font-bold">{it.id_material}</span>
+                                <span className="w-[45%] truncate font-medium">{it.nombre_material || it.id_material}</span>
+                                <span className="w-[25%] text-right font-bold">{displayCantText}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between items-center px-2 py-1.5 border-b border-black text-[11px] font-bold mb-4">
+                  <div>
+                    TOTAL LÍNEAS / ÍTEMS: {remito.items.length}
+                  </div>
+                  <div className="flex gap-6">
+                    {remito.total_pallets > 0 && (
+                      <span>TOTAL PALLETS: {remito.total_pallets}</span>
+                    )}
+                    <span>TOTAL UNIDADES: {remito.total_unidades} UN</span>
+                  </div>
+                </div>
+
+                <div className="pt-6 grid grid-cols-2 gap-12 text-[10px]">
+                  <div className="border-t border-black pt-1 text-center">
+                    Firma y Aclaración Depósito Emisor
+                  </div>
+                  <div className="border-t border-black pt-1 text-center">
+                    Firma y Aclaración Receptor Planta
+                  </div>
+                </div>
               </div>
-              <div className="border-t border-black pt-1 text-center">
-                Firma y Aclaración Receptor Planta
-              </div>
-            </div>
-          </div>
-        )}
+            ))}
+          </div>,
+          document.body
+          )}
       </DialogContent>
     </Dialog>
   );

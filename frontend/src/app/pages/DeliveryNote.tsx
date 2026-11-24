@@ -448,76 +448,84 @@ export function DeliveryNote() {
       </div>
 
       {/* PLANTILLA DE IMPRESIÓN OFICIAL RÉPLICA INDUSTRIAL */}
-      <div className="hidden print:block font-mono text-black text-xs bg-white p-4 leading-tight">
-        {/* ENCABEZADO FISCAL / DOCUMENTAL */}
-        <div className="border-b-2 border-black pb-3 mb-3">
-          <div className="flex justify-end items-start">
-            <div className="w-5/12 text-right space-y-0.5">
-              <p className="font-extrabold text-base tracking-wider">REMITO</p>
-              <p className="text-[9px] font-bold uppercase tracking-tight">DOCUMENTO NO VÁLIDO COMO FACTURA</p>
-              <p className="font-bold text-xs mt-1">
-                N° DE CPTE: <span className="font-extrabold text-sm">{remito.id_remito}</span>
-              </p>
-              <p className="text-[11px]">
-                FECHA: <span className="font-bold">{formatDDMMAAAA(remito.fecha_emision)}</span> &nbsp;
-                HORA: <span className="font-bold">{formatHora(remito.fecha_emision)}</span>
-              </p>
+      <div className="hidden print:block">
+        {[0, 1].map((copia) => (
+          <div
+            key={copia}
+            className="font-mono text-black text-xs bg-white p-4 leading-tight"
+            style={copia === 0 ? { breakAfter: "page" } : undefined}
+          >
+            {/* ENCABEZADO FISCAL / DOCUMENTAL */}
+            <div className="border-b-2 border-black pb-3 mb-3">
+              <div className="flex justify-end items-start">
+                <div className="w-5/12 text-right space-y-0.5">
+                  <p className="font-extrabold text-base tracking-wider">REMITO</p>
+                  <p className="text-[9px] font-bold uppercase tracking-tight">DOCUMENTO NO VÁLIDO COMO FACTURA</p>
+                  <p className="font-bold text-xs mt-1">
+                    N° DE CPTE: <span className="font-extrabold text-sm">{remito.id_remito}</span>
+                  </p>
+                  <p className="text-[11px]">
+                    FECHA: <span className="font-bold">{formatDDMMAAAA(remito.fecha_emision)}</span> &nbsp;
+                    HORA: <span className="font-bold">{formatHora(remito.fecha_emision)}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* TABLA DE MATERIALES DESPACHADOS */}
+            <div className="border-t-2 border-b-2 border-black py-1 mb-2">
+              <table className="w-full text-left text-[11px] border-collapse">
+                <thead>
+                  <tr className="border-b border-black">
+                    <th className="py-1 px-1 font-bold w-[25%]">CODIGO</th>
+                    <th className="py-1 px-1 font-bold w-[45%]">DESCRIPCION</th>
+                    <th className="py-1 px-1 font-bold text-right w-[15%]">CANTIDAD</th>
+                    <th className="py-1 px-1 font-bold text-right w-[15%]">EMPAQUE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {remito.items.map((it) => {
+                    const isPallet = it.tipo_empaque === "pallet" && (it.tamanio_lote || 1) > 1;
+                    const displayCant = isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined
+                      ? `${it.cantidad_pallets}.00`
+                      : `${it.cantidad}.00`;
+                    const displayUnit = isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined
+                      ? (it.cantidad_pallets === 1 ? "PALLET" : "PALLETS")
+                      : it.unidad.toUpperCase();
+
+                    return (
+                      <tr key={it.id_material} className="align-top border-b border-gray-200">
+                        <td colSpan={4} className="py-1 px-1">
+                          <div className="flex justify-between items-baseline font-mono">
+                            <span className="w-[25%] font-bold">{it.id_material}</span>
+                            <span className="w-[45%] truncate font-medium">{it.nombre_material || it.id_material}</span>
+                            <span className="w-[15%] text-right font-bold">{displayCant} {displayUnit}</span>
+                            <span className="w-[15%] text-right text-gray-600">
+                              {isPallet ? `(${it.cantidad} ${it.unidad})` : "SUELTO"}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* TOTALES */}
+            <div className="flex justify-between items-center px-2 py-1.5 border-b border-black text-[11px] font-bold mb-4">
+              <div>
+                TOTAL LÍNEAS / ÍTEMS: {remito.items.length}
+              </div>
+              <div className="flex gap-6">
+                {remito.total_pallets > 0 && (
+                  <span>TOTAL PALLETS: {remito.total_pallets}</span>
+                )}
+                <span>TOTAL UNIDADES: {remito.total_unidades} UN</span>
+              </div>
             </div>
           </div>
-        </div>
-
-        {/* TABLA DE MATERIALES DESPACHADOS */}
-        <div className="border-t-2 border-b-2 border-black py-1 mb-2">
-          <table className="w-full text-left text-[11px] border-collapse">
-            <thead>
-              <tr className="border-b border-black">
-                <th className="py-1 px-1 font-bold w-[25%]">CODIGO</th>
-                <th className="py-1 px-1 font-bold w-[45%]">DESCRIPCION</th>
-                <th className="py-1 px-1 font-bold text-right w-[15%]">CANTIDAD</th>
-                <th className="py-1 px-1 font-bold text-right w-[15%]">EMPAQUE</th>
-              </tr>
-            </thead>
-            <tbody>
-              {remito.items.map((it) => {
-                const isPallet = it.tipo_empaque === "pallet" && (it.tamanio_lote || 1) > 1;
-                const displayCant = isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined
-                  ? `${it.cantidad_pallets}.00`
-                  : `${it.cantidad}.00`;
-                const displayUnit = isPallet && it.cantidad_pallets !== null && it.cantidad_pallets !== undefined
-                  ? (it.cantidad_pallets === 1 ? "PALLET" : "PALLETS")
-                  : it.unidad.toUpperCase();
-
-                return (
-                  <tr key={it.id_material} className="align-top border-b border-gray-200">
-                    <td colSpan={4} className="py-1 px-1">
-                      <div className="flex justify-between items-baseline font-mono">
-                        <span className="w-[25%] font-bold">{it.id_material}</span>
-                        <span className="w-[45%] truncate font-medium">{it.nombre_material || it.id_material}</span>
-                        <span className="w-[15%] text-right font-bold">{displayCant} {displayUnit}</span>
-                        <span className="w-[15%] text-right text-gray-600">
-                          {isPallet ? `(${it.cantidad} ${it.unidad})` : "SUELTO"}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* TOTALES */}
-        <div className="flex justify-between items-center px-2 py-1.5 border-b border-black text-[11px] font-bold mb-4">
-          <div>
-            TOTAL LÍNEAS / ÍTEMS: {remito.items.length}
-          </div>
-          <div className="flex gap-6">
-            {remito.total_pallets > 0 && (
-              <span>TOTAL PALLETS: {remito.total_pallets}</span>
-            )}
-            <span>TOTAL UNIDADES: {remito.total_unidades} UN</span>
-          </div>
-        </div>
+        ))}
       </div>
     </>
   );
