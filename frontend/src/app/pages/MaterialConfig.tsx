@@ -53,7 +53,7 @@ import { toast } from "sonner";
 import {
   getMaterialesConfiguracion,
   updateMaterialConfiguracion,
-  getRundownSecciones,
+  getProveedoresAdmin,
   getReglaSugerenciaConfig,
   updateReglaSugerenciaConfig,
   getCajasPedido,
@@ -65,7 +65,7 @@ import {
   type AsignacionProveedorResultado,
   type MaterialConfigItem,
   type MaterialConfigListResponse,
-  type RundownSeccionItem,
+  type ProveedorAdminItem,
   type ReglaSugerenciaConfigApi,
   type CajaPedidoOut,
   type MaterialCatalogoItem,
@@ -85,7 +85,7 @@ export function MaterialConfig() {
     total_pages: 1,
   });
 
-  const [secciones, setSecciones] = useState<RundownSeccionItem[]>([]);
+  const [proveedoresTodos, setProveedoresTodos] = useState<ProveedorAdminItem[]>([]);
   const [searchInput, setSearchInput] = useState<string>("");
   const [activeSearch, setActiveSearch] = useState<string>("");
   const [selectedProvId, setSelectedProvId] = useState<string>("all");
@@ -120,32 +120,21 @@ export function MaterialConfig() {
     en_cl2: true,
   });
 
-  const proveedoresList = useMemo(() => {
-    const list: { id_proveedor: number; nombre: string; deposito_en_planta?: boolean }[] = [];
-    secciones.forEach((sec) => {
-      sec.proveedores.forEach((p) => {
-        if (!list.some((it) => it.id_proveedor === p.id_proveedor)) {
-          list.push({
-            id_proveedor: p.id_proveedor,
-            nombre: p.nombre,
-            deposito_en_planta: p.deposito_en_planta,
-          });
-        }
-      });
-    });
-    return list.sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [secciones]);
+  const proveedoresActivos = useMemo(() => proveedoresTodos.filter((p) => p.activo), [proveedoresTodos]);
 
   const fetchProveedores = useCallback(async () => {
     try {
-      const secs = await getRundownSecciones();
-      setSecciones(secs);
+      const lista = await getProveedoresAdmin();
+      setProveedoresTodos([...lista].sort((a, b) => a.nombre.localeCompare(b.nombre)));
     } catch {
       toast.error("Error al cargar listado de proveedores");
     }
   }, []);
 
+  const configRequestRef = useRef(0);
+
   const fetchConfigList = useCallback(async () => {
+    const requestId = ++configRequestRef.current;
     setLoading(true);
     try {
       const res = await getMaterialesConfiguracion({
@@ -156,13 +145,25 @@ export function MaterialConfig() {
         page,
         page_size: pageSize,
       });
+      if (requestId !== configRequestRef.current) return;
       setData(res);
     } catch {
+      if (requestId !== configRequestRef.current) return;
       toast.error("Error al cargar configuración de materiales");
     } finally {
-      setLoading(false);
+      if (requestId === configRequestRef.current) setLoading(false);
     }
   }, [activeSearch, selectedProvId, selectedEmpaque, selectedEnCl2, page, pageSize]);
+
+  useEffect(() => {
+    const termino = searchInput.trim();
+    if (termino === activeSearch) return;
+    const timer = setTimeout(() => {
+      setActiveSearch(termino);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchInput, activeSearch]);
 
   const { user: currentUser } = useAuth();
   const canEditRegla = Boolean(
@@ -680,9 +681,10 @@ export function MaterialConfig() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos los proveedores</SelectItem>
-                    {proveedoresList.map((p) => (
+                    {proveedoresTodos.map((p) => (
                       <SelectItem key={p.id_proveedor} value={String(p.id_proveedor)}>
                         {p.nombre}
+                        {p.activo ? "" : " (inactivo)"}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -985,7 +987,7 @@ export function MaterialConfig() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin proveedor asignado</SelectItem>
-                      {proveedoresList.map((p) => (
+                      {proveedoresActivos.map((p) => (
                         <SelectItem key={p.id_proveedor} value={String(p.id_proveedor)}>
                           {p.nombre}
                         </SelectItem>

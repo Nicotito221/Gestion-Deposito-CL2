@@ -571,16 +571,19 @@ class StockRepository:
 
             if search and search.strip():
                 term = f"%{search.strip()}%"
-                where_clauses.append("(m.id_material LIKE ? OR m.nombre LIKE ?)")
-                params.extend([term, term])
+                compacto = "".join(c for c in search.strip() if c not in "- ")
+                where_clauses.append(
+                    "(m.id_material LIKE ? OR m.nombre LIKE ? OR REPLACE(REPLACE(m.id_material, '-', ''), ' ', '') LIKE ?)"
+                )
+                params.extend([term, term, f"%{compacto}%"])
 
             if id_proveedor and id_proveedor > 0:
                 where_clauses.append("prov.id_proveedor = ?")
                 params.append(id_proveedor)
 
             if tipo_empaque and tipo_empaque != "all":
-                where_clauses.append("COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'pallet') = ?")
-                params.append(tipo_empaque)
+                where_clauses.append("LOWER(COALESCE(rpm.tipo_empaque, m.tipo_empaque, 'pallet')) = ?")
+                params.append(tipo_empaque.lower())
 
             if en_cl2 is not None:
                 where_clauses.append("COALESCE(rpm.en_cl2, m.en_cl2, 0) = ?")
