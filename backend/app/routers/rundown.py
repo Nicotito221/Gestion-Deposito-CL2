@@ -24,6 +24,7 @@ from app.schemas.rundown import (
     RundownParametroMaterialCreate,
     RundownParametroMaterialItem,
     RundownLoteMaterialUpdate,
+    RundownMaterialLineaUpdate,
     RundownPeriodoItem,
     RundownPeriodoProyeccionItem,
     RundownPeriodoProyeccionCreate,
@@ -132,6 +133,17 @@ def add_material_proveedor(
 ):
     param_id = service.add_material_proveedor(id_proveedor, data)
     return {"id_parametro": param_id, "mensaje": f"Material {data.id_material} agregado al Rundown"}
+
+
+@router.put("/proveedores/{id_proveedor}/materiales/{id_parametro}/linea", dependencies=[Depends(require_planta)])
+def set_linea_material(
+    id_proveedor: int,
+    id_parametro: int,
+    data: RundownMaterialLineaUpdate,
+    service: RundownService = Depends(get_rundown_service),
+):
+    service.set_linea_material(id_proveedor, id_parametro, data.id_seccion)
+    return {"mensaje": "Línea del material actualizada"}
 
 
 @router.delete("/proveedores/{id_proveedor}/materiales/{id_parametro}", dependencies=[Depends(require_planta)])

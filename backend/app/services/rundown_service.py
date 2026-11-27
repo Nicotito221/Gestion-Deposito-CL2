@@ -95,6 +95,8 @@ class RundownService:
             parametros = []
             for pid in prov_ids:
                 parametros.extend(self._repo.get_parametros_proveedor(pid))
+            if id_seccion:
+                parametros = [p for p in parametros if p.get("id_seccion_efectiva") == id_seccion]
 
             proveedor_nombre = "Todos los Proveedores"
             proveedor_codigo = "TODOS"
@@ -115,6 +117,9 @@ class RundownService:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"No se encontraron parámetros de rundown configurados para {proveedor['nombre']}",
                 )
+
+            if id_seccion:
+                parametros = [p for p in parametros if p.get("id_seccion_efectiva") == id_seccion]
 
             prov_ids = [proveedor["id_proveedor"]]
             prov_map = {proveedor["id_proveedor"]: proveedor}
@@ -712,9 +717,22 @@ class RundownService:
                 doh_sugerido_planta=r.get("doh_sugerido_planta"),
                 cant_productos=r["cant_productos"],
                 activo=r["activo"],
+                id_seccion=r.get("id_seccion"),
+                id_seccion_efectiva=r.get("id_seccion_efectiva"),
             )
             for r in rows
         ]
+
+    def set_linea_material(self, id_proveedor: int, id_parametro: int, id_seccion: Optional[int]) -> None:
+        try:
+            actualizado = self._repo.set_linea_material(id_proveedor, id_parametro, id_seccion)
+        except ValueError as err:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(err))
+        if not actualizado:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Parámetro de material ID {id_parametro} no encontrado",
+            )
 
     def update_lote_material(self, data: RundownLoteMaterialUpdate) -> None:
         self._repo.update_lote_material(

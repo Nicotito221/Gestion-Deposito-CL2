@@ -86,6 +86,7 @@ import {
   getProveedorMateriales,
   addProveedorMaterial,
   deleteProveedorMaterial,
+  setLineaMaterial,
   updateLoteMaterial,
   getPeriodosProyeccion,
   createPeriodoProyeccion,
@@ -213,6 +214,7 @@ export function RundownVivo() {
     scrap_porcentaje: number;
     stock_inicial_planta: number;
     stock_inicial_total: number;
+    id_seccion: number;
   }>({
     id_material: "",
     descripcion: "",
@@ -221,8 +223,14 @@ export function RundownVivo() {
     scrap_porcentaje: 0,
     stock_inicial_planta: 0,
     stock_inicial_total: 0,
+    id_seccion: 0,
   });
   const [isAddingMaterial, setIsAddingMaterial] = useState<boolean>(false);
+  const lineasProveedorAdmin = useMemo(() => {
+    const prov = proveedoresActivos.find((p) => p.id_proveedor === adminMaterialProvId);
+    if (!prov) return [];
+    return prov.secciones.map((id, i) => ({ id_seccion: id, nombre: prov.nombres_secciones[i] ?? `Línea ${id}` }));
+  }, [proveedoresActivos, adminMaterialProvId]);
 
   useEffect(() => {
     if (!adminModalOpen) return;
@@ -1280,6 +1288,7 @@ export function RundownVivo() {
           newMaterialForm.stock_inicial_planta > 0 ? Math.round(newMaterialForm.stock_inicial_planta) : undefined,
         stock_inicial_total:
           newMaterialForm.stock_inicial_total > 0 ? Math.round(newMaterialForm.stock_inicial_total) : undefined,
+        id_seccion: newMaterialForm.id_seccion > 0 ? newMaterialForm.id_seccion : undefined,
       });
       toast.success(res.mensaje);
       setNewMaterialForm({
@@ -1290,6 +1299,7 @@ export function RundownVivo() {
         scrap_porcentaje: 0,
         stock_inicial_planta: 0,
         stock_inicial_total: 0,
+        id_seccion: 0,
       });
       setCatalogoSearchQuery("");
       await fetchProvMateriales(adminMaterialProvId);
@@ -1302,6 +1312,25 @@ export function RundownVivo() {
       toast.error(msg);
     } finally {
       setIsAddingMaterial(false);
+    }
+  };
+
+  const handleCambiarLineaMaterial = async (idParametro: number, valor: string) => {
+    const idSeccion = valor === "auto" ? null : parseInt(valor, 10);
+    try {
+      await setLineaMaterial(adminMaterialProvId, idParametro, idSeccion);
+      setProvMaterialesList((prev) =>
+        prev.map((m) =>
+          m.id_parametro === idParametro
+            ? { ...m, id_seccion: idSeccion, id_seccion_efectiva: idSeccion ?? lineasProveedorAdmin[0]?.id_seccion ?? null }
+            : m
+        )
+      );
+      if (activeSupplier) {
+        await fetchRundown();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Error al cambiar la línea del material");
     }
   };
 
@@ -3144,6 +3173,31 @@ export function RundownVivo() {
                         className="text-xs h-8 bg-white mt-1 font-mono"
                       />
                     </div>
+                    {lineasProveedorAdmin.length > 1 && (
+                      <div>
+                        <Label className="text-[11px] text-slate-600">Línea</Label>
+                        <Select
+                          value={newMaterialForm.id_seccion ? String(newMaterialForm.id_seccion) : "auto"}
+                          onValueChange={(val) =>
+                            setNewMaterialForm({ ...newMaterialForm, id_seccion: val === "auto" ? 0 : parseInt(val, 10) })
+                          }
+                        >
+                          <SelectTrigger className="text-xs h-8 bg-white mt-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto" className="text-xs">
+                              Primera línea ({lineasProveedorAdmin[0].nombre})
+                            </SelectItem>
+                            {lineasProveedorAdmin.map((l) => (
+                              <SelectItem key={l.id_seccion} value={String(l.id_seccion)} className="text-xs">
+                                {l.nombre}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex justify-end pt-1">
@@ -3170,6 +3224,7 @@ export function RundownVivo() {
                         <tr>
                           <th className="p-2 text-left">Material</th>
                           <th className="p-2 text-left">Descripción</th>
+                          {lineasProveedorAdmin.length > 1 && <th className="p-2 text-left">Línea</th>}
                           <th className="p-2 text-center">Unidad</th>
                           <th className="p-2 text-center">Lote</th>
                           <th className="p-2 text-center">Scrap</th>
@@ -3181,7 +3236,7 @@ export function RundownVivo() {
                       <tbody className="divide-y">
                         {provMaterialesList.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="p-6 text-center text-slate-400">
+                            <td colSpan={lineasProveedorAdmin.length > 1 ? 9 : 8} className="p-6 text-center text-slate-400">
                               No hay materiales configurados para este proveedor. Busque un insumo arriba para agregarlo.
                             </td>
                           </tr>
@@ -3192,6 +3247,30 @@ export function RundownVivo() {
                               <td className="p-2 text-slate-600 truncate max-w-[160px]" title={m.descripcion}>
                                 {m.descripcion}
                               </td>
+                              {lineasProveedorAdmin.length > 1 && (
+                                <td className="p-2">
+                                  <Select
+                                    value={m.id_seccion ? String(m.id_seccion) : "auto"}
+                                    onValueChange={(val) => handleCambiarLineaMaterial(m.id_parametro, val)}
+                                  >
+                                    <SelectTrigger
+                                      className={`text-[11px] h-7 w-36 bg-white ${m.id_seccion ? "" : "text-slate-500 italic"}`}
+                                    >
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="auto" className="text-xs">
+                                        Sin asignar ({lineasProveedorAdmin[0].nombre})
+                                      </SelectItem>
+                                      {lineasProveedorAdmin.map((l) => (
+                                        <SelectItem key={l.id_seccion} value={String(l.id_seccion)} className="text-xs">
+                                          {l.nombre}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                              )}
                               <td className="p-2 text-center font-mono">{m.unidad}</td>
                               <td className="p-2 text-center font-mono">
                                 {m.tipo_empaque === "pallet" && m.lote_mts ? (

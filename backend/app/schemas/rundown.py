@@ -288,6 +288,11 @@ class RundownParametroMaterialCreate(BaseModel):
     stock_inicial_planta: Optional[float] = Field(default=None, ge=0)
     stock_inicial_total: Optional[float] = Field(default=None, ge=0)
     doh_sugerido_planta: Optional[float] = Field(default=None, ge=0)
+    id_seccion: Optional[int] = Field(default=None, ge=0)
+
+
+class RundownMaterialLineaUpdate(BaseModel):
+    id_seccion: Optional[int] = Field(default=None, gt=0)
 
 
 class RundownParametroMaterialItem(BaseModel):
@@ -306,6 +311,8 @@ class RundownParametroMaterialItem(BaseModel):
     doh_sugerido_planta: Optional[float] = None
     cant_productos: int
     activo: bool
+    id_seccion: Optional[int] = None
+    id_seccion_efectiva: Optional[int] = None
 
 
 class RundownLoteMaterialUpdate(BaseModel):

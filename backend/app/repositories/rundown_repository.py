@@ -144,10 +144,26 @@ class RundownRepository:
                        m.stock_inicial_planta, m.stock_inicial_total,
                        p.id_producto, p.factor_uso,
                        CAST(ISNULL(sd.stock_actual, 0.0) AS FLOAT) AS stock_cl2,
-                       ISNULL(m.tipo_empaque, 'pallet') AS tipo_empaque
+                       ISNULL(m.tipo_empaque, 'pallet') AS tipo_empaque,
+                       ef.id_seccion_efectiva
                 FROM dbo.rundown_parametro_material m
                 LEFT JOIN dbo.rundown_parametro_producto p ON m.id_parametro = p.id_parametro
                 LEFT JOIN dbo.stock_deposito sd ON m.id_material = sd.id_material
+                OUTER APPLY (
+                    SELECT CASE
+                        WHEN m.id_seccion IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM dbo.proveedor_seccion ps
+                            INNER JOIN dbo.rundown_seccion s ON s.id_seccion = ps.id_seccion
+                            WHERE ps.id_proveedor = m.id_proveedor AND ps.id_seccion = m.id_seccion AND s.activo = 1
+                        ) THEN m.id_seccion
+                        ELSE (
+                            SELECT TOP 1 ps.id_seccion FROM dbo.proveedor_seccion ps
+                            INNER JOIN dbo.rundown_seccion s ON s.id_seccion = ps.id_seccion
+                            WHERE ps.id_proveedor = m.id_proveedor AND s.activo = 1
+                            ORDER BY s.orden, s.nombre
+                        )
+                    END AS id_seccion_efectiva
+                ) ef
                 WHERE m.id_proveedor = ? AND m.activo = 1
                 ORDER BY m.id_parametro, p.id_producto
                 """,
@@ -174,6 +190,7 @@ class RundownRepository:
                         "stock_inicial_total": float(r[12]) if r[12] is not None else float(r[9]),
                         "stock_cl2": float(r[15]) if len(r) > 15 and r[15] is not None else 0.0,
                         "tipo_empaque": str(r[16]) if len(r) > 16 and r[16] else "pallet",
+                        "id_seccion_efectiva": int(r[17]) if r[17] is not None else None,
                         "productos": [],
                     }
                 if r[13]:
@@ -1204,6 +1221,18 @@ class RundownRepository:
             cursor.execute("UPDATE dbo.proveedor SET id_seccion = ? WHERE id_proveedor = ?", (unicas[0], id_proveedor))
         else:
             cursor.execute("UPDATE dbo.proveedor SET id_seccion = NULL WHERE id_proveedor = ?", (id_proveedor,))
+        cursor.execute(
+            """
+            UPDATE rpm SET id_seccion = NULL
+            FROM dbo.rundown_parametro_material rpm
+            WHERE rpm.id_proveedor = ? AND rpm.id_seccion IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM dbo.proveedor_seccion ps
+                  WHERE ps.id_proveedor = rpm.id_proveedor AND ps.id_seccion = rpm.id_seccion
+              )
+            """,
+            (id_proveedor,),
+        )
 
     def list_proveedores_admin(self) -> List[Dict[str, Any]]:
         conn: pyodbc.Connection = self._get_connection()
@@ -1915,14 +1944,31 @@ class RundownRepository:
                        m.stock_inicial_planta, m.stock_inicial_total, m.activo,
                        COUNT(p.id_producto) AS cant_productos,
                        m.doh_sugerido_planta,
-                       ISNULL(m.tipo_empaque, 'pallet') AS tipo_empaque
+                       ISNULL(m.tipo_empaque, 'pallet') AS tipo_empaque,
+                       m.id_seccion,
+                       ef.id_seccion_efectiva
                 FROM dbo.rundown_parametro_material m
                 LEFT JOIN dbo.rundown_parametro_producto p ON m.id_parametro = p.id_parametro
+                OUTER APPLY (
+                    SELECT CASE
+                        WHEN m.id_seccion IS NOT NULL AND EXISTS (
+                            SELECT 1 FROM dbo.proveedor_seccion ps
+                            INNER JOIN dbo.rundown_seccion s ON s.id_seccion = ps.id_seccion
+                            WHERE ps.id_proveedor = m.id_proveedor AND ps.id_seccion = m.id_seccion AND s.activo = 1
+                        ) THEN m.id_seccion
+                        ELSE (
+                            SELECT TOP 1 ps.id_seccion FROM dbo.proveedor_seccion ps
+                            INNER JOIN dbo.rundown_seccion s ON s.id_seccion = ps.id_seccion
+                            WHERE ps.id_proveedor = m.id_proveedor AND s.activo = 1
+                            ORDER BY s.orden, s.nombre
+                        )
+                    END AS id_seccion_efectiva
+                ) ef
                 WHERE m.id_proveedor = ? AND m.activo = 1
                 GROUP BY m.id_parametro, m.id_proveedor, m.id_material, m.descripcion, m.unidad,
                          m.lote_mts, m.scrap_porcentaje, m.factor_conversion, m.categoria_cabina,
                          m.stock_inicial_planta, m.stock_inicial_total, m.activo, m.doh_sugerido_planta,
-                         m.tipo_empaque
+                         m.tipo_empaque, m.id_seccion, ef.id_seccion_efectiva
                 ORDER BY m.id_parametro
                 """,
                 (id_proveedor,),
@@ -1944,6 +1990,8 @@ class RundownRepository:
                     "cant_productos": int(r[12]),
                     "doh_sugerido_planta": float(r[13]) if len(r) > 13 and r[13] is not None else None,
                     "tipo_empaque": str(r[14]) if len(r) > 14 and r[14] else "pallet",
+                    "id_seccion": int(r[15]) if r[15] is not None else None,
+                    "id_seccion_efectiva": int(r[16]) if r[16] is not None else None,
                 }
                 for r in cursor.fetchall()
             ]
@@ -2026,10 +2074,17 @@ class RundownRepository:
                     (id_material, planta_in),
                 )
 
+            linea = data.get("id_seccion")
+            if linea is not None and linea > 0:
+                self._validar_linea_proveedor(cursor, id_proveedor, linea)
+
             if existing:
                 param_id = int(existing[0])
                 sets: List[str] = ["activo = 1"]
                 params: List[Any] = []
+                if linea is not None:
+                    sets.append("id_seccion = ?")
+                    params.append(linea if linea > 0 else None)
                 for campo in (
                     "descripcion", "unidad", "lote_mts", "scrap_porcentaje", "factor_conversion",
                     "categoria_cabina", "doh_sugerido_planta", "tipo_empaque",
@@ -2061,10 +2116,10 @@ class RundownRepository:
                         id_proveedor, id_material, descripcion, unidad, lote_mts,
                         scrap_porcentaje, factor_conversion, categoria_cabina,
                         stock_inicial_planta, stock_inicial_total, stock_inicial_referencia,
-                        fecha_stock_inicial, doh_sugerido_planta, tipo_empaque, en_cl2, activo
+                        fecha_stock_inicial, doh_sugerido_planta, tipo_empaque, en_cl2, id_seccion, activo
                     )
                     OUTPUT INSERTED.id_parametro
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                     """,
                     (
                         id_proveedor,
@@ -2082,11 +2137,41 @@ class RundownRepository:
                         data.get("doh_sugerido_planta"),
                         tipo_empaque,
                         material[4] if material is not None else None,
+                        linea if linea is not None and linea > 0 else None,
                     ),
                 )
                 param_id = int(cursor.fetchone()[0])
             conn.commit()
             return param_id
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
+            conn.close()
+
+    @staticmethod
+    def _validar_linea_proveedor(cursor: Any, id_proveedor: int, id_seccion: int) -> None:
+        cursor.execute(
+            "SELECT 1 FROM dbo.proveedor_seccion WHERE id_proveedor = ? AND id_seccion = ?",
+            (id_proveedor, id_seccion),
+        )
+        if not cursor.fetchone():
+            raise ValueError("La línea elegida no pertenece a este proveedor. Asignala primero en Proveedores.")
+
+    def set_linea_material(self, id_proveedor: int, id_parametro: int, id_seccion: Optional[int]) -> bool:
+        conn: pyodbc.Connection = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            if id_seccion is not None:
+                self._validar_linea_proveedor(cursor, id_proveedor, id_seccion)
+            cursor.execute(
+                "UPDATE dbo.rundown_parametro_material SET id_seccion = ? WHERE id_parametro = ? AND id_proveedor = ?",
+                (id_seccion, id_parametro, id_proveedor),
+            )
+            actualizado = cursor.rowcount > 0
+            conn.commit()
+            return actualizado
         except Exception:
             conn.rollback()
             raise

@@ -996,6 +996,8 @@ export interface RundownParametroMaterialItem {
   stock_inicial_total: number;
   cant_productos: number;
   activo: boolean;
+  id_seccion: number | null;
+  id_seccion_efectiva: number | null;
 }
 
 export interface RundownParametroMaterialCreate {
@@ -1009,6 +1011,7 @@ export interface RundownParametroMaterialCreate {
   categoria_cabina?: string;
   stock_inicial_planta?: number;
   stock_inicial_total?: number;
+  id_seccion?: number;
 }
 
 export interface RundownLoteMaterialUpdate {
@@ -1119,6 +1122,23 @@ export async function addProveedorMaterial(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || "Error al agregar material al rundown");
+  }
+  return res.json();
+}
+
+export async function setLineaMaterial(
+  idProveedor: number,
+  idParametro: number,
+  idSeccion: number | null
+): Promise<{ mensaje: string }> {
+  const res = await apiFetch(`${API_BASE_URL}/api/rundown/proveedores/${idProveedor}/materiales/${idParametro}/linea`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id_seccion: idSeccion }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Error al cambiar la línea del material");
   }
   return res.json();
 }
