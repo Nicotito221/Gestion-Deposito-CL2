@@ -3,6 +3,7 @@ import os
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
+from app.core.time import get_argentina_today
 from app.repositories.despacho_repository import DespachoRepository
 from app.repositories.explosion_consumo_repository import ExplosionConsumoRepository, FilaExplosionConsumo
 from app.repositories.supply_repository import SupplyRepository
@@ -320,13 +321,20 @@ class SupplyService:
                 fmt_date = val_clean.replace("/", ".")
             consolidator.custom_tentative_dates[col_key] = fmt_date
 
+    @staticmethod
+    def _aplicar_descuento_hoy(consolidator: ProductionConsolidator, descuento_hoy: Optional[float]) -> None:
+        if descuento_hoy:
+            consolidator.aplicar_descuento_dia(get_argentina_today(), descuento_hoy)
+
     def export_excel(
         self,
         fecha_corte: Optional[date] = None,
         fechas_tentativas: Optional[Dict[str, str]] = None,
+        descuento_hoy: Optional[float] = None,
     ) -> Tuple[str, str]:
         consolidator, filename = self._build_consolidator_from_db()
         self._aplicar_fechas_tentativas(consolidator, fechas_tentativas)
+        self._aplicar_descuento_hoy(consolidator, descuento_hoy)
         if fecha_corte is not None:
             consolidator.aplicar_fecha_corte(fecha_corte)
         temp_file = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -343,9 +351,11 @@ class SupplyService:
         self,
         fecha_corte: Optional[date] = None,
         fechas_tentativas: Optional[Dict[str, str]] = None,
+        descuento_hoy: Optional[float] = None,
     ) -> Tuple[str, str]:
         consolidator, filename = self._build_consolidator_from_db()
         self._aplicar_fechas_tentativas(consolidator, fechas_tentativas)
+        self._aplicar_descuento_hoy(consolidator, descuento_hoy)
 
         temp_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
         temp_path = temp_file.name

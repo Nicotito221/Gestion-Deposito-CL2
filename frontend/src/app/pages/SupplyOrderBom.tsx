@@ -3,6 +3,7 @@ import { DateInputAR } from "../components/DateInputAR";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { getTodayISODate } from "../components/ui/format";
 import { Badge } from "../components/ui/badge";
 import {
   Table,
@@ -172,6 +173,8 @@ export function SupplyOrderBom() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   });
   const [sapFechasTentativas, setSapFechasTentativas] = useState<Record<string, string>>({});
+  const [descontarHoy, setDescontarHoy] = useState<boolean>(false);
+  const [porcentajeHoy, setPorcentajeHoy] = useState<string>("");
 
   const [bomFile, setBomFile] = useState<File | null>(null);
   const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
@@ -444,11 +447,23 @@ export function SupplyOrderBom() {
     }
   };
 
+  const descuentoHoyValor = (): number | undefined | null => {
+    if (!descontarHoy) return undefined;
+    const valor = parseFloat(porcentajeHoy.replace(",", "."));
+    if (!Number.isFinite(valor) || valor < 0 || valor > 100) {
+      toast.error("Ingresá un porcentaje a descontar entre 0 y 100");
+      return null;
+    }
+    return valor;
+  };
+
   const handleConfirmDownloadExcel = async () => {
+    const descuento = descuentoHoyValor();
+    if (descuento === null) return;
     setIsDownloadingExcel(true);
     try {
       const corteParam = sapAplicarCorte && sapFechaCorte ? sapFechaCorte : undefined;
-      await downloadExcelConsolidado(corteParam, sapFechasTentativas);
+      await downloadExcelConsolidado(corteParam, sapFechasTentativas, descuento);
       toast.success(
         corteParam
           ? `Libro Excel descargado (desde ${isoADdMmAaaa(corteParam)})`
@@ -500,10 +515,12 @@ export function SupplyOrderBom() {
   };
 
   const handleConfirmDownloadSapPir = async () => {
+    const descuento = descuentoHoyValor();
+    if (descuento === null) return;
     setIsDownloadingSap(true);
     try {
       const corteParam = sapAplicarCorte && sapFechaCorte ? sapFechaCorte : undefined;
-      await downloadSapPirTxt(corteParam, sapFechasTentativas);
+      await downloadSapPirTxt(corteParam, sapFechasTentativas, descuento);
       toast.success(
         corteParam
           ? `Archivo SAP PIR descargado (desde ${isoADdMmAaaa(corteParam)}, solo valores > 0)`
@@ -694,6 +711,43 @@ export function SupplyOrderBom() {
       toast.error(msg);
     }
   };
+
+  const descuentoHoyEditor = (color: "emerald" | "blue") => (
+    <div className="space-y-2 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
+      <label className="flex items-start gap-2.5 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={descontarHoy}
+          onChange={(e) => setDescontarHoy(e.target.checked)}
+          className={`mt-0.5 rounded border-slate-300 h-4 w-4 ${
+            color === "emerald" ? "text-emerald-600 focus:ring-emerald-500" : "text-blue-600 focus:ring-blue-500"
+          }`}
+        />
+        <div className="space-y-0.5">
+          <span className="font-semibold text-slate-900 text-xs block">Descontar lo consumido hoy</span>
+          <span className="text-[11px] text-slate-500 block">
+            Resta el porcentaje solo a la cantidad del día de hoy ({isoADdMmAaaa(getTodayISODate())}). Los demás días no cambian.
+          </span>
+        </div>
+      </label>
+      {descontarHoy && (
+        <div className="pl-6 flex items-center gap-2">
+          <Label className="text-xs font-semibold text-slate-700 whitespace-nowrap">Porcentaje a descontar:</Label>
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            step="0.1"
+            value={porcentajeHoy}
+            onChange={(e) => setPorcentajeHoy(e.target.value)}
+            placeholder="ej. 40"
+            className="h-8 text-xs font-mono max-w-[100px] bg-white"
+          />
+          <span className="text-xs text-slate-600">%</span>
+        </div>
+      )}
+    </div>
+  );
 
   const fechasTentativasEditor = tentativeColumns.length > 0 && (
     <div className="space-y-2.5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg">
@@ -1977,6 +2031,7 @@ export function SupplyOrderBom() {
                 </div>
               )}
             </div>
+            {descuentoHoyEditor("emerald")}
             {fechasTentativasEditor}
           </div>
 
@@ -2058,6 +2113,8 @@ export function SupplyOrderBom() {
                 </div>
               )}
             </div>
+
+            {descuentoHoyEditor("blue")}
 
             {fechasTentativasEditor}
           </div>

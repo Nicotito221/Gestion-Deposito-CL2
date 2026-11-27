@@ -1009,6 +1009,14 @@ class ProductionConsolidator:
             for c in quitar_tentativas:
                 item.tentative_values.pop(c, None)
 
+    def aplicar_descuento_dia(self, fecha: datetime.date, porcentaje: float) -> None:
+        factor = max(0.0, 1.0 - porcentaje / 100.0)
+        columnas = [c for c in self.daily_columns if self.resolve_date_obj(c) == fecha]
+        for item in self.demand_items.values():
+            for c in columnas:
+                if c in item.daily_values:
+                    item.daily_values[c] = item.daily_values[c] * factor
+
     def resolve_date_obj(self, col_name: str) -> Optional[datetime.date]:
         fecha_str = self.resolve_date_str(col_name)
         try:
@@ -1023,30 +1031,12 @@ class ProductionConsolidator:
         default_centro: str = '1000',
         default_version: str = '00',
         fecha_corte: Optional[datetime.date] = None,
-        corte_dt: Optional[datetime.datetime] = None,
     ) -> None:
         self.consolidate_bom()
 
         sorted_daily, all_tentative = self.get_sorted_columns()
         sap_tentative_cols = [c for c in all_tentative if 'TOTAL' not in c.upper()]
         all_val_cols = sorted_daily + sap_tentative_cols
-
-        try:
-            from app.core.time import get_argentina_today, get_avance_jornada_produccion
-            hoy = get_argentina_today()
-        except ImportError:
-            hoy = datetime.date.today()
-
-            def get_avance_jornada_produccion(dt=None):
-                now = dt or datetime.datetime.now()
-                h = now.hour + now.minute / 60.0 + now.second / 3600.0
-                if h < 6.0:
-                    return 0.0, 1.0
-                elapsed = h - 6.0
-                if elapsed >= 21.38:
-                    return 1.0, 0.0
-                frac = min(1.0, max(0.0, elapsed / 21.38))
-                return frac, 1.0 - frac
 
         headers = ['Radio button Material', 'Material', 'Centro', 'Versión de plan', 'fecha', 'Tipo formato fecha', 'Cantidad']
         output_rows: List[List[str]] = []
@@ -1083,19 +1073,6 @@ class ProductionConsolidator:
 
                 if fecha_corte is not None and col_date is not None and col_date < fecha_corte:
                     continue
-                elif col_date is not None and col_date == hoy:
-                    _, fraccion_restante = get_avance_jornada_produccion(corte_dt)
-                    cant_rem = int(round(cant * fraccion_restante))
-                    if cant_rem > 0:
-                        output_rows.append([
-                            'X',
-                            mat_code,
-                            centro,
-                            default_version,
-                            fecha_str,
-                            periodo_tipo,
-                            str(cant_rem)
-                        ])
                 else:
                     cant_int = int(round(cant))
                     if cant_int > 0:

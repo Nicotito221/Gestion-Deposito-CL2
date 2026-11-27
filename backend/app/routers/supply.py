@@ -124,6 +124,7 @@ def consolidate_supply(
 def export_excel_consolidado(
     fecha_corte: Optional[date] = Query(None, description="Fecha de corte. Se omiten las columnas anteriores a esta fecha."),
     fechas_tentativas: Optional[str] = Query(None, description="JSON de fechas personalizadas por mes extendido."),
+    descuento_hoy: Optional[float] = Query(None, ge=0, le=100, description="Porcentaje a descontar solo del dia actual."),
 ):
     try:
         parsed_tentativas: Optional[Dict[str, str]] = None
@@ -131,7 +132,9 @@ def export_excel_consolidado(
             loaded = json.loads(fechas_tentativas)
             if isinstance(loaded, dict):
                 parsed_tentativas = {str(k): str(v) for k, v in loaded.items() if v}
-        temp_path, file_name = _service.export_excel(fecha_corte=fecha_corte, fechas_tentativas=parsed_tentativas)
+        temp_path, file_name = _service.export_excel(
+            fecha_corte=fecha_corte, fechas_tentativas=parsed_tentativas, descuento_hoy=descuento_hoy
+        )
         return FileResponse(
             path=temp_path,
             filename=file_name,
@@ -148,6 +151,7 @@ def export_excel_consolidado(
 def export_sap_pir_txt(
     fecha_corte: Optional[date] = Query(None, description="Fecha de corte. Solo se exportarán fechas >= fecha_corte con cantidad > 0."),
     fechas_tentativas: Optional[str] = Query(None, description="JSON de fechas personalizadas por mes extendido."),
+    descuento_hoy: Optional[float] = Query(None, ge=0, le=100, description="Porcentaje a descontar solo del dia actual."),
 ):
     try:
         parsed_tentativas: Optional[Dict[str, str]] = None
@@ -159,6 +163,7 @@ def export_sap_pir_txt(
         temp_path, file_name = _service.export_sap_txt(
             fecha_corte=fecha_corte,
             fechas_tentativas=parsed_tentativas,
+            descuento_hoy=descuento_hoy,
         )
         return FileResponse(
             path=temp_path,

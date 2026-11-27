@@ -373,11 +373,15 @@ export async function updateSupplyDailyProduction(data: {
 
 export async function downloadExcelConsolidado(
   fechaCorte?: string,
-  fechasTentativas?: Record<string, string>
+  fechasTentativas?: Record<string, string>,
+  descuentoHoy?: number
 ): Promise<void> {
   const params = new URLSearchParams();
   if (fechaCorte) {
     params.set("fecha_corte", fechaCorte);
+  }
+  if (descuentoHoy && descuentoHoy > 0) {
+    params.set("descuento_hoy", String(descuentoHoy));
   }
   if (fechasTentativas && Object.keys(fechasTentativas).length > 0) {
     params.set("fechas_tentativas", JSON.stringify(fechasTentativas));
@@ -407,11 +411,15 @@ export async function downloadExcelConsolidado(
 
 export async function downloadSapPirTxt(
   fechaCorte?: string,
-  fechasTentativas?: Record<string, string>
+  fechasTentativas?: Record<string, string>,
+  descuentoHoy?: number
 ): Promise<void> {
   const params = new URLSearchParams();
   if (fechaCorte) {
     params.set("fecha_corte", fechaCorte);
+  }
+  if (descuentoHoy && descuentoHoy > 0) {
+    params.set("descuento_hoy", String(descuentoHoy));
   }
   if (fechasTentativas && Object.keys(fechasTentativas).length > 0) {
     params.set("fechas_tentativas", JSON.stringify(fechasTentativas));
