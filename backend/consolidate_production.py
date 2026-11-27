@@ -2,6 +2,7 @@ import argparse
 import csv
 import datetime
 import os
+import math
 import re
 import unicodedata
 from collections import defaultdict
@@ -1015,7 +1016,7 @@ class ProductionConsolidator:
         for item in self.demand_items.values():
             for c in columnas:
                 if c in item.daily_values:
-                    item.daily_values[c] = item.daily_values[c] * factor
+                    item.daily_values[c] = float(math.ceil(round(item.daily_values[c] * factor, 6)))
 
     def resolve_date_obj(self, col_name: str) -> Optional[datetime.date]:
         fecha_str = self.resolve_date_str(col_name)
