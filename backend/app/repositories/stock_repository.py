@@ -777,7 +777,7 @@ class StockRepository:
                     errores.append(f"Fila {fila}: el proveedor '{clave_proveedor}' está inactivo.")
                     continue
                 cursor.execute(
-                    "SELECT nombre, unidad, lote_minimo, tipo_empaque, en_cl2 FROM dbo.material WHERE id_material = ?",
+                    "SELECT id_proveedor_principal FROM dbo.material WHERE id_material = ?",
                     (id_material,),
                 )
                 material = cursor.fetchone()
@@ -796,15 +796,18 @@ class StockRepository:
                 parametros = [(int(r[0]), int(r[1]), bool(r[2])) for r in cursor.fetchall()]
                 activos_otro = [pid for pid, prov, act in parametros if act and prov != id_proveedor]
                 propio = next((pid for pid, prov, _ in parametros if prov == id_proveedor), None)
-                propio_activo = any(prov == id_proveedor and act for _, prov, act in parametros)
+                cambio = material[0] is None or int(material[0]) != id_proveedor
 
-                if propio_activo and not activos_otro:
-                    sin_cambios += 1
-                else:
-                    origen = activos_otro[0] if activos_otro else None
+                if activos_otro:
+                    cambio = True
+                    origen = activos_otro[0]
+                    cursor.execute(
+                        "UPDATE dbo.rundown_parametro_material SET activo = 0 WHERE id_material = ? AND id_proveedor <> ?",
+                        (id_material, id_proveedor),
+                    )
                     if propio is not None:
                         cursor.execute("UPDATE dbo.rundown_parametro_material SET activo = 1 WHERE id_parametro = ?", (propio,))
-                    elif origen is not None:
+                    else:
                         cursor.execute(
                             f"""
                             INSERT INTO dbo.rundown_parametro_material (id_proveedor, id_material, {columnas_copia}, activo)
@@ -815,40 +818,20 @@ class StockRepository:
                             (id_proveedor, origen),
                         )
                         propio = int(cursor.fetchone()[0])
-                    else:
-                        cursor.execute(
-                            """
-                            INSERT INTO dbo.rundown_parametro_material (
-                                id_proveedor, id_material, descripcion, unidad, lote_mts, tipo_empaque, en_cl2, activo
-                            )
-                            OUTPUT INSERTED.id_parametro
-                            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                            """,
-                            (
-                                id_proveedor, id_material, str(material[0] or id_material)[:150],
-                                str(material[1] or "UN")[:10], material[2], str(material[3] or "pallet"), material[4],
-                            ),
-                        )
-                        propio = int(cursor.fetchone()[0])
 
                     cursor.execute(
-                        "UPDATE dbo.rundown_parametro_material SET activo = 0 WHERE id_material = ? AND id_parametro <> ?",
-                        (id_material, propio),
+                        """
+                        INSERT INTO dbo.rundown_parametro_producto (id_parametro, id_producto, factor_uso)
+                        SELECT ?, rpp.id_producto, rpp.factor_uso
+                        FROM dbo.rundown_parametro_producto rpp
+                        WHERE rpp.id_parametro = ?
+                          AND NOT EXISTS (
+                              SELECT 1 FROM dbo.rundown_parametro_producto x
+                              WHERE x.id_parametro = ? AND x.id_producto = rpp.id_producto
+                          )
+                        """,
+                        (propio, origen, propio),
                     )
-                    if origen is not None:
-                        cursor.execute(
-                            """
-                            INSERT INTO dbo.rundown_parametro_producto (id_parametro, id_producto, factor_uso)
-                            SELECT ?, rpp.id_producto, rpp.factor_uso
-                            FROM dbo.rundown_parametro_producto rpp
-                            WHERE rpp.id_parametro = ?
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM dbo.rundown_parametro_producto x
-                                  WHERE x.id_parametro = ? AND x.id_producto = rpp.id_producto
-                              )
-                            """,
-                            (propio, origen, propio),
-                        )
                     if id_version_vigente is not None:
                         cursor.execute(
                             """
@@ -863,7 +846,11 @@ class StockRepository:
                             """,
                             (propio, id_version_vigente, id_material, propio),
                         )
+
+                if cambio:
                     asignados += 1
+                else:
+                    sin_cambios += 1
 
                 cursor.execute(
                     "UPDATE dbo.material SET id_proveedor_principal = ? WHERE id_material = ?",
