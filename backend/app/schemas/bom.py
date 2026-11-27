@@ -34,6 +34,8 @@ class BomParseResult:
     relaciones: List[BomRelationRecord]
     total_lineas_archivo: int
     hijos_por_padre: Dict[str, List[BomComponenteDirecto]] = field(default_factory=dict)
+    sd_raices: List["SdSetRecord"] = field(default_factory=list)
+    formato_con_sd: bool = False
 
 
 @dataclass(slots=True)
@@ -62,6 +64,7 @@ class BomImportResult:
     total_relaciones_creadas: int
     tiempo_segundos: float
     mensaje: str
+    total_sd: int = 0
 
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator

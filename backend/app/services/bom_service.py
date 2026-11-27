@@ -125,6 +125,23 @@ class BomService:
                     lote_directo[i : i + BATCH_SIZE]
                 )
 
+            if parse_result.formato_con_sd:
+                cursor.execute("DELETE FROM dbo.bom_set_producto")
+                cursor.execute("DELETE FROM dbo.bom_sd_set")
+                nombre_sd = (nombre_archivo or "")[:255] or None
+                filas_sd = [
+                    (s.codigo_sd, s.id_set, None, s.cantidad, s.unidad, nombre_sd)
+                    for s in parse_result.sd_raices
+                ]
+                for i in range(0, len(filas_sd), BATCH_SIZE):
+                    cursor.executemany(
+                        """
+                        INSERT INTO dbo.bom_sd_set (codigo_sd, id_set, descripcion_sd, cantidad, unidad, nombre_archivo)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        filas_sd[i : i + BATCH_SIZE],
+                    )
+
             self._regenerar_explosion(cursor, id_version)
 
             cursor.execute("UPDATE dbo.bom_version SET es_vigente = 0 WHERE es_vigente = 1")
@@ -140,7 +157,8 @@ class BomService:
                 nuevos_materiales_registrados=len(nuevos_materiales),
                 total_relaciones_creadas=len(parse_result.relaciones),
                 tiempo_segundos=round(elapsed, 2),
-                mensaje="Importación y activación de BOM completada con éxito."
+                mensaje="Importación y activación de BOM completada con éxito.",
+                total_sd=len({s.codigo_sd for s in parse_result.sd_raices}),
             )
 
         except Exception:

@@ -62,8 +62,6 @@ import {
   toggleSetComponente,
   importSetComponentesFile,
   uploadBomFile,
-  importarSdSets,
-  type SdSetImportResult,
   getConversionesResumen,
   importarConversiones,
   type ConversionOrdenResumen,
@@ -178,9 +176,6 @@ export function SupplyOrderBom() {
 
   const [bomFile, setBomFile] = useState<File | null>(null);
   const [isUploadingBom, setIsUploadingBom] = useState<boolean>(false);
-  const [sdFile, setSdFile] = useState<File | null>(null);
-  const [isUploadingSd, setIsUploadingSd] = useState<boolean>(false);
-  const [sdResult, setSdResult] = useState<SdSetImportResult | null>(null);
   const conversionInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingConversion, setIsUploadingConversion] = useState<boolean>(false);
   const [conversionResumen, setConversionResumen] = useState<ConversionOrdenResumen | null>(null);
@@ -542,7 +537,10 @@ export function SupplyOrderBom() {
     setIsUploadingBom(true);
     try {
       const result = await uploadBomFile(bomFile);
-      toast.success(`Versión #${result.id_version} importada: ${result.total_relaciones_creadas} relaciones creadas.`);
+      toast.success(
+        `Versión #${result.id_version} importada: ${result.total_relaciones_creadas} relaciones` +
+          (result.total_sd > 0 ? ` y ${result.total_sd} SD.` : ".")
+      );
       setBomFile(null);
       await fetchData();
     } catch (err) {
@@ -550,25 +548,6 @@ export function SupplyOrderBom() {
       toast.error(msg);
     } finally {
       setIsUploadingBom(false);
-    }
-  };
-
-  const handleUploadSd = async () => {
-    if (!sdFile) {
-      toast.error("Seleccione el archivo de SD y SETs (.xls, .xlsx o .tsv)");
-      return;
-    }
-    setIsUploadingSd(true);
-    try {
-      const result = await importarSdSets(sdFile);
-      setSdResult(result);
-      toast.success(`${result.total_sd} SD y ${result.total_sets} SETs importados.`);
-      setSdFile(null);
-      await fetchData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Error al importar SD y SETs");
-    } finally {
-      setIsUploadingSd(false);
     }
   };
 
@@ -1471,7 +1450,8 @@ export function SupplyOrderBom() {
                   Actualización masiva de estructura de materiales
                 </p>
                 <p className="text-xs text-slate-500 mt-0.5 mb-3">
-                  El sistema genera una nueva versión inmutable en <code>dbo.bom_version</code> y recalcula la explosión plana de factores de consumo unitario en SQL Server.
+                  Un solo archivo: SD en la columna A, PN de B a H (la columna indica el nivel), descripción en I, consumo en J y unidad en K.
+                  Cada carga reemplaza la BOM y los SD anteriores.
                 </p>
                 <div className="flex flex-col sm:flex-row items-center gap-3">
                   <Input
@@ -1493,50 +1473,6 @@ export function SupplyOrderBom() {
                   </Button>
                 </div>
               </div>
-
-              <div className="p-4 border border-slate-200 rounded-lg bg-slate-50 mb-4">
-                <p className="text-sm text-slate-700 font-medium">SD y SETs</p>
-                <p className="text-xs text-slate-500 mt-0.5 mb-3">
-                  SD en columna A, SET en B y productos en C. Los productos se expanden con la BOM vigente. Cada carga reemplaza la anterior.
-                </p>
-                <div className="flex flex-col sm:flex-row items-center gap-3">
-                  <Input
-                    type="file"
-                    accept=".xls,.xlsx,.xlsm,.tsv,.csv,.txt"
-                    className="bg-white text-xs max-w-md"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) setSdFile(f);
-                    }}
-                  />
-                  <Button
-                    onClick={handleUploadSd}
-                    disabled={!canEdit || isUploadingSd}
-                    className="flex items-center gap-2 w-full sm:w-auto"
-                  >
-                    <RefreshCw className={`w-4 h-4 ${isUploadingSd ? "animate-spin" : ""}`} />
-                    Importar SD y SETs
-                  </Button>
-                </div>
-                {sdResult && (
-                  <div className="mt-3 text-xs text-slate-600 space-y-1">
-                    <p>
-                      {sdResult.total_sd} SD · {sdResult.total_sets} SETs · {sdResult.total_set_producto} relaciones SET → producto
-                    </p>
-                    {sdResult.sets_sin_estructura.length > 0 && (
-                      <p className="text-amber-700">
-                        SETs sin productos ni BOM ({sdResult.sets_sin_estructura.length}): {sdResult.sets_sin_estructura.join(", ")}
-                      </p>
-                    )}
-                    {sdResult.productos_sin_bom.length > 0 && (
-                      <p className="text-amber-700">
-                        Productos sin BOM ({sdResult.productos_sin_bom.length}): {sdResult.productos_sin_bom.join(", ")}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
 
               <div className="border rounded-lg overflow-hidden">
                 <Table>

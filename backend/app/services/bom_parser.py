@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import BinaryIO, Dict, Iterator, List, Optional, Set, Tuple, Union
 
@@ -45,15 +46,56 @@ def is_header_row(cols: List[str]) -> bool:
     return False
 
 
-def extract_row_data(cols: List[str]) -> Optional[Tuple[int, str, str, Decimal, str]]:
+@dataclass(frozen=True)
+class FormatoBom:
+    col_sd: Optional[int]
+    col_pn: int
+    niveles: int
+    col_desc: int
+    col_cant: int
+    col_un: int
+
+
+FORMATO_BOM_CLASICO = FormatoBom(col_sd=None, col_pn=0, niveles=6, col_desc=6, col_cant=7, col_un=8)
+FORMATO_BOM_CON_SD = FormatoBom(col_sd=0, col_pn=1, niveles=7, col_desc=8, col_cant=9, col_un=10)
+
+
+def _es_numero(valor: str) -> bool:
+    texto = valor.strip()
+    if not texto:
+        return False
+    if "." in texto and "," in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    else:
+        texto = texto.replace(",", ".")
+    try:
+        float(texto)
+        return True
+    except ValueError:
+        return False
+
+
+def detectar_formato_bom(filas: List[List[str]]) -> FormatoBom:
+    votos_sd = votos_clasico = 0
+    for cols in filas[:500]:
+        if len(cols) > FORMATO_BOM_CON_SD.col_cant and _es_numero(cols[FORMATO_BOM_CON_SD.col_cant]):
+            votos_sd += 1
+        if len(cols) > FORMATO_BOM_CLASICO.col_cant and _es_numero(cols[FORMATO_BOM_CLASICO.col_cant]):
+            votos_clasico += 1
+    return FORMATO_BOM_CON_SD if votos_sd > votos_clasico else FORMATO_BOM_CLASICO
+
+
+def extract_row_data(
+    cols: List[str], formato: FormatoBom = FORMATO_BOM_CLASICO
+) -> Optional[Tuple[int, str, str, Decimal, str]]:
     part_number: str = ""
     level: int = -1
 
-    for idx in range(min(6, len(cols))):
+    for idx in range(formato.col_pn, min(formato.col_pn + formato.niveles, len(cols))):
         val = cols[idx].strip()
         if val:
             part_number = val.upper()
-            level = idx
+            level = idx - formato.col_pn
             break
 
     if not part_number or level == -1:
@@ -63,16 +105,16 @@ def extract_row_data(cols: List[str]) -> Optional[Tuple[int, str, str, Decimal, 
         part_number = part_number[:30]
 
     desc: str = ""
-    if len(cols) > 6 and cols[6].strip():
-        desc = cols[6].strip()[:100]
+    if len(cols) > formato.col_desc and cols[formato.col_desc].strip():
+        desc = cols[formato.col_desc].strip()[:100]
 
     qty: Decimal = Decimal("1.0000")
-    if len(cols) > 7 and cols[7].strip():
-        qty = clean_quantity(cols[7])
+    if len(cols) > formato.col_cant and cols[formato.col_cant].strip():
+        qty = clean_quantity(cols[formato.col_cant])
 
     unit: str = "UN"
-    if len(cols) > 8 and cols[8].strip():
-        unit = cols[8].strip()[:10]
+    if len(cols) > formato.col_un and cols[formato.col_un].strip():
+        unit = cols[formato.col_un].strip()[:10]
 
     return level, part_number, desc, qty, unit
 
@@ -109,23 +151,40 @@ class BomParser:
         current_root_product: Optional[str] = None
         total_lineas = 0
         orden_secuencia = 0
+        sd_raices: Dict[Tuple[str, str], SdSetRecord] = {}
+        sd_actual: str = ""
 
-        rows_iterator = BomParser._get_row_iterator(source)
+        filas = [[str(c) if c is not None else "" for c in fila] for fila in BomParser._get_row_iterator(source)]
+        formato = detectar_formato_bom(filas)
 
-        for raw_cols in rows_iterator:
+        for str_cols in filas:
             total_lineas += 1
-            if not raw_cols:
+            if not str_cols:
                 continue
 
-            str_cols = [str(c) if c is not None else "" for c in raw_cols]
             if is_header_row(str_cols):
                 continue
+            if (
+                formato.col_sd is not None
+                and len(str_cols) > formato.col_cant
+                and str_cols[formato.col_cant].strip()
+                and not _es_numero(str_cols[formato.col_cant])
+            ):
+                continue
 
-            extracted = extract_row_data(str_cols)
+            if formato.col_sd is not None and len(str_cols) > formato.col_sd and str_cols[formato.col_sd].strip():
+                sd_actual = str_cols[formato.col_sd].strip().upper()[:30]
+
+            extracted = extract_row_data(str_cols, formato)
             if extracted is None:
                 continue
 
             level, part_number, desc, qty, unit = extracted
+            if formato.col_sd is not None and level == 0 and sd_actual:
+                sd_raices.setdefault(
+                    (sd_actual, part_number),
+                    SdSetRecord(codigo_sd=sd_actual, id_set=part_number, descripcion_sd="", cantidad=qty, unidad=unit),
+                )
 
             if part_number not in materiales:
                 materiales[part_number] = MaterialRecord(
@@ -189,6 +248,8 @@ class BomParser:
             relaciones=relaciones,
             total_lineas_archivo=total_lineas,
             hijos_por_padre=hijos_por_padre,
+            sd_raices=list(sd_raices.values()),
+            formato_con_sd=formato.col_sd is not None,
         )
 
     @staticmethod

@@ -240,6 +240,7 @@ export async function uploadBomFile(file: File): Promise<{
   nuevos_materiales_registrados: number;
   total_relaciones_creadas: number;
   mensaje: string;
+  total_sd: number;
 }> {
   const formData = new FormData();
   formData.append("file", file);
